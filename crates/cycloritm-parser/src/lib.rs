@@ -56,14 +56,28 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         Rule::const_decl => {
             let mut inner = kind.into_inner();
             let name = inner.next().expect("const: имя").as_str().to_owned();
-            let body = build_arith(inner.next().expect("const: тело"));
+            let body = build_operand(
+                inner
+                    .next()
+                    .expect("const: тело")
+                    .into_inner()
+                    .next()
+                    .expect("decl_value: содержимое"),
+            );
             Ok(Decl::Const { name, body })
         }
         Rule::fun_decl => {
             let mut inner = kind.into_inner();
             let name = inner.next().expect("fun: имя").as_str().to_owned();
             let param = inner.next().expect("fun: параметр").as_str().to_owned();
-            let body = build_arith(inner.next().expect("fun: тело"));
+            let body = build_operand(
+                inner
+                    .next()
+                    .expect("fun: тело")
+                    .into_inner()
+                    .next()
+                    .expect("decl_value: содержимое"),
+            );
             Ok(Decl::Fun { name, param, body })
         }
         Rule::pred_decl => {
@@ -1051,6 +1065,32 @@ mod tests {
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn parses_string_bodied_fun() {
+        let decls = parse_decls(
+            "fun datestr(t) = pad(year(t), 4) ++ \"-\" ++ pad(month(t), 2);",
+        )
+        .expect("склейка в теле обязана разбираться");
+        assert!(matches!(
+            decls[0],
+            Decl::Fun {
+                body: Expr::Concat(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_system_prelude() {
+        let src = include_str!("../../cycloritm-core/src/std.cyclo");
+        let decls = parse_decls(src).expect("прелюдия обязана разбираться");
+        assert!(decls.len() >= 20, "в прелюдии десятки объявлений");
+        assert!(decls.iter().any(|d| matches!(
+            d,
+            Decl::Pred { name, .. } if name == "weekend"
+        )));
     }
 
     #[test]

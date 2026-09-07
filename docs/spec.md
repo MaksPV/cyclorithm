@@ -99,9 +99,10 @@ $$
 ```ebnf
 file        = { decl } schedule ;
 decl        = const_decl | fun_decl | pred_decl ;
-const_decl  = "const" IDENT "=" arith ";" ;
-fun_decl    = "fun" IDENT "(" IDENT ")" "=" arith ";" ;
+const_decl  = "const" IDENT "=" decl_value ";" ;
+fun_decl    = "fun" IDENT "(" IDENT ")" "=" decl_value ";" ;
 pred_decl   = "pred" IDENT "(" "at" ")" "=" or_expr ";" ;
+decl_value  = concat | arith ;
 schedule    = "schedule" string "{" { point } { cycle } root_cycle "}" ;
 point       = "point" IDENT "{" "actions" "=" "[" action_list "]" ";" "}" ;
 action_list = IDENT { "," IDENT } ;

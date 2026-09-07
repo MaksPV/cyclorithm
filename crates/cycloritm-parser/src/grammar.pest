@@ -13,9 +13,12 @@ schedule    = { "schedule" ~ string ~ "{" ~ point* ~ cycle* ~ root_cycle ~ "}" }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
 decl        = { const_decl | fun_decl | pred_decl }
-const_decl  = { "const" ~ IDENT ~ "=" ~ arith ~ ";" }
-fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ arith ~ ";" }
+const_decl  = { "const" ~ IDENT ~ "=" ~ decl_value ~ ";" }
+fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
+// Тело const/fun — склейка или арифметика (datestr возвращает строку).
+// Порядок как у операндов: сначала concat, иначе arith съедает префикс.
+decl_value  = { concat | arith }
 point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
 cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
