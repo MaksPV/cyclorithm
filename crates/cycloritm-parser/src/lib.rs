@@ -86,7 +86,16 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
     let span = pair.as_span();
     let mut inner = pair.into_inner();
-    let first = inner.next().expect("stmt: смещение или минус");
+    let mut first = inner.next().expect("stmt: условие, минус или смещение");
+    let mut condition = None;
+    if first.as_rule() == Rule::condition_block {
+        let cond = first
+            .into_inner()
+            .next()
+            .expect("condition_block: условие");
+        condition = Some(build_cond(cond));
+        first = inner.next().expect("stmt: смещение или минус");
+    }
     // Минус смещения (§3 спеки): пишется слитно (`-10m` ок, `- 10m` — ошибка).
     // Грамматика пробел пропускает осознанно — границу проверяем по спанам.
     let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
@@ -143,13 +152,210 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         offset,
         negative,
         repeat,
+        condition,
         invocation,
     })
 }
 
-/// Модификатор повтора (§3 спеки): `repeat N` / `fill` / `fill until [−]T`.
-/// `repeat 0` здесь принимается (валидация ядра, E10); минус в `until`
-/// обязан быть слитным — проверка по спанам, как у смещения строки.
+/// Условие строки (§3 спеки): логика над сравнениями.
+fn build_cond(pair: Pair<Rule>) -> Cond {
+    debug_assert_eq!(pair.as_rule(), Rule::condition);
+    build_or(pair.into_inner().next().expect("condition: or_expr"))
+}
+
+fn build_or(pair: Pair<Rule>) -> Cond {
+    debug_assert_eq!(pair.as_rule(), Rule::or_expr);
+    let mut inner = pair.into_inner();
+    let mut acc = build_and(inner.next().expect("or_expr: левый операнд"));
+    while inner.next().is_some() {
+        let rhs = build_and(inner.next().expect("or_expr: правый операнд"));
+        acc = match acc {
+            Cond::Or(mut all) => {
+                all.push(rhs);
+                Cond::Or(all)
+            }
+            other => Cond::Or(vec![other, rhs]),
+        };
+    }
+    acc
+}
+
+fn build_not(pair: Pair<Rule>) -> Cond {
+    debug_assert_eq!(pair.as_rule(), Rule::not_expr);
+    let mut inner = pair.into_inner();
+    let first = inner.next().expect("not_expr: операнд");
+    let (negated, cmp) = if first.as_rule() == Rule::kw_not {
+        (true, inner.next().expect("not_expr: сравнение"))
+    } else {
+        (false, first)
+    };
+    let cond = build_comparison(cmp);
+    if negated {
+        Cond::Not(Box::new(cond))
+    } else {
+        cond
+    }
+}
+
+fn build_and(pair: Pair<Rule>) -> Cond {
+    debug_assert_eq!(pair.as_rule(), Rule::and_expr);
+    let mut inner = pair.into_inner();
+    let mut acc = build_not(inner.next().expect("and_expr: левый операнд"));
+    while inner.next().is_some() {
+        let rhs = build_not(inner.next().expect("and_expr: правый операнд"));
+        acc = match acc {
+            Cond::And(mut all) => {
+                all.push(rhs);
+                Cond::And(all)
+            }
+            other => Cond::And(vec![other, rhs]),
+        };
+    }
+    acc
+}
+
+fn build_comparison(pair: Pair<Rule>) -> Cond {
+    debug_assert_eq!(pair.as_rule(), Rule::comparison);
+    let mut inner = pair.into_inner();
+    let left = build_operand(
+        inner
+            .next()
+            .expect("comparison: левая часть")
+            .into_inner()
+            .next()
+            .expect("cmp_side: содержимое"),
+    );
+    let op = match inner.next().expect("comparison: оператор").as_str() {
+        "==" => CmpOp::Eq,
+        "!=" => CmpOp::Ne,
+        "<" => CmpOp::Lt,
+        "<=" => CmpOp::Le,
+        ">" => CmpOp::Gt,
+        ">=" => CmpOp::Ge,
+        o => unreachable!("cmp_op: неожиданный оператор {o:?}"),
+    };
+    let right = inner
+        .next()
+        .expect("comparison: правая часть")
+        .into_inner()
+        .next()
+        .expect("cmp_right: содержимое");
+    let right = if right.as_rule() == Rule::alternation {
+        let mut alts = right.into_inner();
+        let mut values = vec![build_arith(alts.next().expect("alternation: ветка"))];
+        while alts.next().is_some() {
+            values.push(build_arith(alts.next().expect("alternation: ветка")));
+        }
+        CondRhs::Alt(values)
+    } else {
+        CondRhs::One(build_operand(right))
+    };
+    Cond::Cmp { op, left, right }
+}
+
+/// Операнд сравнения: склейка или арифметика. Обёртки (`cmp_side`,
+/// `cmp_right`, `cond_arg`) снимает вызывающий.
+fn build_operand(pair: Pair<Rule>) -> Expr {
+    match pair.as_rule() {
+        Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
+        Rule::arith => build_arith(pair),
+        r => unreachable!("операнд: неожиданное правило {r:?}"),
+    }
+}
+
+fn build_concat_term(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::concat_term);
+    build_value(pair.into_inner().next().expect("concat_term: значение"))
+}
+
+fn build_arith(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::arith);
+    let mut inner = pair.into_inner();
+    let mut acc = build_term(inner.next().expect("arith: левый операнд"));
+    while let Some(op) = inner.next() {
+        let rhs = build_term(inner.next().expect("arith: правый операнд"));
+        let op = match op.as_str() {
+            "+" => ArithOp::Add,
+            "-" => ArithOp::Sub,
+            o => unreachable!("add_op: неожиданный оператор {o:?}"),
+        };
+        acc = Expr::Bin {
+            op,
+            left: Box::new(acc),
+            right: Box::new(rhs),
+        };
+    }
+    acc
+}
+
+fn build_term(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::term);
+    let mut inner = pair.into_inner();
+    let mut acc = build_factor(inner.next().expect("term: левый операнд"));
+    while let Some(op) = inner.next() {
+        let rhs = build_factor(inner.next().expect("term: правый операнд"));
+        let op = match op.as_str() {
+            "*" => ArithOp::Mul,
+            "/" => ArithOp::Div,
+            "%" => ArithOp::Mod,
+            "floordiv" => ArithOp::FloorDiv,
+            "floormod" => ArithOp::FloorMod,
+            o => unreachable!("mul_op: неожиданный оператор {o:?}"),
+        };
+        acc = Expr::Bin {
+            op,
+            left: Box::new(acc),
+            right: Box::new(rhs),
+        };
+    }
+    acc
+}
+
+fn build_factor(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::factor);
+    let mut inner = pair.into_inner();
+    let first = inner.next().expect("factor: операнд");
+    let (negated, value) = if first.as_rule() == Rule::neg_sign {
+        (true, inner.next().expect("factor: операнд после минуса"))
+    } else {
+        (false, first)
+    };
+    let expr = build_value(value);
+    if negated { Expr::Neg(Box::new(expr)) } else { expr }
+}
+
+/// Лист выражения: число, строка, вызов, имя (`at` — значение, остальное
+/// проверит ядро) или скобки.
+fn build_value(pair: Pair<Rule>) -> Expr {
+    match pair.as_rule() {
+        Rule::number => Expr::Num(pair.as_str().to_owned()),
+        Rule::string => {
+            let s = pair.as_str();
+            Expr::Str(s[1..s.len() - 1].to_owned())
+        }
+        Rule::call => {
+            let mut inner = pair.into_inner();
+            let name = inner.next().expect("call: имя").as_str().to_owned();
+            let args = inner.map(build_call_arg).collect();
+            Expr::Call { name, args }
+        }
+        Rule::IDENT => {
+            if pair.as_str() == "at" {
+                Expr::At
+            } else {
+                Expr::Name(pair.as_str().to_owned())
+            }
+        }
+        Rule::arith => build_arith(pair),
+        Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
+        r => unreachable!("значение: неожиданное правило {r:?}"),
+    }
+}
+
+fn build_call_arg(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::cond_arg);
+    build_operand(pair.into_inner().next().expect("cond_arg: выражение"))
+}
 fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::repeat_mod);
     let span = pair.as_span();
@@ -281,16 +487,77 @@ pub struct RootCycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// Одна строка цикла: `[<минус>] <смещение>: [<повтор>] <вызов>;`.
-/// `negative` — минус из §3 спеки (только у смещения строки, слитно);
-/// разрешается ядром как `duration(родителя) − смещение`.
-/// `repeat` — модификатор повторов (§3–§4 спеки), по умолчанию `Once`.
+/// Одна строка цикла: `[условие] [минус] <смещение>: [<повтор>] <вызов>;`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub offset: Duration,
     pub negative: bool,
     pub repeat: Repeat,
+    pub condition: Option<Cond>,
     pub invocation: Invocation,
+}
+
+/// Условие строки: логика над сравнениями.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cond {
+    Or(Vec<Cond>),
+    And(Vec<Cond>),
+    Not(Box<Cond>),
+    Cmp {
+        op: CmpOp,
+        left: Expr,
+        right: CondRhs,
+    },
+}
+
+/// Правая часть сравнения: одиночное значение или альтернация `(a or b)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CondRhs {
+    One(Expr),
+    Alt(Vec<Expr>),
+}
+
+/// Выражение условия: числа — сырым текстом, `at` — время строки.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Expr {
+    Num(String),
+    Str(String),
+    At,
+    Name(String),
+    Neg(Box<Expr>),
+    Bin {
+        op: ArithOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Concat(Vec<Expr>),
+    Call {
+        name: String,
+        args: Vec<Expr>,
+    },
+}
+
+/// Оператор сравнения.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+/// Арифметический оператор.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    FloorDiv,
+    FloorMod,
 }
 
 impl Stmt {
@@ -304,9 +571,7 @@ impl Stmt {
     }
 }
 
-/// Модификатор повторов строки (§3 спеки).
-/// `Times` хранит число сырым текстом: в `u64` переводит ядро
-/// (невлезающее — E10 `invalid repeat count`).
+/// Модификатор повторов строки (§3 спеки): `repeat N` / `fill` / `fill until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repeat {
     /// Без модификатора: одиночный вызов.
@@ -436,6 +701,7 @@ mod tests {
             offset,
             negative: false,
             repeat: Repeat::Once,
+            condition: None,
             invocation: Invocation::PointAction {
                 point: point.to_owned(),
                 action: action.to_owned(),
@@ -490,6 +756,7 @@ mod tests {
                         offset: dur("6h", vec![("6", DurationUnit::Hour)]),
                         negative: false,
                         repeat: Repeat::Once,
+                        condition: None,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                         },
@@ -498,6 +765,7 @@ mod tests {
                         offset: dur("18h", vec![("18", DurationUnit::Hour)]),
                         negative: false,
                         repeat: Repeat::Once,
+                        condition: None,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                         },
@@ -596,6 +864,62 @@ mod tests {
     }
 
     #[test]
+    fn parses_conditions() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            [at >= 1000 and at < 2000] 6h: R(); \
+            [not at == 0 or str(at) == \"0\" ++ \"\"] 7h: R(); \
+            [at == (1 or 2)] 8h: fill R(); } }";
+        let s = parse(src).expect("условия обязаны разбираться");
+        assert!(s.root.stmts[0].condition.is_some());
+        assert!(s.root.stmts[1].condition.is_some());
+        assert!(s.root.stmts[2].condition.is_some());
+        assert!(matches!(
+            s.root.stmts[0].condition,
+            Some(Cond::And(_))
+        ));
+        assert!(matches!(
+            s.root.stmts[1].condition,
+            Some(Cond::Or(_))
+        ));
+        match &s.root.stmts[2].condition {
+            Some(Cond::Cmp { right: CondRhs::Alt(alts), .. }) => {
+                assert_eq!(alts.len(), 2);
+            }
+            c => panic!("ожидалась альтернация, получено {c:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_unary_minus() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [-at >= -1000] 6h: R(); } }";
+        let s = parse(src).expect("унарный минус обязан разбираться");
+        match &s.root.stmts[0].condition {
+            Some(Cond::Cmp { left: Expr::Neg(_), .. }) => {}
+            c => panic!("ожидался унарный минус слева, получено {c:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bad_conditions() {        // Голое число, цепочка сравнений, `and` в альтернации — синтаксис.
+        for row in [
+            "[5] 6h: R();",
+            "[at < 1 < 2] 6h: R();",
+            "[at == (1 and 2)] 6h: R();",
+        ] {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                cycle R duration = 1h {{ 0m: A.x(); }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
+            );
+            assert!(parse(&src).is_err(), "для {row}");
+        }
+    }
+
+    #[test]
     fn ast_fixture_covers_spec_example() {
         let s = route_ast();
         assert_eq!(s.name, "Автобусный парк");
@@ -605,3 +929,4 @@ mod tests {
         assert_eq!(s.root.stmts.len(), 2);
     }
 }
+

@@ -13,22 +13,19 @@ action_list = { IDENT ~ ("," ~ IDENT)* }
 cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
-// Условие строки (§3 спеки). PEG-тонкости:
-// - `concat` (со склейкой `++`) пробуется раньше `arith`: иначе `arith`
-//   съедает строковый префикс (`"a"` из `"a" ++ "b"`) и правило падает.
-//   Обратного отравления нет: `concat` без `++` целиком не сходится
-//   и позиция сбрасывается (`at + 1` спокойно уходит в `arith`).
-// - `string`/`call`/голый `IDENT` внутри `arith` — осознанно: смешение
-//   типов (`at + "x"`) разбирается, а бракуется валидацией (E12).
+// Условия (§3 спеки). `concat` раньше `arith`: иначе `arith` съедает
+// строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).
 condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
 or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
 and_expr    = { not_expr ~ (kw_and ~ not_expr)* }
 not_expr    = { kw_not? ~ comparison }
-// Ключевые слова с границей: без неё `notx == 1` читалось бы как `not (x == 1)`.
-kw_or       = { "or" ~ !word_tail }
-kw_and      = { "and" ~ !word_tail }
-kw_not      = { "not" ~ !word_tail }
+// `notx == 1` не должно читаться как `not (x == 1)`.
+// Атомарные: пробел между словом и границей запрещён, иначе lookahead
+// смотрел бы символ после пробелов, а не сразу за словом.
+kw_or       = @{ "or" ~ !word_tail }
+kw_and      = @{ "and" ~ !word_tail }
+kw_not      = @{ "not" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
@@ -40,7 +37,7 @@ arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { "-" ? ~ (number | string | call | IDENT | "(" ~ arith ~ ")") }
+factor      = { neg_sign? ~ (number | string | call | IDENT | "(" ~ arith ~ ")") }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
 concat_term = { number | string | call | IDENT | "(" ~ concat ~ ")" }
 call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
