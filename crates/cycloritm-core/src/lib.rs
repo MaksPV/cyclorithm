@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+pub mod cond;
 pub mod datetime;
 pub mod duration;
 pub mod expand;
@@ -129,6 +130,34 @@ impl Error {
             "E10",
             format!("repeat of point action '{action}' not allowed"),
         )
+    }
+
+    /// E11: неизвестное имя в условии.
+    pub fn e11(name: &str) -> Self {
+        Self::coded("E11", format!("unknown name '{name}'"))
+    }
+
+    /// E12: смешение числа и строки в условии.
+    pub fn e12_mismatch() -> Self {
+        Self::coded(
+            "E12",
+            "type mismatch: cannot mix number and string".to_owned(),
+        )
+    }
+
+    /// E12: неверное число аргументов вызова в условии.
+    pub fn e12_arity(name: &str) -> Self {
+        Self::coded("E12", format!("wrong arguments for '{name}'"))
+    }
+
+    /// E12: деление на ноль в условии.
+    pub fn e12_divzero() -> Self {
+        Self::coded("E12", "division by zero".to_owned())
+    }
+
+    /// E12: число вне диапазона `i64` в условии.
+    pub fn e12_range(raw: &str) -> Self {
+        Self::coded("E12", format!("integer out of range '{raw}'"))
     }
 }
 

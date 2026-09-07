@@ -199,6 +199,7 @@ mod tests {
             offset: dur(raw, items),
             negative,
             repeat: cycloritm_parser::Repeat::Once,
+            condition: None,
             invocation: cycloritm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },
@@ -229,6 +230,7 @@ mod tests {
             offset: dur("2h", &[("2", Hour)]),
             negative: true,
             repeat: cycloritm_parser::Repeat::Once,
+            condition: None,
             invocation: cycloritm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },
