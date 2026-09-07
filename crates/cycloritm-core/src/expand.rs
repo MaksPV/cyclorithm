@@ -14,8 +14,8 @@
 use cycloritm_parser::{Invocation, Schedule};
 
 use crate::datetime::parse_datetime;
-use crate::duration::{effective_offset_ms, root_period_ms};
-use crate::validate::{root_actual_ms, NameTables};
+use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
+use crate::validate::{chain, root_actual_ms, NameTables};
 use crate::Error;
 
 /// Событие вывода (§2, §6): время — `i64` мс epoch, остальное — имена
@@ -50,12 +50,25 @@ pub fn expand(
     let mut k = 0.max(ceil_div(start - horizon - t0, period));
     let mut raw: Vec<RawEvent> = Vec::new();
     let mut seq: usize = 0;
+    // Период влезает в i64: пришёл из root_period_ms.
+    let period_ms = period as i64;
     while t0 + k * period < end {
         let base = t0 + k * period;
         for st in &schedule.root.stmts {
-            let offset =
-                effective_offset_ms(st, period as i64, &schedule.root.duration.raw)? as i128;
-            unfold(&st.invocation, base + offset, k, tables, &mut raw, &mut seq)?;
+            let offset = effective_offset_ms(st, period_ms, &schedule.root.duration.raw)?;
+            unfold_stmt(
+                st,
+                Frame {
+                    base,
+                    offset,
+                    limit: period_ms,
+                    limit_raw: &schedule.root.duration.raw,
+                    k,
+                },
+                tables,
+                &mut raw,
+                &mut seq,
+            )?;
         }
         k += 1;
     }
@@ -88,6 +101,33 @@ struct RawEvent {
     action: String,
 }
 
+/// Кадр развёртки строки: база родителя, эффективное смещение,
+/// длительность родителя для цепочек и номер экземпляра корня.
+struct Frame<'a> {
+    base: i128,
+    offset: i64,
+    limit: i64,
+    limit_raw: &'a str,
+    k: i128,
+}
+
+/// Развёртка строки: цепочка экземпляров по `chain` (валидация уже прошла,
+/// счёт конечен). Порядок обхода задаёт `seq` для сортировки.
+fn unfold_stmt(
+    stmt: &cycloritm_parser::Stmt,
+    frame: Frame<'_>,
+    tables: &NameTables<'_>,
+    out: &mut Vec<RawEvent>,
+    seq: &mut usize,
+) -> Result<(), Error> {
+    let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, tables)?;
+    for i in 0..count {
+        let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
+        unfold(&stmt.invocation, base, frame.k, tables, out, seq)?;
+    }
+    Ok(())
+}
+
 /// Рекурсивная развёртка вызова с накопленной базой времени.
 fn unfold(
     invocation: &Invocation,
@@ -114,12 +154,22 @@ fn unfold(
                 .cycles
                 .get(name.as_str())
                 .expect("имена уже проверены");
-            // Отрицательные смещения строк разрешаются через длительность
-            // непосредственно объемлющего цикла (§4 спеки).
-            let limit = crate::duration::duration_ms(&cycle.duration)?;
+            let limit = duration_ms(&cycle.duration)?;
             for st in &cycle.stmts {
-                let offset = effective_offset_ms(st, limit, &cycle.duration.raw)? as i128;
-                unfold(&st.invocation, base + offset, k, tables, out, seq)?;
+                let offset = effective_offset_ms(st, limit, &cycle.duration.raw)?;
+                unfold_stmt(
+                    st,
+                    Frame {
+                        base,
+                        offset,
+                        limit,
+                        limit_raw: &cycle.duration.raw,
+                        k,
+                    },
+                    tables,
+                    out,
+                    seq,
+                )?;
             }
             Ok(())
         }
@@ -291,6 +341,52 @@ mod tests {
                 "2026-01-10T07:20:00",
             ]
         );
+    }
+
+    #[test]
+    fn expands_repeat_chains() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); 80m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 2 R(); } }";
+        let (ast, t) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, s, e).unwrap()),
+            vec![
+                "2026-01-01T06:00:00",
+                "2026-01-01T07:20:00",
+                "2026-01-01T07:20:00",
+                "2026-01-01T08:40:00",
+            ]
+        );
+    }
+
+    #[test]
+    fn expands_fill_until_horizon() {
+        // Горизонт 12h, шаг 80m: 9 экземпляров, следующий (12:00) не влез.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill until 12h R(); } }";
+        let (ast, t) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, s, e).unwrap();
+        assert_eq!(events.len(), 9);
+        assert_eq!(times(&events)[8], "2026-01-01T10:40:00");
+    }
+
+    #[test]
+    fn fill_until_minus_zero_matches_fill() {
+        let base = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); 40m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { REPL } }";
+        let fill = base.replace("REPL", "0h: fill R();");
+        let until = base.replace("REPL", "0h: fill until -0m R();");
+        let (af, tf) = setup(Box::leak(fill.into_boxed_str()));
+        let (au, tu) = setup(Box::leak(until.into_boxed_str()));
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let fe = expand(af, &tf, s, e).unwrap();
+        assert_eq!(fe, expand(au, &tu, s, e).unwrap());
+        assert_eq!(fe.len(), 36);
     }
 
     #[test]

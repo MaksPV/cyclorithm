@@ -54,6 +54,23 @@ fn neg_offsets_matches_expected_json() {
 }
 
 #[test]
+fn repeat_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/repeat.cyclo",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/repeat.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn empty_window_gives_empty_events() {
     let out = run(&[
         "run",
@@ -82,6 +99,17 @@ fn validation_errors_go_to_stderr() {
             "cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)",
         ),
         ("bad_e07_neg", "offset '-2h' out of bounds (duration 1h20m)"),
+        (
+            "bad_e07_chain",
+            "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
+        ),
+        ("bad_e07_until", "until '30h' out of bounds (duration 24h)"),
+        ("bad_e10_zero", "invalid repeat count '0'"),
+        ("bad_e10_fill0", "fill of zero-duration cycle 'EMPTY'"),
+        (
+            "bad_e10_action",
+            "repeat of point action 'depart' not allowed",
+        ),
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
     ] {

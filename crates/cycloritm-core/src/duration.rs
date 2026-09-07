@@ -198,6 +198,7 @@ mod tests {
         let stmt = |negative: bool, raw: &str, items: &[(&str, DurationUnit)]| Stmt {
             offset: dur(raw, items),
             negative,
+            repeat: cycloritm_parser::Repeat::Once,
             invocation: cycloritm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },
@@ -227,6 +228,7 @@ mod tests {
         let st = Stmt {
             offset: dur("2h", &[("2", Hour)]),
             negative: true,
+            repeat: cycloritm_parser::Repeat::Once,
             invocation: cycloritm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },

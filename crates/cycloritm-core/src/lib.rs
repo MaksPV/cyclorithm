@@ -104,6 +104,32 @@ impl Error {
             format!("offset '{offset_raw}' out of bounds (duration {duration_raw})"),
         )
     }
+
+    /// E07: горизонт `until` вне `[0, duration]`.
+    pub fn e07_until(until_raw: &str, duration_raw: &str) -> Self {
+        Self::coded(
+            "E07",
+            format!("until '{until_raw}' out of bounds (duration {duration_raw})"),
+        )
+    }
+
+    /// E10: `repeat 0` и невлезающее в `u64` число.
+    pub fn e10_repeat_count(raw: &str) -> Self {
+        Self::coded("E10", format!("invalid repeat count '{raw}'"))
+    }
+
+    /// E10: `fill` по циклу нулевой длительности.
+    pub fn e10_fill_zero(name: &str) -> Self {
+        Self::coded("E10", format!("fill of zero-duration cycle '{name}'"))
+    }
+
+    /// E10: повтор действия точки (повторы только для циклов).
+    pub fn e10_repeat_action(action: &str) -> Self {
+        Self::coded(
+            "E10",
+            format!("repeat of point action '{action}' not allowed"),
+        )
+    }
 }
 
 impl fmt::Display for Error {
