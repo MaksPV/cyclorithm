@@ -680,6 +680,9 @@ mod tests {
             include_str!("../../../examples/bad_e10_action.cyclo"),
             include_str!("../../../examples/bad_e07_chain.cyclo"),
             include_str!("../../../examples/bad_e07_until.cyclo"),
+            include_str!("../../../examples/bad_e11.cyclo"),
+            include_str!("../../../examples/bad_e12.cyclo"),
+            include_str!("../../../examples/bad_e12_div.cyclo"),
         ] {
             parse(src).expect("bad_e*.cyclo обязан разбираться грамматикой");
         }

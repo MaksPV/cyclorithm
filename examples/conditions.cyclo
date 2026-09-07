@@ -1,0 +1,27 @@
+schedule "Автобусный парк" {
+  point DEPOT {
+    actions = [depart, arrive];
+  }
+
+  point AIRPORT {
+    actions = [arrive, depart];
+  }
+
+  cycle CITY_ROUTE
+    duration = 1h20m
+  {
+    0m: DEPOT.depart();
+    40m: AIRPORT.arrive();
+    50m: AIRPORT.depart();
+    80m: DEPOT.arrive();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    [at % 86400000 < 43200000] 6h: CITY_ROUTE();
+    [at % 86400000 >= 43200000] 18h: CITY_ROUTE();
+    [at == (1768003200000 or 1768089600000)] 0m: DEPOT.depart();
+  }
+}

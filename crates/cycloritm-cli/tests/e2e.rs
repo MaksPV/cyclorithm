@@ -71,6 +71,23 @@ fn repeat_matches_expected_json() {
 }
 
 #[test]
+fn conditions_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/conditions.cyclo",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/conditions.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn empty_window_gives_empty_events() {
     let out = run(&[
         "run",
@@ -110,6 +127,9 @@ fn validation_errors_go_to_stderr() {
             "bad_e10_action",
             "repeat of point action 'depart' not allowed",
         ),
+        ("bad_e11", "unknown name 'hour'"),
+        ("bad_e12", "type mismatch: cannot mix number and string"),
+        ("bad_e12_div", "division by zero"),
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
     ] {
