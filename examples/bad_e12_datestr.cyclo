@@ -1,0 +1,18 @@
+schedule "E12-datestr" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    [at >= "2026-13-01"] 6h: R();
+  }
+}

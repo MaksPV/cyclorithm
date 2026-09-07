@@ -30,5 +30,6 @@ schedule "Автобусный парк" {  point DEPOT {
     [morning(at)] 9h: CITY_ROUTE();
     [weekend(at)] 12h: CITY_ROUTE();
     [datestr(at) == "2026-01-10"] 15h: CITY_ROUTE();
+    [at >= "2026-01-10"] 20h: CITY_ROUTE();
   }
 }

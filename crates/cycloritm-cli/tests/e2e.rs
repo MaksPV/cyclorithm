@@ -130,6 +130,7 @@ fn validation_errors_go_to_stderr() {
         ("bad_e11", "unknown name 'banana'"),
         ("bad_e11_private", "unknown name '__z'"),
         ("bad_e12_recursive", "recursive definition 'a'"),
+        ("bad_e12_datestr", "invalid date '2026-13-01'"),
         ("bad_e04_dup", "duplicate const 'K'"),
         ("bad_e12", "type mismatch: cannot mix number and string"),
         ("bad_e12_div", "division by zero"),

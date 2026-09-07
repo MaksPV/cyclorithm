@@ -22,6 +22,9 @@
     {"time": "2026-01-10T16:20:00", "action": "arrive", "point": "DEPOT"},
     {"time": "2026-01-10T18:00:00", "action": "depart", "point": "DEPOT"},
     {"time": "2026-01-10T18:40:00", "action": "arrive", "point": "AIRPORT"},
-    {"time": "2026-01-10T19:20:00", "action": "arrive", "point": "DEPOT"}
+    {"time": "2026-01-10T19:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-10T20:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-10T20:40:00", "action": "arrive", "point": "AIRPORT"},
+    {"time": "2026-01-10T21:20:00", "action": "arrive", "point": "DEPOT"}
   ]
 }
