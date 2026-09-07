@@ -66,6 +66,24 @@ pub fn format_datetime(ms: i64) -> String {
     }
 }
 
+/// Каноническая форма для сравнения дат как строк (§4.13): всегда 23 символа
+/// `YYYY-MM-DDTHH:MM:SS.mmm`. Вне годов `0000…9999` формы нет — `None`.
+pub fn format_datetime_full(ms: i64) -> Option<String> {
+    let days = ms.div_euclid(MS_PER_DAY);
+    let rem = ms.rem_euclid(MS_PER_DAY);
+    let (y, mo, d) = civil_from_days(days);
+    if !(0..=9999).contains(&y) {
+        return None;
+    }
+    let h = rem / MS_PER_HOUR;
+    let mi = rem % MS_PER_HOUR / MS_PER_MIN;
+    let se = rem % MS_PER_MIN / MS_PER_SEC;
+    let milli = rem % MS_PER_SEC;
+    Some(format!(
+        "{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}.{milli:03}"
+    ))
+}
+
 /// Ровно `len` ASCII-цифр с позиции `from`. Индексы безопасны: длина входа
 /// уже проверена вызывателем (19 или 23).
 fn digits(b: &[u8], from: usize, len: usize) -> Option<i64> {
@@ -83,7 +101,7 @@ fn is_leap(y: i64) -> bool {
     y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
 }
 
-fn days_in_month(y: i64, m: i64) -> i64 {
+pub(crate) fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

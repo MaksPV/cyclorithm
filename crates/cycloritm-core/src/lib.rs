@@ -169,6 +169,11 @@ impl Error {
     pub fn e12_range(raw: &str) -> Self {
         Self::coded("E12", format!("integer out of range '{raw}'"))
     }
+
+    /// E12: кривой литерал даты в условии.
+    pub fn e12_date(raw: &str) -> Self {
+        Self::coded("E12", format!("invalid date '{raw}'"))
+    }
 }
 
 impl fmt::Display for Error {

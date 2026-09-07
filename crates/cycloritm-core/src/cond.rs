@@ -240,7 +240,8 @@ impl CxTy<'_> {
                 let lt = self.infer(left)?;
                 match right {
                     CondRhs::One(r) => {
-                        if self.infer(r)? != lt {
+                        let rt = self.infer(r)?;
+                        if lt != rt && !date_cmp_ok(left, r)? {
                             return Err(Error::e12_mismatch());
                         }
                     }
@@ -407,6 +408,69 @@ impl CxTy<'_> {
     }
 }
 
+/// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
+/// Остальное смешение — ложь, вызыватель даст `E12`.
+fn date_cmp_ok(left: &Expr, right: &Expr) -> Result<bool, Error> {
+    let lit = match (left, right) {
+        (Expr::At, Expr::Str(s)) | (Expr::Str(s), Expr::At) => s,
+        _ => return Ok(false),
+    };
+    normalize_date_literal(lit)?;
+    Ok(true)
+}
+
+/// Строковый литерал даты к канонической форме `YYYY-MM-DDTHH:MM:SS.mmm`.
+/// Короткие формы дополняются нулями; кривой литерал — `E12`.
+fn normalize_date_literal(raw: &str) -> Result<String, Error> {
+    let bad = || Error::e12_date(raw);
+    let b = raw.as_bytes();
+    // Фиксированные длины: 10 дата, 16 +часы:минуты, 19 +секунды, 23 +милли.
+    let full = match b.len() {
+        10 => format!("{raw}T00:00:00.000"),
+        16 => format!("{raw}:00.000"),
+        19 => format!("{raw}.000"),
+        23 => raw.to_owned(),
+        _ => return Err(bad()),
+    };
+    let f = full.as_bytes();
+    if f[4] != b'-'
+        || f[7] != b'-'
+        || f[10] != b'T'
+        || f[13] != b':'
+        || f[16] != b':'
+        || f[19] != b'.'
+    {
+        return Err(bad());
+    }
+    let num = |from: usize, len: usize| {
+        f[from..from + len].iter().try_fold(0i64, |v, &c| {
+            if c.is_ascii_digit() {
+                Some(v * 10 + (c - b'0') as i64)
+            } else {
+                None
+            }
+        })
+    };
+    let y = num(0, 4).ok_or_else(bad)?;
+    let mo = num(5, 2).ok_or_else(bad)?;
+    let d = num(8, 2).ok_or_else(bad)?;
+    let h = num(11, 2).ok_or_else(bad)?;
+    let mi = num(14, 2).ok_or_else(bad)?;
+    let se = num(17, 2).ok_or_else(bad)?;
+    num(20, 3).ok_or_else(bad)?;
+    // Год — ровно 4 цифры, уже в `0000…9999`; остальное — диапазоны календаря.
+    if !(1..=12).contains(&mo)
+        || d < 1
+        || d > crate::datetime::days_in_month(y, mo)
+        || h > 23
+        || mi > 59
+        || se > 59
+    {
+        return Err(bad());
+    }
+    Ok(full)
+}
+
 /// Вычисление константы; `None` — внутри есть `at` или параметр.
 fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
     if has_at(expr) || has_param(expr, cx) {
@@ -546,9 +610,26 @@ impl CxEv<'_> {
             Cond::Cmp { op, left, right } => {
                 let l = eval_expr(left, at, self)?;
                 match right {
-                    CondRhs::One(r) => {
-                        let r = eval_expr(r, at, self)?;
-                        cmp_values(*op, &l, &r)
+                    CondRhs::One(rexpr) => {
+                        let r = eval_expr(rexpr, at, self)?;
+                        // Голый `at` рядом со строкой: проверка уже пропустила
+                        // только эту форму смешения — приводим здесь.
+                        let canonical = || {
+                            crate::datetime::format_datetime_full(at).ok_or_else(|| {
+                                Error::e12_date(&crate::datetime::format_datetime(at))
+                            })
+                        };
+                        match (&l, &r, left, rexpr) {
+                            (Value::Num(_), Value::Str(_), Expr::At, Expr::Str(lit)) => {
+                                let norm = normalize_date_literal(lit)?;
+                                cmp_values(*op, &Value::Str(canonical()?), &Value::Str(norm))
+                            }
+                            (Value::Str(_), Value::Num(_), Expr::Str(lit), Expr::At) => {
+                                let norm = normalize_date_literal(lit)?;
+                                cmp_values(*op, &Value::Str(norm), &Value::Str(canonical()?))
+                            }
+                            _ => cmp_values(*op, &l, &r),
+                        }
                     }
                     CondRhs::Alt(alts) => {
                         if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
@@ -994,7 +1075,6 @@ mod tests {
         let e = defs_of("const a = 1; fun a(t) = t;").expect_err("дубль — ошибка");
         assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate fun 'a'"));
     }
-
     #[test]
     fn fun_of_non_predicate_is_error() {
         let e = static_err("hour(at)");
@@ -1002,5 +1082,56 @@ mod tests {
             (e.code, e.message.as_str()),
             ("E12", "'hour' is not a predicate")
         );
+    }
+
+    #[test]
+    fn bare_at_compares_with_date_strings() {
+        // 2026-01-01T00:00:00 = 1767225600000 мс epoch.
+        let new_year = 1_767_225_600_000;
+        assert!(yes("at == \"2026-01-01\"", new_year));
+        assert!(yes("at < \"2026-06-01\"", new_year + 1));
+        assert!(no("at == \"2026-01-01\"", new_year + 1));
+        assert!(yes("\"2026-01-01\" <= at", new_year));
+        assert!(yes("at == \"2026-01-01T00:00\"", new_year));
+        assert!(yes("at == \"2026-01-01T00:00:00.000\"", new_year));
+        assert!(no("at < \"2026-01-01\"", new_year));
+        // Каноника совпадает с datetimestr прелюдии.
+        assert!(yes("datetimestr(at) >= \"2026-01-01\"", new_year));
+    }
+
+    #[test]
+    fn rejects_bad_date_literals() {
+        for raw in [
+            "tomorrow",
+            "2026-13-01",
+            "2026-02-30",
+            "2026-01-01T24:00:00",
+            "2026-01-01T00:00:00.12",
+            "2026-1-1",
+        ] {
+            let e = static_err(&format!("at >= \"{raw}\""));
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("E12", format!("invalid date '{raw}'").as_str()),
+                "для {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_mixing_beyond_bare_at() {
+        // Не голый `at` и не литерал — обычное смешение.
+        for row in [
+            "hour(at) >= \"2026\"",
+            "at + 1 >= \"2026-01-01\"",
+            "at >= datestr(at)",
+        ] {
+            let e = static_err(row);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("E12", "type mismatch: cannot mix number and string"),
+                "для {row:?}"
+            );
+        }
     }
 }
