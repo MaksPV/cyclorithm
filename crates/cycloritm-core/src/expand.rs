@@ -13,6 +13,7 @@
 
 use cycloritm_parser::{Invocation, Schedule};
 
+use crate::cond::eval_cond;
 use crate::datetime::parse_datetime;
 use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
 use crate::validate::{chain, root_actual_ms, NameTables};
@@ -123,6 +124,12 @@ fn unfold_stmt(
     let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, tables)?;
     for i in 0..count {
         let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
+        if let Some(cond) = &stmt.condition {
+            let at = i64::try_from(base).unwrap_or(i64::MAX);
+            if !eval_cond(cond, at)? {
+                continue;
+            }
+        }
         unfold(&stmt.invocation, base, frame.k, tables, out, seq)?;
     }
     Ok(())
@@ -387,6 +394,51 @@ mod tests {
         let fe = expand(af, &tf, s, e).unwrap();
         assert_eq!(fe, expand(au, &tu, s, e).unwrap());
         assert_eq!(fe.len(), 36);
+    }
+
+    #[test]
+    fn skips_rows_with_false_condition() {
+        // 2026-01-01T06:00:00 = 1767247200000 мс epoch.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            [at >= 1767247200000] 6h: R(); [at < 1767290400000] 18h: R(); } }";
+        let (ast, t) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, s, e).unwrap()),
+            vec!["2026-01-01T06:00:00"]
+        );
+    }
+
+    #[test]
+    fn false_parent_kills_nested_events() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle INNER duration = 1h { 0m: A.x(); } \
+            cycle OUTER duration = 2h { 0m: INNER(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            [at < 0] 6h: OUTER(); 6h: OUTER(); } }";
+        let (ast, t) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, s, e).unwrap()),
+            vec!["2026-01-01T06:00:00"]
+        );
+    }
+
+    #[test]
+    fn condition_filters_repeat_instances() {
+        // `fill` без условия дал бы 18 экземпляров; условие режет все после 01:20.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            [at < 1767231000000] 0h: fill R(); } }";
+        let (ast, t) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, s, e).unwrap()),
+            vec!["2026-01-01T00:00:00", "2026-01-01T01:20:00"]
+        );
     }
 
     #[test]

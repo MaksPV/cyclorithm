@@ -4,6 +4,7 @@
 //! - любая ошибка ввода/валидации → текст в stderr, в stdout ничего, код 1;
 //! - неверные аргументы → usage в stderr, код 2.
 
+use cycloritm_core::cond::check_conditions;
 use cycloritm_core::datetime::{format_datetime, parse_datetime};
 use cycloritm_core::expand::expand;
 use cycloritm_core::validate::{check_bounds, check_recursion, validate_names};
@@ -39,6 +40,7 @@ fn run() -> i32 {
     let tables = match validate_names(&ast)
         .and_then(|t| check_recursion(&ast, &t).map(|()| t))
         .and_then(|t| check_bounds(&ast, &t).map(|()| t))
+        .and_then(|t| check_conditions(&ast).map(|()| t))
     {
         Ok(t) => t,
         Err(e) => {

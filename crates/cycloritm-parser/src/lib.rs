@@ -89,10 +89,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     let mut first = inner.next().expect("stmt: условие, минус или смещение");
     let mut condition = None;
     if first.as_rule() == Rule::condition_block {
-        let cond = first
-            .into_inner()
-            .next()
-            .expect("condition_block: условие");
+        let cond = first.into_inner().next().expect("condition_block: условие");
         condition = Some(build_cond(cond));
         first = inner.next().expect("stmt: смещение или минус");
     }
@@ -321,7 +318,11 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
         (false, first)
     };
     let expr = build_value(value);
-    if negated { Expr::Neg(Box::new(expr)) } else { expr }
+    if negated {
+        Expr::Neg(Box::new(expr))
+    } else {
+        expr
+    }
 }
 
 /// Лист выражения: число, строка, вызов, имя (`at` — значение, остальное
@@ -875,16 +876,13 @@ mod tests {
         assert!(s.root.stmts[0].condition.is_some());
         assert!(s.root.stmts[1].condition.is_some());
         assert!(s.root.stmts[2].condition.is_some());
-        assert!(matches!(
-            s.root.stmts[0].condition,
-            Some(Cond::And(_))
-        ));
-        assert!(matches!(
-            s.root.stmts[1].condition,
-            Some(Cond::Or(_))
-        ));
+        assert!(matches!(s.root.stmts[0].condition, Some(Cond::And(_))));
+        assert!(matches!(s.root.stmts[1].condition, Some(Cond::Or(_))));
         match &s.root.stmts[2].condition {
-            Some(Cond::Cmp { right: CondRhs::Alt(alts), .. }) => {
+            Some(Cond::Cmp {
+                right: CondRhs::Alt(alts),
+                ..
+            }) => {
                 assert_eq!(alts.len(), 2);
             }
             c => panic!("ожидалась альтернация, получено {c:?}"),
@@ -898,13 +896,16 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [-at >= -1000] 6h: R(); } }";
         let s = parse(src).expect("унарный минус обязан разбираться");
         match &s.root.stmts[0].condition {
-            Some(Cond::Cmp { left: Expr::Neg(_), .. }) => {}
+            Some(Cond::Cmp {
+                left: Expr::Neg(_), ..
+            }) => {}
             c => panic!("ожидался унарный минус слева, получено {c:?}"),
         }
     }
 
     #[test]
-    fn rejects_bad_conditions() {        // Голое число, цепочка сравнений, `and` в альтернации — синтаксис.
+    fn rejects_bad_conditions() {
+        // Голое число, цепочка сравнений, `and` в альтернации — синтаксис.
         for row in [
             "[5] 6h: R();",
             "[at < 1 < 2] 6h: R();",
@@ -929,4 +930,3 @@ mod tests {
         assert_eq!(s.root.stmts.len(), 2);
     }
 }
-
