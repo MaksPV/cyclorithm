@@ -155,6 +155,16 @@ impl Error {
         Self::coded("E12", "division by zero".to_owned())
     }
 
+    /// E12: рекурсивное определение.
+    pub fn e12_recursive(name: &str) -> Self {
+        Self::coded("E12", format!("recursive definition '{name}'"))
+    }
+
+    /// E12: вызов не-предиката в позиции условия.
+    pub fn e12_not_pred(name: &str) -> Self {
+        Self::coded("E12", format!("'{name}' is not a predicate"))
+    }
+
     /// E12: число вне диапазона `i64` в условии.
     pub fn e12_range(raw: &str) -> Self {
         Self::coded("E12", format!("integer out of range '{raw}'"))

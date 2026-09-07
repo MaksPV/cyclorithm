@@ -13,7 +13,7 @@
 
 use cycloritm_parser::{Invocation, Schedule};
 
-use crate::cond::eval_cond;
+use crate::cond::{eval_cond, Defs};
 use crate::datetime::parse_datetime;
 use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
 use crate::validate::{chain, root_actual_ms, NameTables};
@@ -33,6 +33,7 @@ pub struct Event {
 pub fn expand(
     schedule: &Schedule,
     tables: &NameTables<'_>,
+    defs: &Defs,
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Vec<Event>, Error> {
@@ -67,6 +68,7 @@ pub fn expand(
                     k,
                 },
                 tables,
+                defs,
                 &mut raw,
                 &mut seq,
             )?;
@@ -118,6 +120,7 @@ fn unfold_stmt(
     stmt: &cycloritm_parser::Stmt,
     frame: Frame<'_>,
     tables: &NameTables<'_>,
+    defs: &Defs,
     out: &mut Vec<RawEvent>,
     seq: &mut usize,
 ) -> Result<(), Error> {
@@ -126,11 +129,11 @@ fn unfold_stmt(
         let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
         if let Some(cond) = &stmt.condition {
             let at = i64::try_from(base).unwrap_or(i64::MAX);
-            if !eval_cond(cond, at)? {
+            if !eval_cond(cond, at, defs)? {
                 continue;
             }
         }
-        unfold(&stmt.invocation, base, frame.k, tables, out, seq)?;
+        unfold(&stmt.invocation, base, frame.k, tables, defs, out, seq)?;
     }
     Ok(())
 }
@@ -141,6 +144,7 @@ fn unfold(
     base: i128,
     k: i128,
     tables: &NameTables<'_>,
+    defs: &Defs,
     out: &mut Vec<RawEvent>,
     seq: &mut usize,
 ) -> Result<(), Error> {
@@ -174,6 +178,7 @@ fn unfold(
                         k,
                     },
                     tables,
+                    defs,
                     out,
                     seq,
                 )?;
@@ -186,16 +191,26 @@ fn unfold(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cond::{check_conditions, resolve_defs, Defs};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, validate_names};
 
-    fn setup(src: &str) -> (&'static cycloritm_parser::Schedule, NameTables<'static>) {
-        let ast: &'static cycloritm_parser::Schedule =
+    fn setup(
+        src: &str,
+    ) -> (
+        &'static cycloritm_parser::Schedule,
+        NameTables<'static>,
+        &'static Defs,
+    ) {
+        let file: &'static cycloritm_parser::SourceFile =
             Box::leak(Box::new(cycloritm_parser::parse(src).unwrap()));
+        let ast: &'static cycloritm_parser::Schedule = &file.schedule;
         let t = validate_names(ast).unwrap();
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();
-        (ast, t)
+        let d: &'static Defs = Box::leak(Box::new(resolve_defs(&file.decls).unwrap()));
+        check_conditions(ast, d).unwrap();
+        (ast, t, d)
     }
 
     fn window(start: &str, end: &str) -> (i64, i64) {
@@ -210,9 +225,9 @@ mod tests {
     fn expands_route_like_expected_json() {
         // Контракт §1: окно и все 8 событий дословно как route.expected.json.
         let src = include_str!("../../../examples/route.cyclo");
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-10T00:00:00", "2026-01-11T00:00:00");
-        let events = expand(ast, &t, s, e).unwrap();
+        let events = expand(ast, &t, d, s, e).unwrap();
         let got: Vec<(String, String, String)> = events
             .iter()
             .map(|ev| {
@@ -273,16 +288,16 @@ mod tests {
     #[test]
     fn empty_window_and_window_before_anchor() {
         let src = include_str!("../../../examples/route.cyclo");
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         // end <= start — пусто без ошибки.
         let (s, e) = window("2026-01-11T00:00:00", "2026-01-10T00:00:00");
-        assert_eq!(expand(ast, &t, s, e).unwrap(), vec![]);
+        assert_eq!(expand(ast, &t, d, s, e).unwrap(), vec![]);
         // Окно целиком до start_time — пусто.
         let (s, e) = window("2025-12-30T00:00:00", "2025-12-31T00:00:00");
-        assert_eq!(expand(ast, &t, s, e).unwrap(), vec![]);
+        assert_eq!(expand(ast, &t, d, s, e).unwrap(), vec![]);
         // Окно встык к границе экземпляра: событие на end не входит.
         let (s, e) = window("2026-01-10T06:00:00", "2026-01-10T06:00:00");
-        assert_eq!(expand(ast, &t, s, e).unwrap(), vec![]);
+        assert_eq!(expand(ast, &t, d, s, e).unwrap(), vec![]);
     }
 
     #[test]
@@ -291,9 +306,9 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x, y]; } \
             cycle R duration = 1h { 0m: A.x(); 0m: A.y(); 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
-        let events = expand(ast, &t, s, e).unwrap();
+        let events = expand(ast, &t, d, s, e).unwrap();
         assert_eq!(times(&events), vec!["2026-01-01T06:00:00"; 3]);
         let actions: Vec<&str> = events.iter().map(|ev| ev.action.as_str()).collect();
         assert_eq!(actions, vec!["x", "y", "x"]);
@@ -306,9 +321,9 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 1h { 0m: A.x(); 60m: A.x(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-01T02:00:00");
-        let events = expand(ast, &t, s, e).unwrap();
+        let events = expand(ast, &t, d, s, e).unwrap();
         // k=0: 00:00, 01:00; k=1: 01:00, 02:00(исключено концом окна).
         assert_eq!(
             times(&events),
@@ -332,15 +347,15 @@ mod tests {
         let pos = neg
             .replace("-10m: AIRPORT.depart()", "70m: AIRPORT.depart()")
             .replace("-0m: DEPOT.arrive()", "80m: DEPOT.arrive()");
-        let (an, tn) = setup(neg);
-        let (ap, tp) = setup(Box::leak(pos.into_boxed_str()));
+        let (an, tn, dn) = setup(neg);
+        let (ap, tp, dp) = setup(Box::leak(pos.into_boxed_str()));
         let (s, e) = window("2026-01-10T00:00:00", "2026-01-11T00:00:00");
         assert_eq!(
-            expand(an, &tn, s, e).unwrap(),
-            expand(ap, &tp, s, e).unwrap()
+            expand(an, &tn, dn, s, e).unwrap(),
+            expand(ap, &tp, dp, s, e).unwrap()
         );
         assert_eq!(
-            times(&expand(an, &tn, s, e).unwrap()),
+            times(&expand(an, &tn, dn, s, e).unwrap()),
             vec![
                 "2026-01-10T06:00:00",
                 "2026-01-10T06:40:00",
@@ -355,10 +370,10 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h20m { 0m: A.x(); 80m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 2 R(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
-            times(&expand(ast, &t, s, e).unwrap()),
+            times(&expand(ast, &t, d, s, e).unwrap()),
             vec![
                 "2026-01-01T06:00:00",
                 "2026-01-01T07:20:00",
@@ -374,9 +389,9 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h20m { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill until 12h R(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
-        let events = expand(ast, &t, s, e).unwrap();
+        let events = expand(ast, &t, d, s, e).unwrap();
         assert_eq!(events.len(), 9);
         assert_eq!(times(&events)[8], "2026-01-01T10:40:00");
     }
@@ -388,11 +403,11 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { REPL } }";
         let fill = base.replace("REPL", "0h: fill R();");
         let until = base.replace("REPL", "0h: fill until -0m R();");
-        let (af, tf) = setup(Box::leak(fill.into_boxed_str()));
-        let (au, tu) = setup(Box::leak(until.into_boxed_str()));
+        let (af, tf, df) = setup(Box::leak(fill.into_boxed_str()));
+        let (au, tu, du) = setup(Box::leak(until.into_boxed_str()));
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
-        let fe = expand(af, &tf, s, e).unwrap();
-        assert_eq!(fe, expand(au, &tu, s, e).unwrap());
+        let fe = expand(af, &tf, df, s, e).unwrap();
+        assert_eq!(fe, expand(au, &tu, du, s, e).unwrap());
         assert_eq!(fe.len(), 36);
     }
 
@@ -403,10 +418,10 @@ mod tests {
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
             [at >= 1767247200000] 6h: R(); [at < 1767290400000] 18h: R(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
-            times(&expand(ast, &t, s, e).unwrap()),
+            times(&expand(ast, &t, d, s, e).unwrap()),
             vec!["2026-01-01T06:00:00"]
         );
     }
@@ -418,10 +433,10 @@ mod tests {
             cycle OUTER duration = 2h { 0m: INNER(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
             [at < 0] 6h: OUTER(); 6h: OUTER(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
-            times(&expand(ast, &t, s, e).unwrap()),
+            times(&expand(ast, &t, d, s, e).unwrap()),
             vec!["2026-01-01T06:00:00"]
         );
     }
@@ -433,10 +448,10 @@ mod tests {
             cycle R duration = 1h20m { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
             [at < 1767231000000] 0h: fill R(); } }";
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
-            times(&expand(ast, &t, s, e).unwrap()),
+            times(&expand(ast, &t, d, s, e).unwrap()),
             vec!["2026-01-01T00:00:00", "2026-01-01T01:20:00"]
         );
     }
@@ -445,9 +460,9 @@ mod tests {
     fn builds_only_covering_instances() {
         // Окно внутри второго периода: строится ровно экземпляр k=1.
         let src = include_str!("../../../examples/route.cyclo");
-        let (ast, t) = setup(src);
+        let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-02T06:30:00", "2026-01-02T07:00:00");
-        let events = expand(ast, &t, s, e).unwrap();
+        let events = expand(ast, &t, d, s, e).unwrap();
         assert_eq!(
             times(&events),
             vec!["2026-01-02T06:40:00", "2026-01-02T06:50:00"]

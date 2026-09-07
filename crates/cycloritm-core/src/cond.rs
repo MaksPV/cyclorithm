@@ -1,11 +1,14 @@
-//! Условия строк (§3–§5 спеки): типизация и вычисление.
+//! Условия строк (§3–§5 спеки): объявления, подстановка, вычисление.
 //!
-//! Всё, кроме значения `at`, известно статически: проверка типов,
-//! имён, арностей и константного деления на ноль идёт валидацией
-//! (`check_conditions`, E11/E12) в порядке объявления, деление
-//! на ноль выражением ловится вычислением в момент строки (тоже E12).
+//! Определения (`const`/`fun`/`pred` + системный файл) раскрываются
+//! через окружение — для чистых выражений это та же подстановка.
+//! Проверки в порядке объявления: дубли (E04), тела (E11/E12, рекурсия),
+//! затем строки. Константное деление на ноль ловится статически,
+//! деление нулём выражения — вычислением в момент строки (тоже E12).
 
-use cycloritm_parser::{ArithOp, CmpOp, Cond, CondRhs, Expr, Schedule};
+use std::collections::{HashMap, HashSet};
+
+use cycloritm_parser::{ArithOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
 
 use crate::Error;
 
@@ -22,128 +25,401 @@ enum Ty {
     Str,
 }
 
-/// Проверить все условия файла в порядке объявления: сначала циклы,
-// затем `root_cycle`. Первая ошибка побеждает.
-pub fn check_conditions(schedule: &Schedule) -> Result<(), Error> {
-    for c in &schedule.cycles {
-        for st in &c.stmts {
-            if let Some(cond) = &st.condition {
-                check_cond(cond)?;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DefKind {
+    Const,
+    Fun,
+    Pred,
+}
+
+#[derive(Debug, Clone)]
+struct Def {
+    kind: DefKind,
+    param: Option<String>,
+    expr: Option<Expr>,
+    cond: Option<Cond>,
+    system: bool,
+    private: bool,
+}
+
+/// Итоговое пространство имён: системный файл, поверх — программа.
+// Побеждает последнее; `__` системного файла извне не видно.
+#[derive(Debug)]
+pub struct Defs {
+    map: HashMap<String, Def>,
+    order: Vec<String>,
+}
+
+static PRELUDE: &str = include_str!("std.cyclo");
+
+/// Собрать определения: оверлей программы поверх системных,
+// затем проверить все тела в порядке объявления (сначала прелюдия).
+pub fn resolve_defs(decls: &[Decl]) -> Result<Defs, Error> {
+    let system = cycloritm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
+    let mut map = HashMap::new();
+    let mut sys_order = Vec::new();
+    for d in &system {
+        let (name, def) = to_def(d, true);
+        if !map.contains_key(&name) {
+            sys_order.push(name.clone());
+        }
+        map.insert(name, def);
+    }
+    let mut order = Vec::new();
+    let mut seen = HashSet::new();
+    for d in decls {
+        let (name, kind) = match d {
+            Decl::Const { name, .. } => (name, "const"),
+            Decl::Fun { name, .. } => (name, "fun"),
+            Decl::Pred { name, .. } => (name, "pred"),
+        };
+        if !seen.insert(name.clone()) {
+            return Err(Error::e04(kind, name));
+        }
+        order.push(name.clone());
+        let (_, def) = to_def(d, false);
+        map.insert(name.clone(), def);
+    }
+    let defs = Defs { map, order };
+    let all: Vec<String> = sys_order
+        .into_iter()
+        .chain(defs.order.iter().cloned())
+        .collect();
+    for name in &all {
+        check_def(&defs, name)?;
+    }
+    Ok(defs)
+}
+
+fn to_def(decl: &Decl, system: bool) -> (String, Def) {
+    match decl {
+        Decl::Const { name, body } => (
+            name.clone(),
+            Def {
+                kind: DefKind::Const,
+                param: None,
+                expr: Some(body.clone()),
+                cond: None,
+                system,
+                private: system && name.starts_with("__"),
+            },
+        ),
+        Decl::Fun { name, param, body } => (
+            name.clone(),
+            Def {
+                kind: DefKind::Fun,
+                param: Some(param.clone()),
+                expr: Some(body.clone()),
+                cond: None,
+                system,
+                private: system && name.starts_with("__"),
+            },
+        ),
+        Decl::Pred { name, body } => (
+            name.clone(),
+            Def {
+                kind: DefKind::Pred,
+                param: Some("at".to_owned()),
+                expr: None,
+                cond: Some(body.clone()),
+                system,
+                private: system && name.starts_with("__"),
+            },
+        ),
+    }
+}
+
+fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
+    let def = defs.map.get(name).expect("своё имя");
+    // Системные тела проверяются изнутри прелюдии: `__` видно.
+    let mut cx = CxTy {
+        defs,
+        stack: vec![(name.to_owned(), !def.system)],
+        sys: def.system,
+        vars: HashMap::new(),
+    };
+    match def.kind {
+        DefKind::Const => {
+            let body = def.expr.as_ref().expect("const: тело");
+            if cx.infer(body)? != Ty::Num {
+                return Err(Error::e12_mismatch());
             }
         }
-    }
-    for st in &schedule.root.stmts {
-        if let Some(cond) = &st.condition {
-            check_cond(cond)?;
+        DefKind::Fun => {
+            let body = def.expr.as_ref().expect("fun: тело");
+            cx.vars
+                .insert(def.param.clone().expect("fun: параметр"), Ty::Num);
+            cx.infer(body)?;
+        }
+        DefKind::Pred => {
+            let body = def.cond.as_ref().expect("pred: тело");
+            cx.vars.insert("at".to_owned(), Ty::Num);
+            cx.infer_cond(body)?;
         }
     }
     Ok(())
 }
 
-fn check_cond(cond: &Cond) -> Result<(), Error> {
-    match cond {
-        Cond::Or(cs) | Cond::And(cs) => cs.iter().try_for_each(check_cond),
-        Cond::Not(c) => check_cond(c),
-        Cond::Cmp { left, right, .. } => {
-            let lt = check_expr(left)?;
-            match right {
-                CondRhs::One(r) => {
-                    if check_expr(r)? != lt {
-                        return Err(Error::e12_mismatch());
-                    }
+struct CxTy<'a> {
+    defs: &'a Defs,
+    stack: Vec<(String, bool)>,
+    sys: bool,
+    vars: HashMap<String, Ty>,
+}
+
+struct CxEv<'a> {
+    defs: &'a Defs,
+    stack: Vec<(String, bool)>,
+    sys: bool,
+    vars: HashMap<String, Value>,
+}
+
+fn resolve<'a>(defs: &'a Defs, name: &str, sys: bool) -> Result<&'a Def, Error> {
+    match defs.map.get(name) {
+        Some(d) if d.private && !sys => Err(Error::e11(name)),
+        Some(d) => Ok(d),
+        None => Err(Error::e11(name)),
+    }
+}
+
+/// Проверить все условия файла в порядке объявления: циклы, затем корень.
+pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
+    for c in &schedule.cycles {
+        for st in &c.stmts {
+            if let Some(cond) = &st.condition {
+                CxTy {
+                    defs,
+                    stack: Vec::new(),
+                    sys: false,
+                    vars: HashMap::new(),
                 }
-                CondRhs::Alt(alts) => {
-                    for a in alts {
-                        if check_expr(a)? != Ty::Num {
+                .infer_cond(cond)?;
+            }
+        }
+    }
+    for st in &schedule.root.stmts {
+        if let Some(cond) = &st.condition {
+            CxTy {
+                defs,
+                stack: Vec::new(),
+                sys: false,
+                vars: HashMap::new(),
+            }
+            .infer_cond(cond)?;
+        }
+    }
+    Ok(())
+}
+
+impl CxTy<'_> {
+    fn infer_cond(&mut self, cond: &Cond) -> Result<(), Error> {
+        match cond {
+            Cond::Or(cs) | Cond::And(cs) => cs.iter().try_for_each(|c| self.infer_cond(c)),
+            Cond::Not(c) => self.infer_cond(c),
+            Cond::Pred { name, args } => {
+                let arg = match args.as_slice() {
+                    [a] => a,
+                    _ => return Err(Error::e12_arity(name)),
+                };
+                if self.infer(arg)? != Ty::Num {
+                    return Err(Error::e12_mismatch());
+                }
+                let defs = self.defs;
+                let def = resolve(defs, name, self.sys)?;
+                match def.kind {
+                    DefKind::Pred => {}
+                    _ => return Err(Error::e12_not_pred(name)),
+                };
+                self.enter(name, def.system)?;
+                let body = def.cond.clone().expect("pred: тело");
+                let r = self.infer_cond(&body);
+                self.leave();
+                r
+            }
+            Cond::Cmp { left, right, .. } => {
+                let lt = self.infer(left)?;
+                match right {
+                    CondRhs::One(r) => {
+                        if self.infer(r)? != lt {
                             return Err(Error::e12_mismatch());
                         }
                     }
-                    if lt != Ty::Num {
+                    CondRhs::Alt(alts) => {
+                        for a in alts {
+                            if self.infer(a)? != Ty::Num {
+                                return Err(Error::e12_mismatch());
+                            }
+                        }
+                        if lt != Ty::Num {
+                            return Err(Error::e12_mismatch());
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn infer(&mut self, expr: &Expr) -> Result<Ty, Error> {
+        match expr {
+            Expr::Num(raw) => {
+                raw.parse::<i64>().map_err(|_| Error::e12_range(raw))?;
+                Ok(Ty::Num)
+            }
+            Expr::Str(_) => Ok(Ty::Str),
+            Expr::At => Ok(Ty::Num),
+            Expr::Name(name) => {
+                if let Some(ty) = self.vars.get(name) {
+                    return Ok(*ty);
+                }
+                // Голая константа (K, DAY); fun/pred без вызова — не значение.
+                let defs = self.defs;
+                let def = resolve(defs, name, self.sys)?;
+                match def.kind {
+                    DefKind::Const => {
+                        self.enter(name, def.system)?;
+                        let body = def.expr.clone().expect("const: тело");
+                        let ty = self.infer(&body);
+                        self.leave();
+                        ty
+                    }
+                    DefKind::Fun | DefKind::Pred => Err(Error::e12_mismatch()),
+                }
+            }
+            Expr::Neg(x) => self.infer(x),
+            Expr::Truth(c) => {
+                self.infer_cond(c)?;
+                Ok(Ty::Num)
+            }
+            Expr::Bin { left, right, .. } => {
+                if self.infer(left)? != Ty::Num || self.infer(right)? != Ty::Num {
+                    return Err(Error::e12_mismatch());
+                }
+                if let Some(Err(e)) = self.const_div(right) {
+                    return Err(e);
+                }
+                Ok(Ty::Num)
+            }
+            Expr::Concat(xs) => {
+                for x in xs {
+                    if self.infer(x)? != Ty::Str {
                         return Err(Error::e12_mismatch());
                     }
                 }
+                Ok(Ty::Str)
             }
-            Ok(())
+            Expr::Call { name, args } => self.infer_call(name, args),
         }
     }
-}
 
-/// Тип выражения + заодно: неизвестные имена (E11), арности (E12),
-/// переполнение литералов (E12), константное деление на ноль (E12).
-fn check_expr(expr: &Expr) -> Result<Ty, Error> {
-    match expr {
-        Expr::Num(raw) => {
-            raw.parse::<i64>().map_err(|_| Error::e12_range(raw))?;
-            Ok(Ty::Num)
-        }
-        Expr::Str(_) => Ok(Ty::Str),
-        Expr::At => Ok(Ty::Num),
-        Expr::Name(name) => Err(Error::e11(name)),
-        Expr::Neg(x) => check_expr(x),
-        Expr::Bin { left, right, .. } => {
-            if check_expr(left)? != Ty::Num || check_expr(right)? != Ty::Num {
-                return Err(Error::e12_mismatch());
+    fn infer_call(&mut self, name: &str, args: &[Expr]) -> Result<Ty, Error> {
+        match name {
+            "str" | "pad" if !self.defs.map.contains_key(name) => {
+                let want = if name == "str" { 1 } else { 2 };
+                if args.len() != want {
+                    return Err(Error::e12_arity(name));
+                }
+                for a in args {
+                    if self.infer(a)? != Ty::Num {
+                        return Err(Error::e12_mismatch());
+                    }
+                }
+                Ok(Ty::Str)
             }
-            if let Some(Err(e)) = const_div(right) {
-                return Err(e);
-            }
-            Ok(Ty::Num)
-        }
-        Expr::Concat(xs) => {
-            for x in xs {
-                if check_expr(x)? != Ty::Str {
+            // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
+            "floordiv" | "floormod" if !self.defs.map.contains_key(name) => {
+                let [a, b] = args else {
+                    return Err(Error::e12_arity(name));
+                };
+                if self.infer(a)? != Ty::Num || self.infer(b)? != Ty::Num {
                     return Err(Error::e12_mismatch());
                 }
+                if let Some(Err(e)) = self.const_div(b) {
+                    return Err(e);
+                }
+                Ok(Ty::Num)
             }
-            Ok(Ty::Str)
-        }
-        Expr::Call { name, args } => check_call(name, args),
-    }
-}
-
-fn check_call(name: &str, args: &[Expr]) -> Result<Ty, Error> {
-    match name {
-        "str" => {
-            if args.len() != 1 {
-                return Err(Error::e12_arity(name));
-            }
-            if check_expr(&args[0])? != Ty::Num {
-                return Err(Error::e12_mismatch());
-            }
-            Ok(Ty::Str)
-        }
-        "pad" => {
-            if args.len() != 2 {
-                return Err(Error::e12_arity(name));
-            }
-            for a in args {
-                if check_expr(a)? != Ty::Num {
-                    return Err(Error::e12_mismatch());
+            _ => {
+                let defs = self.defs;
+                let def = resolve(defs, name, self.sys)?;
+                match def.kind {
+                    DefKind::Const => {
+                        if !args.is_empty() {
+                            return Err(Error::e12_arity(name));
+                        }
+                        self.enter(name, def.system)?;
+                        let body = def.expr.clone().expect("const: тело");
+                        let ty = self.infer(&body);
+                        self.leave();
+                        ty
+                    }
+                    DefKind::Fun => {
+                        let arg = match args {
+                            [a] => a,
+                            _ => return Err(Error::e12_arity(name)),
+                        };
+                        let arg_ty = self.infer(arg)?;
+                        self.enter(name, def.system)?;
+                        let param = def.param.clone().expect("fun: параметр");
+                        let body = def.expr.clone().expect("fun: тело");
+                        // Восстановить внешнее значение: параметры вложенных
+                        // вызовов часто зовутся так же (`t` в прелюдии).
+                        let old = self.vars.insert(param.clone(), arg_ty);
+                        let ty = self.infer(&body);
+                        match old {
+                            Some(v) => {
+                                self.vars.insert(param, v);
+                            }
+                            None => {
+                                self.vars.remove(&param);
+                            }
+                        }
+                        self.leave();
+                        ty
+                    }
+                    DefKind::Pred => Err(Error::e12_mismatch()),
                 }
             }
-            Ok(Ty::Str)
         }
-        _ => Err(Error::e11(name)),
+    }
+
+    fn enter(&mut self, name: &str, sys: bool) -> Result<(), Error> {
+        if self.stack.iter().any(|(n, _)| n == name) {
+            return Err(Error::e12_recursive(name));
+        }
+        let prev = std::mem::replace(&mut self.sys, sys);
+        self.stack.push((name.to_owned(), prev));
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        if let Some((_, prev)) = self.stack.pop() {
+            self.sys = prev;
+        }
+    }
+
+    fn const_div(&mut self, expr: &Expr) -> Option<Result<(), Error>> {
+        match const_eval(expr, self)? {
+            Err(e) => Some(Err(e)),
+            Ok(Value::Num(0)) => Some(Err(Error::e12_divzero())),
+            Ok(_) => Some(Ok(())),
+        }
     }
 }
 
-/// Константный делитель: `Some(Err)` — статический ноль (или другая
-// статическая ошибка — она же всплывёт первой), `Some(Ok)` — ненулевая
-// константа, `None` — зависит от `at`, проверит вычисление.
-fn const_div(expr: &Expr) -> Option<Result<(), Error>> {
-    match const_eval(expr)? {
-        Err(e) => Some(Err(e)),
-        Ok(Value::Num(0)) => Some(Err(Error::e12_divzero())),
-        Ok(_) => Some(Ok(())),
-    }
-}
-
-/// Вычисление константы; `None` — внутри есть `at`.
-fn const_eval(expr: &Expr) -> Option<Result<Value, Error>> {
-    if has_at(expr) {
+/// Вычисление константы; `None` — внутри есть `at` или параметр.
+fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
+    if has_at(expr) || has_param(expr, cx) {
         return None;
     }
-    Some(eval_expr(expr, 0))
+    let mut ev = CxEv {
+        defs: cx.defs,
+        stack: cx.stack.clone(),
+        sys: cx.sys,
+        vars: HashMap::new(),
+    };
+    let r = eval_expr(expr, 0, &mut ev);
+    Some(r)
 }
 
 fn has_at(expr: &Expr) -> bool {
@@ -151,52 +427,143 @@ fn has_at(expr: &Expr) -> bool {
         Expr::At => true,
         Expr::Num(_) | Expr::Str(_) | Expr::Name(_) => false,
         Expr::Neg(x) => has_at(x),
+        Expr::Truth(c) => has_cond_at(c),
         Expr::Bin { left, right, .. } => has_at(left) || has_at(right),
         Expr::Concat(xs) => xs.iter().any(has_at),
         Expr::Call { args, .. } => args.iter().any(has_at),
     }
 }
 
-/// Вычислить условие для абсолютного времени строки (`at`).
-pub fn eval_cond(cond: &Cond, at: i64) -> Result<bool, Error> {
+fn has_cond_at(cond: &Cond) -> bool {
     match cond {
-        Cond::Or(cs) => {
-            for c in cs {
-                if eval_cond(c, at)? {
-                    return Ok(true);
+        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_at),
+        Cond::Not(c) => has_cond_at(c),
+        Cond::Pred { args, .. } => args.iter().any(has_at),
+        Cond::Cmp { left, right, .. } => {
+            has_at(left)
+                || match right {
+                    CondRhs::One(r) => has_at(r),
+                    CondRhs::Alt(alts) => alts.iter().any(has_at),
                 }
-            }
-            Ok(false)
         }
-        Cond::And(cs) => {
-            for c in cs {
-                if !eval_cond(c, at)? {
-                    return Ok(false);
+    }
+}
+
+fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
+    match expr {
+        Expr::Name(n) => cx.vars.contains_key(n),
+        Expr::At | Expr::Num(_) | Expr::Str(_) => false,
+        Expr::Neg(x) => has_param(x, cx),
+        Expr::Truth(c) => has_cond_param(c, cx),
+        Expr::Bin { left, right, .. } => has_param(left, cx) || has_param(right, cx),
+        Expr::Concat(xs) => xs.iter().any(|x| has_param(x, cx)),
+        Expr::Call { args, .. } => args.iter().any(|a| has_param(a, cx)),
+    }
+}
+
+fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
+    match cond {
+        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(|c| has_cond_param(c, cx)),
+        Cond::Not(c) => has_cond_param(c, cx),
+        Cond::Pred { args, .. } => args.iter().any(|a| has_param(a, cx)),
+        Cond::Cmp { left, right, .. } => {
+            has_param(left, cx)
+                || match right {
+                    CondRhs::One(r) => has_param(r, cx),
+                    CondRhs::Alt(alts) => alts.iter().any(|a| has_param(a, cx)),
                 }
-            }
-            Ok(true)
         }
-        Cond::Not(c) => Ok(!eval_cond(c, at)?),
-        Cond::Cmp { op, left, right } => {
-            let l = eval_expr(left, at)?;
-            match right {
-                CondRhs::One(r) => {
-                    let r = eval_expr(r, at)?;
-                    cmp_values(*op, &l, &r)
-                }
-                CondRhs::Alt(alts) => {
-                    if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
-                        return Err(Error::e12_mismatch());
+    }
+}
+
+/// Вычислить условие для абсолютного времени строки (`at`).
+pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
+    CxEv {
+        defs,
+        stack: Vec::new(),
+        sys: false,
+        vars: HashMap::new(),
+    }
+    .eval_cond(cond, at)
+}
+
+impl CxEv<'_> {
+    fn enter(&mut self, name: &str, sys: bool) -> Result<(), Error> {
+        if self.stack.iter().any(|(n, _)| n == name) {
+            return Err(Error::e12_recursive(name));
+        }
+        let prev = std::mem::replace(&mut self.sys, sys);
+        self.stack.push((name.to_owned(), prev));
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        if let Some((_, prev)) = self.stack.pop() {
+            self.sys = prev;
+        }
+    }
+
+    fn eval_cond(&mut self, cond: &Cond, at: i64) -> Result<bool, Error> {
+        match cond {
+            Cond::Or(cs) => {
+                for c in cs {
+                    if self.eval_cond(c, at)? {
+                        return Ok(true);
                     }
-                    let mut any_eq = false;
-                    for a in alts {
-                        let v = eval_expr(a, at)?;
-                        if cmp_values(CmpOp::Eq, &l, &v)? {
-                            any_eq = true;
-                            break;
+                }
+                Ok(false)
+            }
+            Cond::And(cs) => {
+                for c in cs {
+                    if !self.eval_cond(c, at)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Cond::Not(c) => Ok(!self.eval_cond(c, at)?),
+            Cond::Pred { name, args } => {
+                let arg = match args.as_slice() {
+                    [a] => eval_expr(a, at, self)?,
+                    _ => return Err(Error::e12_arity(name)),
+                };
+                let at_arg = match arg {
+                    Value::Num(n) => n,
+                    Value::Str(_) => return Err(Error::e12_mismatch()),
+                };
+                let defs = self.defs;
+                let def = resolve(defs, name, self.sys)?;
+                match def.kind {
+                    DefKind::Pred => {}
+                    _ => return Err(Error::e12_not_pred(name)),
+                }
+                self.enter(name, def.system)?;
+                let body = def.cond.clone().expect("pred: тело");
+                let r = self.eval_cond(&body, at_arg);
+                self.leave();
+                r
+            }
+            Cond::Cmp { op, left, right } => {
+                let l = eval_expr(left, at, self)?;
+                match right {
+                    CondRhs::One(r) => {
+                        let r = eval_expr(r, at, self)?;
+                        cmp_values(*op, &l, &r)
+                    }
+                    CondRhs::Alt(alts) => {
+                        if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
+                            return Err(Error::e12_mismatch());
                         }
+                        let mut any_eq = false;
+                        for a in alts {
+                            let v = eval_expr(a, at, self)?;
+                            if cmp_values(CmpOp::Eq, &l, &v)? {
+                                any_eq = true;
+                                break;
+                            }
+                        }
+                        Ok(if *op == CmpOp::Eq { any_eq } else { !any_eq })
                     }
-                    Ok(if *op == CmpOp::Eq { any_eq } else { !any_eq })
                 }
             }
         }
@@ -226,21 +593,38 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
 }
 
 /// Вычислить выражение для `at`. Переполнение — E12.
-pub fn eval_expr(expr: &Expr, at: i64) -> Result<Value, Error> {
+fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     match expr {
         Expr::Num(raw) => Ok(Value::Num(raw.parse().map_err(|_| Error::e12_range(raw))?)),
         Expr::Str(s) => Ok(Value::Str(s.clone())),
         Expr::At => Ok(Value::Num(at)),
-        Expr::Name(name) => Err(Error::e11(name)),
-        Expr::Neg(x) => match eval_expr(x, at)? {
+        Expr::Name(name) => {
+            if let Some(v) = cx.vars.get(name) {
+                return Ok(v.clone());
+            }
+            let defs = cx.defs;
+            let (system, body) = match resolve(defs, name, cx.sys) {
+                Ok(def) if def.kind == DefKind::Const => {
+                    (def.system, def.expr.clone().expect("const: тело"))
+                }
+                Ok(_) => return Err(Error::e12_mismatch()),
+                Err(e) => return Err(e),
+            };
+            cx.enter(name, system)?;
+            let r = eval_expr(&body, at, cx);
+            cx.leave();
+            r
+        }
+        Expr::Neg(x) => match eval_expr(x, at, cx)? {
             Value::Num(v) => v
                 .checked_neg()
                 .map(Value::Num)
                 .ok_or_else(|| Error::e12_range("negation overflow")),
             Value::Str(_) => Err(Error::e12_mismatch()),
         },
+        Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c, at)?))),
         Expr::Bin { op, left, right } => {
-            let (a, b) = match (eval_expr(left, at)?, eval_expr(right, at)?) {
+            let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
                 (Value::Num(a), Value::Num(b)) => (a, b),
                 _ => return Err(Error::e12_mismatch()),
             };
@@ -279,46 +663,126 @@ pub fn eval_expr(expr: &Expr, at: i64) -> Result<Value, Error> {
         Expr::Concat(xs) => {
             let mut out = String::new();
             for x in xs {
-                match eval_expr(x, at)? {
+                match eval_expr(x, at, cx)? {
                     Value::Str(s) => out.push_str(&s),
                     Value::Num(_) => return Err(Error::e12_mismatch()),
                 }
             }
             Ok(Value::Str(out))
         }
-        Expr::Call { name, args } => match name.as_str() {
-            "str" => {
-                let a = args.first().ok_or_else(|| Error::e12_arity(name))?;
-                match eval_expr(a, at)? {
-                    Value::Num(n) => Ok(Value::Str(n.to_string())),
-                    Value::Str(_) => Err(Error::e12_mismatch()),
+        Expr::Call { name, args } => eval_call(name, args, at, cx),
+    }
+}
+
+fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> {
+    cx.eval_cond(cond, at)
+}
+
+fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
+    let defs = cx.defs;
+    if let Some(def) = defs.map.get(name) {
+        if !(def.private && !cx.sys) {
+            return eval_def_call(name, def, args, at, cx);
+        }
+    }
+    match name {
+        "str" => {
+            let a = args.first().ok_or_else(|| Error::e12_arity(name))?;
+            if args.len() != 1 {
+                return Err(Error::e12_arity(name));
+            }
+            match eval_expr(a, at, cx)? {
+                Value::Num(n) => Ok(Value::Str(n.to_string())),
+                Value::Str(_) => Err(Error::e12_mismatch()),
+            }
+        }
+        "pad" => {
+            if args.len() != 2 {
+                return Err(Error::e12_arity(name));
+            }
+            let (n, w) = match (eval_expr(&args[0], at, cx)?, eval_expr(&args[1], at, cx)?) {
+                (Value::Num(n), Value::Num(w)) => (n, w),
+                _ => return Err(Error::e12_mismatch()),
+            };
+            let s = n.to_string();
+            let w = w.max(0) as usize;
+            if s.len() >= w {
+                Ok(Value::Str(s))
+            } else {
+                Ok(Value::Str("0".repeat(w - s.len()) + &s))
+            }
+        }
+        "floordiv" | "floormod" => {
+            let [a, b] = args else {
+                return Err(Error::e12_arity(name));
+            };
+            let (x, y) = match (eval_expr(a, at, cx)?, eval_expr(b, at, cx)?) {
+                (Value::Num(x), Value::Num(y)) => (x, y),
+                _ => return Err(Error::e12_mismatch()),
+            };
+            if y == 0 {
+                return Err(Error::e12_divzero());
+            }
+            Ok(Value::Num(if name == "floordiv" {
+                x.div_euclid(y)
+            } else {
+                x.rem_euclid(y)
+            }))
+        }
+        _ => Err(Error::e11(name)),
+    }
+}
+
+fn eval_def_call(
+    name: &str,
+    def: &Def,
+    args: &[Expr],
+    at: i64,
+    cx: &mut CxEv<'_>,
+) -> Result<Value, Error> {
+    if cx.stack.iter().any(|(n, _)| n == name) {
+        return Err(Error::e12_recursive(name));
+    }
+    match def.kind {
+        DefKind::Const => {
+            if !args.is_empty() {
+                return Err(Error::e12_arity(name));
+            }
+            cx.enter(name, def.system)?;
+            let body = def.expr.clone().expect("const: тело");
+            let r = eval_expr(&body, at, cx);
+            cx.leave();
+            r
+        }
+        DefKind::Fun => {
+            let arg = match args {
+                [a] => eval_expr(a, at, cx)?,
+                _ => return Err(Error::e12_arity(name)),
+            };
+            cx.enter(name, def.system)?;
+            let param = def.param.clone().expect("fun: параметр");
+            let body = def.expr.clone().expect("fun: тело");
+            let old = cx.vars.insert(param.clone(), arg);
+            let r = eval_expr(&body, at, cx);
+            match old {
+                Some(v) => {
+                    cx.vars.insert(param, v);
+                }
+                None => {
+                    cx.vars.remove(&param);
                 }
             }
-            "pad" => {
-                let (an, aw) = match (args.first(), args.get(1)) {
-                    (Some(a), Some(b)) => (a, b),
-                    _ => return Err(Error::e12_arity(name)),
-                };
-                let (n, w) = match (eval_expr(an, at)?, eval_expr(aw, at)?) {
-                    (Value::Num(n), Value::Num(w)) => (n, w),
-                    _ => return Err(Error::e12_mismatch()),
-                };
-                let s = n.to_string();
-                let w = w.max(0) as usize;
-                if s.len() >= w {
-                    Ok(Value::Str(s))
-                } else {
-                    Ok(Value::Str("0".repeat(w - s.len()) + &s))
-                }
-            }
-            _ => Err(Error::e11(name)),
-        },
+            cx.leave();
+            r
+        }
+        DefKind::Pred => Err(Error::e12_mismatch()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cycloritm_parser as p;
 
     fn cond_of(row: &str) -> Cond {
         let src = format!(
@@ -326,8 +790,9 @@ mod tests {
             cycle R duration = 1h {{ 0m: A.x(); }} \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ [{row}] 6h: R(); }} }}"
         );
-        let s = cycloritm_parser::parse(&src).expect("фикстура обязана разбираться");
-        s.root
+        let s = p::parse(&src).expect("фикстура обязана разбираться");
+        s.schedule
+            .root
             .stmts
             .into_iter()
             .next()
@@ -336,18 +801,47 @@ mod tests {
             .expect("условие есть")
     }
 
+    fn test_defs() -> Defs {
+        resolve_defs(&[]).expect("прелюдия обязана проверяться")
+    }
+
     fn yes(row: &str, at: i64) -> bool {
         let c = cond_of(row);
-        check_cond(&c).expect("условие обязано проходить проверку");
-        eval_cond(&c, at).expect("вычисление обязано удаваться")
+        let d = test_defs();
+        check_single(&c, &d).expect("условие обязано проходить проверку");
+        eval_cond(&c, at, &d).expect("вычисление обязано удаваться")
     }
 
     fn no(row: &str, at: i64) -> bool {
         !yes(row, at)
     }
 
+    fn check_single(c: &Cond, d: &Defs) -> Result<(), Error> {
+        CxTy {
+            defs: d,
+            stack: Vec::new(),
+            sys: false,
+            vars: HashMap::new(),
+        }
+        .infer_cond(c)
+    }
+
     fn static_err(row: &str) -> Error {
-        check_cond(&cond_of(row)).expect_err("ожидалась ошибка проверки")
+        let d = test_defs();
+        check_single(&cond_of(row), &d).expect_err("ожидалась ошибка проверки")
+    }
+
+    fn defs_of(body: &str) -> Result<Defs, Error> {
+        let src = format!("{body} schedule \"T\" {{ point A {{ actions = [x]; }} root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0m: A.x(); }} }}");
+        let s = p::parse(&src).expect("фикстура обязана разбираться");
+        resolve_defs(&s.decls)
+    }
+
+    fn eval_with(body: &str, row: &str, at: i64) -> Result<bool, Error> {
+        let d = defs_of(body)?;
+        let c = cond_of(row);
+        check_single(&c, &d)?;
+        eval_cond(&c, at, &d)
     }
 
     #[test]
@@ -385,9 +879,18 @@ mod tests {
     }
 
     #[test]
+    fn truth_bridge_gives_one_zero() {
+        assert!(yes("12 * (at >= 2) == 12", 2));
+        assert!(yes("12 * (at >= 3) == 0", 2));
+    }
+
+    #[test]
     fn rejects_unknown_names() {
-        let e = static_err("hour(at) == 1");
-        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'hour'"));
+        let e = static_err("banana(at) == 1");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E11", "unknown name 'banana'")
+        );
     }
 
     #[test]
@@ -413,8 +916,9 @@ mod tests {
     #[test]
     fn runtime_division_by_zero_is_error_not_skip() {
         let c = cond_of("1 / (at - at + 1 - 1) == 0");
-        check_cond(&c).expect("делитель не константа — статика проходит");
-        let e = eval_cond(&c, 100).expect_err("ноль в момент строки — ошибка");
+        let d = test_defs();
+        check_single(&c, &d).expect("делитель не константа — статика проходит");
+        let e = eval_cond(&c, 100, &d).expect_err("ноль в момент строки — ошибка");
         assert_eq!((e.code, e.message.as_str()), ("E12", "division by zero"));
     }
 
@@ -424,6 +928,79 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             ("E12", "integer out of range '99999999999999999999999'")
+        );
+    }
+
+    #[test]
+    fn prelude_matches_control_points() {
+        // at = 0 — четверг 1970-01-01 (контрольная точка черновика).
+        assert!(eval_with("", "dow(at) == 3", 0).unwrap());
+        assert!(eval_with(
+            "",
+            "day(at) == 1 and month(at) == 1 and year(at) == 1970",
+            0
+        )
+        .unwrap());
+        assert!(eval_with("", "datestr(at) == \"1970-01-01\"", 0).unwrap());
+        assert!(eval_with("", "datetimestr(at) == \"1970-01-01T00:00:00.000\"", 0).unwrap());
+        assert!(eval_with("", "hour(at) == 6", 6 * 3600000).unwrap());
+        assert!(eval_with("", "weekend(at)", 2 * 86400000).unwrap());
+        assert!(!eval_with("", "weekend(at)", 0).unwrap());
+        assert!(eval_with("", "morning(at)", 8 * 3600000).unwrap());
+    }
+
+    #[test]
+    fn prelude_calendar_matches_core_dates() {
+        // Сверка календаря прелюдии с наивным временем ядра.
+        for ms in [0, 1767225600000, 1709160000000, 951782400000, 4102444800000] {
+            let s = crate::datetime::format_datetime(ms);
+            let date = &s[..10];
+            assert!(
+                eval_with("", &format!("datestr(at) == \"{date}\""), ms).unwrap(),
+                "для {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn program_shadows_system_silently() {
+        // Побеждает последнее: свой sat сдвигает weekend на четверг.
+        assert!(eval_with("const sat = 3;", "weekend(at)", 0).unwrap());
+        assert!(!eval_with("", "weekend(at)", 0).unwrap());
+    }
+
+    #[test]
+    fn private_names_stay_in_file() {
+        let e = defs_of("fun f(t) = __z(t);").expect_err("чужое __ — ошибка");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__z'"));
+    }
+
+    #[test]
+    fn rejects_recursive_definitions() {
+        let e = defs_of("fun a(t) = b(t); fun b(t) = a(t);").expect_err("цикл — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "recursive definition 'a'")
+        );
+        let e = defs_of("const c = c + 1;").expect_err("самовызов — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "recursive definition 'c'")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_definitions() {
+        let e = defs_of("const a = 1; fun a(t) = t;").expect_err("дубль — ошибка");
+        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate fun 'a'"));
+    }
+
+    #[test]
+    fn fun_of_non_predicate_is_error() {
+        let e = static_err("hour(at)");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "'hour' is not a predicate")
         );
     }
 }
