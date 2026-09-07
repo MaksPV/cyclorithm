@@ -48,10 +48,7 @@ pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
 /// `pred` — истина/ложь (параметр буквально `at`, иначе синтаксис).
 fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::decl);
-    let kind = pair
-        .into_inner()
-        .next()
-        .expect("decl: const, fun или pred");
+    let kind = pair.into_inner().next().expect("decl: const, fun или pred");
     match kind.as_rule() {
         Rule::const_decl => {
             let mut inner = kind.into_inner();
@@ -559,13 +556,19 @@ pub struct SourceFile {
 /// Объявление верхнего уровня (§3 спеки).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decl {
-    Const { name: String, body: Expr },
+    Const {
+        name: String,
+        body: Expr,
+    },
     Fun {
         name: String,
         param: String,
         body: Expr,
     },
-    Pred { name: String, body: Cond },
+    Pred {
+        name: String,
+        body: Cond,
+    },
 }
 
 /// Корень расписания: `schedule "имя" { point* cycle* root_cycle }`.
@@ -904,7 +907,11 @@ mod tests {
             cycle R duration = 1h20m { 0m: A.x(); -10m: A.x(); -0m: A.x(); -1h20m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { -6h: R(); } }";
         let s = parse(src).expect("отрицательные смещения обязаны разбираться");
-        let flags: Vec<bool> = s.schedule.cycles[0].stmts.iter().map(|st| st.negative).collect();
+        let flags: Vec<bool> = s.schedule.cycles[0]
+            .stmts
+            .iter()
+            .map(|st| st.negative)
+            .collect();
         assert_eq!(flags, vec![false, true, true, true]);
         assert_eq!(s.schedule.cycles[0].stmts[1].offset.raw, "10m");
         assert_eq!(s.schedule.cycles[0].stmts[1].offset_raw(), "-10m");
@@ -937,8 +944,14 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
             6h: repeat 3 R(); 7h: fill R(); 8h: fill until 12h R(); 9h: fill until -2h R(); } }";
         let s = parse(src).expect("повторы обязаны разбираться");
-        assert_eq!(s.schedule.root.stmts[0].repeat, Repeat::Times("3".to_owned()));
-        assert_eq!(s.schedule.root.stmts[1].repeat, Repeat::Fill { until: None });
+        assert_eq!(
+            s.schedule.root.stmts[0].repeat,
+            Repeat::Times("3".to_owned())
+        );
+        assert_eq!(
+            s.schedule.root.stmts[1].repeat,
+            Repeat::Fill { until: None }
+        );
         match &s.schedule.root.stmts[2].repeat {
             Repeat::Fill { until: Some(u) } => {
                 assert!(!u.negative);
@@ -959,7 +972,10 @@ mod tests {
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 0 R(); } }";
         let s0 = parse(src0).expect("repeat 0 синтаксически корректен");
-        assert_eq!(s0.schedule.root.stmts[0].repeat, Repeat::Times("0".to_owned()));
+        assert_eq!(
+            s0.schedule.root.stmts[0].repeat,
+            Repeat::Times("0".to_owned())
+        );
     }
 
     #[test]
@@ -997,8 +1013,14 @@ mod tests {
         assert!(s.schedule.root.stmts[0].condition.is_some());
         assert!(s.schedule.root.stmts[1].condition.is_some());
         assert!(s.schedule.root.stmts[2].condition.is_some());
-        assert!(matches!(s.schedule.root.stmts[0].condition, Some(Cond::And(_))));
-        assert!(matches!(s.schedule.root.stmts[1].condition, Some(Cond::Or(_))));
+        assert!(matches!(
+            s.schedule.root.stmts[0].condition,
+            Some(Cond::And(_))
+        ));
+        assert!(matches!(
+            s.schedule.root.stmts[1].condition,
+            Some(Cond::Or(_))
+        ));
         match &s.schedule.root.stmts[2].condition {
             Some(Cond::Cmp {
                 right: CondRhs::Alt(alts),
@@ -1069,10 +1091,8 @@ mod tests {
 
     #[test]
     fn parses_string_bodied_fun() {
-        let decls = parse_decls(
-            "fun datestr(t) = pad(year(t), 4) ++ \"-\" ++ pad(month(t), 2);",
-        )
-        .expect("склейка в теле обязана разбираться");
+        let decls = parse_decls("fun datestr(t) = pad(year(t), 4) ++ \"-\" ++ pad(month(t), 2);")
+            .expect("склейка в теле обязана разбираться");
         assert!(matches!(
             decls[0],
             Decl::Fun {
