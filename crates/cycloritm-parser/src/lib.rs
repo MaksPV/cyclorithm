@@ -32,6 +32,18 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     })
 }
 
+/// Разбор файла одних объявлений (системная библиотека): расписания нет.
+pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
+    let file = CycloParser::parse(Rule::decls_file, src)?
+        .next()
+        .expect("decls_file непуст");
+    debug_assert_eq!(file.as_rule(), Rule::decls_file);
+    file.into_inner()
+        .filter(|p| p.as_rule() == Rule::decl)
+        .map(build_decl)
+        .collect()
+}
+
 /// Объявление верхнего уровня: `const` — число, `fun` — число от аргумента,
 /// `pred` — истина/ложь (параметр буквально `at`, иначе синтаксис).
 fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
