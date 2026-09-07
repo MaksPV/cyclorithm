@@ -230,8 +230,8 @@ usage: cyclo run FILE --start DATETIME --end DATETIME
 | E08 | Некорректная дата/время | `invalid datetime '...'` (битый `start_time` или `--start`/`--end`) |
 | E09 | Перепутан род имени | `point 'DEPOT' is not a cycle`, `cycle 'X' is not a point` |
 | E10 | Некорректный повтор | `invalid repeat count '0'` (`repeat 0`, сюда же невлезающее в `u64` число); `fill of zero-duration cycle 'LONG'` (`fill`/`fill until` по циклу нулевой длительности — бесконечность); `repeat of point action 'depart' not allowed` (повторы только для циклов) |
-| E11 | Неизвестное имя в условии | `unknown name 'hour'` (включая обращение к чужому `__`-имени) |
-| E12 | Некорректное выражение условия | `type mismatch: cannot mix number and string`; `wrong arguments for 'pad'`; `division by zero`; `recursive definition 'a'`; `'hour' is not a predicate` (вызов не-предиката в позиции условия) |
+| E11 | Неизвестное имя в условии | `unknown name 'banana'` (включая обращение к чужому `__`-имени) |
+| E12 | Некорректное выражение условия | `type mismatch: cannot mix number and string`; `wrong arguments for 'pad'`; `division by zero`; `recursive definition 'a'`; `'hour' is not a predicate` (вызов не-предиката в позиции условия); `invalid date '...'` (кривой литерал даты) |
 
 ## 6. Формат вывода
 
