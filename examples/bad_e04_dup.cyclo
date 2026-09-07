@@ -1,4 +1,7 @@
-schedule "E11" {
+const K = 1;
+const K = 2;
+
+schedule "E04-dup" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +16,6 @@ schedule "E11" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [banana(at) == 6] 6h: R();
+    [at >= K] 6h: R();
   }
 }

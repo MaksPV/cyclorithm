@@ -1,4 +1,4 @@
-schedule "E11" {
+schedule "E11-private" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +13,6 @@ schedule "E11" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [banana(at) == 6] 6h: R();
+    [__z(at) == 1] 6h: R();
   }
 }
