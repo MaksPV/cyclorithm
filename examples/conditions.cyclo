@@ -15,7 +15,7 @@ schedule "Автобусный парк" {  point DEPOT {
   {
     0m: DEPOT.depart();
     40m: AIRPORT.arrive();
-    50m: AIRPORT.depart();
+    [rush(at)] 50m: AIRPORT.depart();
     80m: DEPOT.arrive();
   }
 

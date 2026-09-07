@@ -457,6 +457,27 @@ mod tests {
     }
 
     #[test]
+    fn user_predicate_in_cycle_table_filters_launches() {
+        // Свой предикат внутри таблицы: `at` — абсолютное время строки,
+        // поэтому рейс в 6:00 теряет строку, а рейс в 8:00 — нет.
+        let src = "pred rush(at) = hour(at) == 8; \
+            schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); [rush(at)] 30m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            6h: R(); 8h: R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, d, s, e).unwrap()),
+            vec![
+                "2026-01-01T06:00:00",
+                "2026-01-01T08:00:00",
+                "2026-01-01T08:30:00"
+            ]
+        );
+    }
+
+    #[test]
     fn builds_only_covering_instances() {
         // Окно внутри второго периода: строится ровно экземпляр k=1.
         let src = include_str!("../../../examples/route.cyclo");
