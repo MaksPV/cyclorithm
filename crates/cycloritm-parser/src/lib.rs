@@ -104,12 +104,23 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         (false, first)
     };
     let offset = build_duration(offset_pair);
-    let call = inner
-        .next()
-        .expect("stmt: вызов")
-        .into_inner()
-        .next()
-        .expect("invocation: вызов");
+    let body = inner.next().expect("stmt: тело");
+    debug_assert_eq!(body.as_rule(), Rule::stmt_body);
+    let mut binner = body.into_inner();
+    let bfirst = binner.next().expect("stmt_body: модификатор или вызов");
+    let (repeat, call) = if bfirst.as_rule() == Rule::repeat_mod {
+        let repeat = build_repeat(bfirst)?;
+        let call = binner
+            .next()
+            .expect("stmt: вызов после модификатора")
+            .into_inner()
+            .next()
+            .expect("invocation: вызов");
+        (repeat, call)
+    } else {
+        let call = bfirst.into_inner().next().expect("invocation: вызов");
+        (Repeat::Once, call)
+    };
     let invocation = match call.as_rule() {
         Rule::point_action => {
             let mut parts = call.into_inner();
@@ -131,8 +142,67 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     Ok(Stmt {
         offset,
         negative,
+        repeat,
         invocation,
     })
+}
+
+/// Модификатор повтора (§3 спеки): `repeat N` / `fill` / `fill until [−]T`.
+/// `repeat 0` здесь принимается (валидация ядра, E10); минус в `until`
+/// обязан быть слитным — проверка по спанам, как у смещения строки.
+fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::repeat_mod);
+    let span = pair.as_span();
+    let kind = pair
+        .into_inner()
+        .next()
+        .expect("repeat_mod: repeat_n или fill_mod");
+    match kind.as_rule() {
+        Rule::repeat_n => {
+            let count = kind
+                .into_inner()
+                .next()
+                .expect("repeat: число")
+                .as_str()
+                .to_owned();
+            Ok(Repeat::Times(count))
+        }
+        Rule::fill_mod => {
+            let mut finner = kind.into_inner();
+            let first = finner.next();
+            match first {
+                None => Ok(Repeat::Fill { until: None }),
+                Some(p) if p.as_rule() == Rule::neg_sign => {
+                    let dur = finner.next().expect("until: длительность после минуса");
+                    if p.as_span().end() != dur.as_span().start() {
+                        return Err(pest::error::Error::new_from_span(
+                            pest::error::ErrorVariant::CustomError {
+                                message: "minus in until must be glued to duration ('-2h')"
+                                    .to_owned(),
+                            },
+                            span,
+                        ));
+                    }
+                    Ok(Repeat::Fill {
+                        until: Some(Until {
+                            negative: true,
+                            duration: build_duration(dur),
+                        }),
+                    })
+                }
+                Some(p) => {
+                    debug_assert_eq!(p.as_rule(), Rule::duration);
+                    Ok(Repeat::Fill {
+                        until: Some(Until {
+                            negative: false,
+                            duration: build_duration(p),
+                        }),
+                    })
+                }
+            }
+        }
+        r => unreachable!("repeat_mod: неожиданное правило {r:?}"),
+    }
 }
 
 fn build_duration(pair: Pair<Rule>) -> Duration {
@@ -211,13 +281,15 @@ pub struct RootCycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// Одна строка цикла: `[<минус>] <смещение>: <вызов>;`.
+/// Одна строка цикла: `[<минус>] <смещение>: [<повтор>] <вызов>;`.
 /// `negative` — минус из §3 спеки (только у смещения строки, слитно);
 /// разрешается ядром как `duration(родителя) − смещение`.
+/// `repeat` — модификатор повторов (§3–§4 спеки), по умолчанию `Once`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
     pub offset: Duration,
     pub negative: bool,
+    pub repeat: Repeat,
     pub invocation: Invocation,
 }
 
@@ -232,6 +304,36 @@ impl Stmt {
     }
 }
 
+/// Модификатор повторов строки (§3 спеки).
+/// `Times` хранит число сырым текстом: в `u64` переводит ядро
+/// (невлезающее — E10 `invalid repeat count`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Repeat {
+    /// Без модификатора: одиночный вызов.
+    Once,
+    /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе E10).
+    Times(String),
+    /// `fill [until [−]T]`: мягкое заполнение до горизонта.
+    Fill { until: Option<Until> },
+}
+
+/// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Until {
+    pub negative: bool,
+    pub duration: Duration,
+}
+
+impl Until {
+    /// Сырой текст горизонта для сообщений E07: с минусом (`'-2h'`) или без.
+    pub fn raw(&self) -> String {
+        if self.negative {
+            format!("-{}", self.duration.raw)
+        } else {
+            self.duration.raw.clone()
+        }
+    }
+}
 /// Вызов: `DEPOT.depart()` — действие точки, `CITY_ROUTE()` — вызов цикла.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
@@ -307,6 +409,11 @@ mod tests {
             include_str!("../../../examples/bad_e08.cyclo"),
             include_str!("../../../examples/bad_e09.cyclo"),
             include_str!("../../../examples/bad_e07_neg.cyclo"),
+            include_str!("../../../examples/bad_e10_zero.cyclo"),
+            include_str!("../../../examples/bad_e10_fill0.cyclo"),
+            include_str!("../../../examples/bad_e10_action.cyclo"),
+            include_str!("../../../examples/bad_e07_chain.cyclo"),
+            include_str!("../../../examples/bad_e07_until.cyclo"),
         ] {
             parse(src).expect("bad_e*.cyclo обязан разбираться грамматикой");
         }
@@ -328,6 +435,7 @@ mod tests {
         let point_call = |offset: Duration, point: &str, action: &str| Stmt {
             offset,
             negative: false,
+            repeat: Repeat::Once,
             invocation: Invocation::PointAction {
                 point: point.to_owned(),
                 action: action.to_owned(),
@@ -381,6 +489,7 @@ mod tests {
                     Stmt {
                         offset: dur("6h", vec![("6", DurationUnit::Hour)]),
                         negative: false,
+                        repeat: Repeat::Once,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                         },
@@ -388,6 +497,7 @@ mod tests {
                     Stmt {
                         offset: dur("18h", vec![("18", DurationUnit::Hour)]),
                         negative: false,
+                        repeat: Repeat::Once,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                         },
@@ -428,6 +538,61 @@ mod tests {
             cycle R duration = -1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn parses_repeat_fill_until() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            6h: repeat 3 R(); 7h: fill R(); 8h: fill until 12h R(); 9h: fill until -2h R(); } }";
+        let s = parse(src).expect("повторы обязаны разбираться");
+        assert_eq!(s.root.stmts[0].repeat, Repeat::Times("3".to_owned()));
+        assert_eq!(s.root.stmts[1].repeat, Repeat::Fill { until: None });
+        match &s.root.stmts[2].repeat {
+            Repeat::Fill { until: Some(u) } => {
+                assert!(!u.negative);
+                assert_eq!(u.duration.raw, "12h");
+                assert_eq!(u.raw(), "12h");
+            }
+            r => panic!("ожидался fill until, получено {r:?}"),
+        }
+        match &s.root.stmts[3].repeat {
+            Repeat::Fill { until: Some(u) } => {
+                assert!(u.negative);
+                assert_eq!(u.raw(), "-2h");
+            }
+            r => panic!("ожидался fill until -2h, получено {r:?}"),
+        }
+        // `repeat 0` — уровень парсера пропускает (валидация ядра, E10).
+        let src0 = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 0 R(); } }";
+        let s0 = parse(src0).expect("repeat 0 синтаксически корректен");
+        assert_eq!(s0.root.stmts[0].repeat, Repeat::Times("0".to_owned()));
+    }
+
+    #[test]
+    fn rejects_space_after_until_minus() {
+        // Минус в `until` слитно: `fill until - 2h` — синтаксическая ошибка.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill until - 2h R(); } }";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn cycle_named_fill_still_callable() {
+        // Позиционное распознавание: голый вызов цикла `fill` работает.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle fill duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill(); } }";
+        let s = parse(src).expect("вызов цикла fill обязан разбираться");
+        assert_eq!(s.root.stmts[0].repeat, Repeat::Once);
+        assert!(matches!(
+            s.root.stmts[0].invocation,
+            Invocation::CycleCall { .. }
+        ));
     }
 
     #[test]

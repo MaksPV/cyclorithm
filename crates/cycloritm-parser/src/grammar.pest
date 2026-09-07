@@ -12,7 +12,14 @@ point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]
 action_list = { IDENT ~ ("," ~ IDENT)* }
 cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-stmt        = { neg_sign? ~ duration ~ ":" ~ invocation ~ ";" }
+stmt        = { neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
+// Тело строки: сначала пробуем модификатор + вызов, иначе голый вызов.
+// Порядок важен: цикл с именем `fill` (`6h: fill();`) разбирается второй
+// веткой — PEG сбрасывает позицию при неудаче первой.
+stmt_body   = { repeat_mod ~ invocation | invocation }
+repeat_mod  = { repeat_n | fill_mod }
+repeat_n    = { "repeat" ~ number }
+fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
 // Минус смещения — именованное правило, чтобы парсер его видел; слитность
 // (`-10m` ок, `- 10m` — ошибка) проверяется в `build_stmt` по спанам:
 // неявные пробелы `~` здесь пропускают пробел осознанно.
