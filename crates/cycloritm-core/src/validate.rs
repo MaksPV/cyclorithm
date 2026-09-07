@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cycloritm_parser::{Invocation, Schedule, Stmt};
+use cycloritm_parser::{Invocation, Repeat, Schedule, Stmt};
 
 use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 use crate::Error;
@@ -179,7 +179,7 @@ pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i6
 /// Конец занятого отрезка списка строк и индекс строки-аргмакса
 /// (при равных концах — первой). Пустой список — `(0, None)`.
 /// `limit`/`limit_raw` — объявленная длительность непосредственно объемлющего
-/// цикла: через неё разрешаются отрицательные смещения.
+/// цикла: через неё разрешаются отрицательные смещения и горизонты.
 fn stmts_end(
     stmts: &[Stmt],
     limit: i64,
@@ -189,24 +189,109 @@ fn stmts_end(
     let mut best: (i64, Option<usize>) = (0, None);
     for (i, st) in stmts.iter().enumerate() {
         let offset = effective_offset_ms(st, limit, limit_raw)?;
-        let span = match &st.invocation {
-            Invocation::PointAction { .. } => 0,
-            Invocation::CycleCall { name } => {
-                let callee = tables
-                    .cycles
-                    .get(name.as_str())
-                    .expect("имена уже проверены");
-                duration_ms(&callee.duration)?
-            }
-        };
-        // Насыщение вместо паники: около лимита i64 суммы абсурдны,
-        // но конец всё равно больше лимита — E07 обязан сработать.
-        let end = offset.saturating_add(span);
+        let end = row_end(st, offset, limit, limit_raw, tables)?;
         if best.1.is_none() || end > best.0 {
             best = (end, Some(i));
         }
     }
     Ok(best)
+}
+
+/// Конец одной строки: смещение + длина вызова или цепочки.
+/// Порядок проверок строки: E10, затем E07 (горизонт, конец цепочки).
+fn row_end(
+    st: &Stmt,
+    offset: i64,
+    limit: i64,
+    limit_raw: &str,
+    tables: &NameTables<'_>,
+) -> Result<i64, Error> {
+    let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
+    Ok(saturating_add_mul(offset, count, step))
+}
+
+/// Параметры цепочки строки: число экземпляров и шаг стыковки.
+/// `Once` — `(1, длина вызова)`; дальше всё считается одинаково.
+/// Та же функция кормит развёртку (`expand`).
+pub fn chain(
+    st: &Stmt,
+    offset: i64,
+    limit: i64,
+    limit_raw: &str,
+    tables: &NameTables<'_>,
+) -> Result<(u64, i64), Error> {
+    match &st.repeat {
+        Repeat::Once => {
+            let span = match &st.invocation {
+                Invocation::PointAction { .. } => 0,
+                Invocation::CycleCall { name } => {
+                    duration_ms(&cycle_duration(tables, name).duration)?
+                }
+            };
+            Ok((1, span))
+        }
+        Repeat::Times(raw) => {
+            let n: u64 = raw.parse().map_err(|_| Error::e10_repeat_count(raw))?;
+            if n == 0 {
+                return Err(Error::e10_repeat_count(raw));
+            }
+            Ok((n, step_of(&st.invocation, tables)?))
+        }
+        Repeat::Fill { until } => {
+            let step = step_of(&st.invocation, tables)?;
+            if step == 0 {
+                return Err(match &st.invocation {
+                    Invocation::CycleCall { name } => Error::e10_fill_zero(name),
+                    Invocation::PointAction { action, .. } => Error::e10_repeat_action(action),
+                });
+            }
+            let horizon = match until {
+                None => limit,
+                Some(u) => {
+                    let t = duration_ms(&u.duration)?;
+                    let h = if u.negative {
+                        if t > limit {
+                            return Err(Error::e07_until(&u.raw(), limit_raw));
+                        }
+                        limit - t
+                    } else {
+                        t
+                    };
+                    if h > limit {
+                        return Err(Error::e07_until(&u.raw(), limit_raw));
+                    }
+                    h
+                }
+            };
+            let n = if horizon - offset >= step {
+                ((horizon - offset) / step) as u64
+            } else {
+                0
+            };
+            Ok((n, step))
+        }
+    }
+}
+
+/// Длительность шага цепочки: `0` для действия точки,
+/// объявленная длительность для вызова цикла.
+/// Повтор действия точки — E10.
+fn step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
+    match invocation {
+        Invocation::PointAction { action, .. } => Err(Error::e10_repeat_action(action)),
+        Invocation::CycleCall { name } => duration_ms(&cycle_duration(tables, name).duration),
+    }
+}
+
+/// Объявление вызываемого цикла (имена уже проверены).
+fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a cycloritm_parser::Cycle {
+    tables.cycles.get(name).expect("имена уже проверены")
+}
+
+/// `offset + n*d` с насыщением: переполнение всё равно больше лимита.
+fn saturating_add_mul(offset: i64, n: u64, d: i64) -> i64 {
+    let end = offset as i128 + n as i128 * d as i128;
+    i64::try_from(end).unwrap_or(i64::MAX)
 }
 
 /// Ошибка E07 с виной на вызове строки: цикл — `cycle 'X' overruns ...`,
@@ -514,5 +599,105 @@ mod tests {
             (e.code, e.message.as_str()),
             ("E07", "cycle 'B1' overruns 'OUTER' by 70m (130m > 60m)")
         );
+    }
+
+    fn bounds_err(src: &str) -> Error {
+        let (ast, t) = tables(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_bounds(ast, &t).expect_err("ожидалась ошибка границ")
+    }
+
+    #[test]
+    fn rejects_repeat_zero() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 0 R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E10", "invalid repeat count '0'")
+        );
+    }
+
+    #[test]
+    fn rejects_repeat_of_point_action() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 3 A.x(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E10", "repeat of point action 'x' not allowed")
+        );
+    }
+
+    #[test]
+    fn rejects_fill_of_zero_duration_cycle() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle EMPTY duration = 0m { } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill EMPTY(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E10", "fill of zero-duration cycle 'EMPTY'")
+        );
+    }
+
+    #[test]
+    fn rejects_repeat_chain_overrun() {
+        // 23h + 2*80m = 25:40 > 24h.
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 23h: repeat 2 R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "E07",
+                "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_until_beyond_parent() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill until 30h R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E07", "until '30h' out of bounds (duration 24h)")
+        );
+    }
+
+    #[test]
+    fn rejects_until_below_zero() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill until -30h R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E07", "until '-30h' out of bounds (duration 24h)")
+        );
+    }
+
+    #[test]
+    fn accepts_chains_in_bounds() {
+        // repeat встык (6h + 3*80m = 10h), fill с хвостом, until встык.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h20m { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            6h: repeat 3 R(); 0h: fill R(); 0h: fill until 12h R(); } }";
+        let (ast, t) = tables(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_bounds(ast, &t).expect("цепочки в границах");
+        assert_eq!(root_actual_ms(ast, &t), Ok(86_400_000));
     }
 }
