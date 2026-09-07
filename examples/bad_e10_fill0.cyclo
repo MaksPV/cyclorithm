@@ -1,0 +1,17 @@
+schedule "E10-fill0" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle EMPTY
+    duration = 0m
+  {
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: fill EMPTY();
+  }
+}
