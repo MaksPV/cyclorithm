@@ -1,0 +1,3 @@
+const MORNING = 6;
+
+pred commute(at) = morning(at) or evening(at);

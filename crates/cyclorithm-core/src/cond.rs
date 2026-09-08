@@ -1023,6 +1023,59 @@ mod tests {
     }
 
     #[test]
+    fn arithmetic_overflow_is_runtime_error() {
+        // `i64::MAX + 1`: статика пропускает (типы в норме), падает вычисление.
+        let c = cond_of("9223372036854775807 + 1 == 0");
+        let d = test_defs();
+        check_single(&c, &d).expect("переполнение не константа — статика проходит");
+        let e = eval_cond(&c, 0, &d).expect_err("переполнение в момент строки — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "integer out of range 'arithmetic overflow'")
+        );
+    }
+
+    #[test]
+    fn or_and_short_circuit_dead_branches() {
+        // Правая часть при at=1 и at=2 — деление на ноль; ленивость её не трогает.
+        assert!(yes("at == 1 or 1 / (at - 1) == 0", 1));
+        assert!(no("at == 1 and 1 / (at - 2) == 0", 2));
+    }
+
+    #[test]
+    fn alternation_beyond_eq_ne_is_runtime_error() {
+        // Статика пропускает (числа, арность в норме), падает вычисление.
+        let c = cond_of("at < (1 or 2)");
+        let d = test_defs();
+        check_single(&c, &d).expect("оператор статика не смотрит");
+        let e = eval_cond(&c, 1, &d).expect_err("только == и !=");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
+    }
+
+    #[test]
+    fn pad_negative_width_is_noop() {
+        assert!(yes("pad(5, 0 - 3) == \"5\"", 0));
+    }
+
+    #[test]
+    fn pred_accepts_any_numeric_argument() {
+        // Аргумент предиката — не обязательно голый `at`: станет временем тела.
+        let r = eval_with("pred big(at) = at > 10;", "big(at - at + 50)", 0)
+            .expect("вычисление обязано удаваться");
+        assert!(r);
+    }
+
+    #[test]
+    fn const_body_sees_call_site_time() {
+        // `at` в теле объявления — время места вызова, не объявления.
+        let r = eval_with("const K = at;", "K == 100", 100).expect("должно вычисляться");
+        assert!(r);
+    }
+
+    #[test]
     fn prelude_matches_control_points() {
         // at = 0 — четверг 1970-01-01 (контрольная точка черновика).
         assert!(eval_with("", "dow(at) == 3", 0).unwrap());

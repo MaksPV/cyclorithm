@@ -21,13 +21,14 @@ fn stdout_json(out: &Output) -> serde_json::Value {
 
 #[test]
 fn route_matches_expected_json() {
+    // Пятница 09.01 — полное расписание (будние ветки), 18 событий.
     let out = run(&[
         "run",
         "../../examples/valid/route.cyclo",
         "--start",
-        "2026-01-10T00:00:00",
+        "2026-01-09T00:00:00",
         "--end",
-        "2026-01-11T00:00:00",
+        "2026-01-10T00:00:00",
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/route.expected.json");

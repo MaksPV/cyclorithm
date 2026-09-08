@@ -191,9 +191,11 @@ fn unfold(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{check_conditions, resolve_defs, Defs};
+    use crate::cond::{check_conditions, resolve_units, Defs};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, validate_names};
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
 
     fn setup(
         src: &str,
@@ -208,7 +210,20 @@ mod tests {
         let t = validate_names(ast).unwrap();
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();
-        let d: &'static Defs = Box::leak(Box::new(resolve_defs(&file.decls).unwrap()));
+        // Импорты — из памяти: route_lib.cyclo лежит рядом с route.cyclo.
+        // Без `use` чтение не вызывается, остальные фикстуры не меняются.
+        let libs: HashMap<PathBuf, String> = HashMap::from([(
+            PathBuf::from("route_lib.cyclo"),
+            include_str!("../../../examples/valid/route_lib.cyclo").to_owned(),
+        )]);
+        let mut groups = crate::imports::collect_units(&file.uses, Path::new(""), &mut |p| {
+            libs.get(p)
+                .cloned()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "нет в памяти"))
+        })
+        .expect("импорты тестов обязаны разрешаться");
+        groups.push(file.decls.clone());
+        let d: &'static Defs = Box::leak(Box::new(resolve_units(&groups).unwrap()));
         check_conditions(ast, d).unwrap();
         (ast, t, d)
     }
@@ -223,10 +238,10 @@ mod tests {
 
     #[test]
     fn expands_route_like_expected_json() {
-        // Контракт §1: окно и все 8 событий дословно как route.expected.json.
+        // Контракт §1: пятница 09.01 — полное расписание, 18 событий как в JSON.
         let src = include_str!("../../../examples/valid/route.cyclo");
         let (ast, t, d) = setup(src);
-        let (s, e) = window("2026-01-10T00:00:00", "2026-01-11T00:00:00");
+        let (s, e) = window("2026-01-09T00:00:00", "2026-01-10T00:00:00");
         let events = expand(ast, &t, d, s, e).unwrap();
         let got: Vec<(String, String, String)> = events
             .iter()
@@ -238,49 +253,29 @@ mod tests {
                 )
             })
             .collect();
+        let day =
+            |t: &str, a: &str, p: &str| (format!("2026-01-09T{t}"), a.to_owned(), p.to_owned());
         assert_eq!(
             got,
             vec![
-                (
-                    "2026-01-10T06:00:00".to_owned(),
-                    "depart".to_owned(),
-                    "DEPOT".to_owned()
-                ),
-                (
-                    "2026-01-10T06:40:00".to_owned(),
-                    "arrive".to_owned(),
-                    "AIRPORT".to_owned()
-                ),
-                (
-                    "2026-01-10T06:50:00".to_owned(),
-                    "depart".to_owned(),
-                    "AIRPORT".to_owned()
-                ),
-                (
-                    "2026-01-10T07:20:00".to_owned(),
-                    "arrive".to_owned(),
-                    "DEPOT".to_owned()
-                ),
-                (
-                    "2026-01-10T18:00:00".to_owned(),
-                    "depart".to_owned(),
-                    "DEPOT".to_owned()
-                ),
-                (
-                    "2026-01-10T18:40:00".to_owned(),
-                    "arrive".to_owned(),
-                    "AIRPORT".to_owned()
-                ),
-                (
-                    "2026-01-10T18:50:00".to_owned(),
-                    "depart".to_owned(),
-                    "AIRPORT".to_owned()
-                ),
-                (
-                    "2026-01-10T19:20:00".to_owned(),
-                    "arrive".to_owned(),
-                    "DEPOT".to_owned()
-                ),
+                day("06:00:00", "depart", "DEPOT"),
+                day("06:40:00", "arrive", "AIRPORT"),
+                day("06:50:00", "depart", "AIRPORT"),
+                day("07:20:00", "arrive", "DEPOT"),
+                day("10:00:00", "depart", "DEPOT"),
+                day("10:20:00", "arrive", "DEPOT"),
+                day("10:20:00", "depart", "DEPOT"),
+                day("10:40:00", "arrive", "DEPOT"),
+                day("14:00:00", "depart", "DEPOT"),
+                day("14:20:00", "arrive", "DEPOT"),
+                day("14:20:00", "depart", "DEPOT"),
+                day("14:40:00", "arrive", "DEPOT"),
+                day("14:40:00", "depart", "DEPOT"),
+                day("15:00:00", "arrive", "DEPOT"),
+                day("18:00:00", "depart", "DEPOT"),
+                day("18:40:00", "arrive", "AIRPORT"),
+                day("18:50:00", "depart", "AIRPORT"),
+                day("19:20:00", "arrive", "DEPOT"),
             ]
         );
     }

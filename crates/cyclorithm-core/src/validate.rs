@@ -329,7 +329,7 @@ mod tests {
         let ast = parsed(src);
         let tables = validate_names(&ast).expect("route обязан проходить проверку имён");
         assert_eq!(tables.points.len(), 2);
-        assert_eq!(tables.cycles.len(), 1);
+        assert_eq!(tables.cycles.len(), 2);
     }
 
     #[test]
