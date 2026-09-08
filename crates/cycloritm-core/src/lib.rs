@@ -7,6 +7,7 @@ pub mod cond;
 pub mod datetime;
 pub mod duration;
 pub mod expand;
+pub mod imports;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
@@ -173,6 +174,21 @@ impl Error {
     /// E12: кривой литерал даты в условии.
     pub fn e12_date(raw: &str) -> Self {
         Self::coded("E12", format!("invalid date '{raw}'"))
+    }
+
+    /// E13: импорт не читается.
+    pub fn e13_read(path: &str) -> Self {
+        Self::coded("E13", format!("cannot read import '{path}'"))
+    }
+
+    /// E13: цикл импорта.
+    pub fn e13_cycle(path: &str) -> Self {
+        Self::coded("E13", format!("import cycle '{path}'"))
+    }
+
+    /// E14: расписание внутри импорта.
+    pub fn e14_schedule(path: &str) -> Self {
+        Self::coded("E14", format!("schedule not allowed in import '{path}'"))
     }
 }
 

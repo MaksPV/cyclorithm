@@ -38,60 +38,70 @@ struct Def {
     param: Option<String>,
     expr: Option<Expr>,
     cond: Option<Cond>,
-    system: bool,
+    /// Файл-владелец: 0 — прелюдия, дальше импорты, последний — программа.
+    unit: usize,
+    /// Имена на `__` видны только в своём файле.
     private: bool,
 }
 
-/// Итоговое пространство имён: системный файл, поверх — программа.
-// Побеждает последнее; `__` системного файла извне не видно.
+/// Итоговое пространство имён: прелюдия, поверх импорты, поверх программа.
+// Побеждает последнее; `__` чужого файла не видно.
 #[derive(Debug)]
 pub struct Defs {
     map: HashMap<String, Def>,
-    order: Vec<String>,
+    /// Юнит тела программы: контекст условий расписания.
+    main: usize,
 }
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
-/// Собрать определения: оверлей программы поверх системных,
-// затем проверить все тела в порядке объявления (сначала прелюдия).
+/// Собрать определения одного файла поверх системных.
 pub fn resolve_defs(decls: &[Decl]) -> Result<Defs, Error> {
+    resolve_units(&[decls.to_vec()])
+}
+
+/// Собрать определения: оверлей групп в порядке наложения
+// (последняя группа — тело программы), затем проверить все тела.
+// Дубли — только внутри одной группы (`E04`); между файлами побеждает последнее.
+pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
     let system = cycloritm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
     let mut map = HashMap::new();
-    let mut sys_order = Vec::new();
+    let mut all: Vec<String> = Vec::new();
     for d in &system {
-        let (name, def) = to_def(d, true);
+        let (name, def) = to_def(d, 0);
         if !map.contains_key(&name) {
-            sys_order.push(name.clone());
+            all.push(name.clone());
         }
         map.insert(name, def);
     }
-    let mut order = Vec::new();
-    let mut seen = HashSet::new();
-    for d in decls {
-        let (name, kind) = match d {
-            Decl::Const { name, .. } => (name, "const"),
-            Decl::Fun { name, .. } => (name, "fun"),
-            Decl::Pred { name, .. } => (name, "pred"),
-        };
-        if !seen.insert(name.clone()) {
-            return Err(Error::e04(kind, name));
+    for (i, group) in units.iter().enumerate() {
+        let unit = i + 1;
+        let mut seen = HashSet::new();
+        for d in group {
+            let (name, kind) = match d {
+                Decl::Const { name, .. } => (name, "const"),
+                Decl::Fun { name, .. } => (name, "fun"),
+                Decl::Pred { name, .. } => (name, "pred"),
+            };
+            if !seen.insert(name.clone()) {
+                return Err(Error::e04(kind, name));
+            }
+            all.push(name.clone());
+            let (_, def) = to_def(d, unit);
+            map.insert(name.clone(), def);
         }
-        order.push(name.clone());
-        let (_, def) = to_def(d, false);
-        map.insert(name.clone(), def);
     }
-    let defs = Defs { map, order };
-    let all: Vec<String> = sys_order
-        .into_iter()
-        .chain(defs.order.iter().cloned())
-        .collect();
+    let defs = Defs {
+        map,
+        main: units.len(),
+    };
     for name in &all {
         check_def(&defs, name)?;
     }
     Ok(defs)
 }
 
-fn to_def(decl: &Decl, system: bool) -> (String, Def) {
+fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
     match decl {
         Decl::Const { name, body } => (
             name.clone(),
@@ -100,8 +110,8 @@ fn to_def(decl: &Decl, system: bool) -> (String, Def) {
                 param: None,
                 expr: Some(body.clone()),
                 cond: None,
-                system,
-                private: system && name.starts_with("__"),
+                unit,
+                private: name.starts_with("__"),
             },
         ),
         Decl::Fun { name, param, body } => (
@@ -111,8 +121,8 @@ fn to_def(decl: &Decl, system: bool) -> (String, Def) {
                 param: Some(param.clone()),
                 expr: Some(body.clone()),
                 cond: None,
-                system,
-                private: system && name.starts_with("__"),
+                unit,
+                private: name.starts_with("__"),
             },
         ),
         Decl::Pred { name, body } => (
@@ -122,8 +132,8 @@ fn to_def(decl: &Decl, system: bool) -> (String, Def) {
                 param: Some("at".to_owned()),
                 expr: None,
                 cond: Some(body.clone()),
-                system,
-                private: system && name.starts_with("__"),
+                unit,
+                private: name.starts_with("__"),
             },
         ),
     }
@@ -131,11 +141,11 @@ fn to_def(decl: &Decl, system: bool) -> (String, Def) {
 
 fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
     let def = defs.map.get(name).expect("своё имя");
-    // Системные тела проверяются изнутри прелюдии: `__` видно.
+    // Тело проверяется изнутри своего файла: `__` видно.
     let mut cx = CxTy {
         defs,
-        stack: vec![(name.to_owned(), !def.system)],
-        sys: def.system,
+        stack: vec![(name.to_owned(), def.unit)],
+        unit: def.unit,
         vars: HashMap::new(),
     };
     match def.kind {
@@ -162,21 +172,21 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
 
 struct CxTy<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, bool)>,
-    sys: bool,
+    stack: Vec<(String, usize)>,
+    unit: usize,
     vars: HashMap<String, Ty>,
 }
 
 struct CxEv<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, bool)>,
-    sys: bool,
+    stack: Vec<(String, usize)>,
+    unit: usize,
     vars: HashMap<String, Value>,
 }
 
-fn resolve<'a>(defs: &'a Defs, name: &str, sys: bool) -> Result<&'a Def, Error> {
+fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error> {
     match defs.map.get(name) {
-        Some(d) if d.private && !sys => Err(Error::e11(name)),
+        Some(d) if d.private && d.unit != unit => Err(Error::e11(name)),
         Some(d) => Ok(d),
         None => Err(Error::e11(name)),
     }
@@ -190,7 +200,7 @@ pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
                 CxTy {
                     defs,
                     stack: Vec::new(),
-                    sys: false,
+                    unit: defs.main,
                     vars: HashMap::new(),
                 }
                 .infer_cond(cond)?;
@@ -202,7 +212,7 @@ pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
             CxTy {
                 defs,
                 stack: Vec::new(),
-                sys: false,
+                unit: defs.main,
                 vars: HashMap::new(),
             }
             .infer_cond(cond)?;
@@ -225,12 +235,12 @@ impl CxTy<'_> {
                     return Err(Error::e12_mismatch());
                 }
                 let defs = self.defs;
-                let def = resolve(defs, name, self.sys)?;
+                let def = resolve(defs, name, self.unit)?;
                 match def.kind {
                     DefKind::Pred => {}
                     _ => return Err(Error::e12_not_pred(name)),
                 };
-                self.enter(name, def.system)?;
+                self.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.infer_cond(&body);
                 self.leave();
@@ -275,10 +285,10 @@ impl CxTy<'_> {
                 }
                 // Голая константа (K, DAY); fun/pred без вызова — не значение.
                 let defs = self.defs;
-                let def = resolve(defs, name, self.sys)?;
+                let def = resolve(defs, name, self.unit)?;
                 match def.kind {
                     DefKind::Const => {
-                        self.enter(name, def.system)?;
+                        self.enter(name, def.unit)?;
                         let body = def.expr.clone().expect("const: тело");
                         let ty = self.infer(&body);
                         self.leave();
@@ -342,13 +352,13 @@ impl CxTy<'_> {
             }
             _ => {
                 let defs = self.defs;
-                let def = resolve(defs, name, self.sys)?;
+                let def = resolve(defs, name, self.unit)?;
                 match def.kind {
                     DefKind::Const => {
                         if !args.is_empty() {
                             return Err(Error::e12_arity(name));
                         }
-                        self.enter(name, def.system)?;
+                        self.enter(name, def.unit)?;
                         let body = def.expr.clone().expect("const: тело");
                         let ty = self.infer(&body);
                         self.leave();
@@ -360,7 +370,7 @@ impl CxTy<'_> {
                             _ => return Err(Error::e12_arity(name)),
                         };
                         let arg_ty = self.infer(arg)?;
-                        self.enter(name, def.system)?;
+                        self.enter(name, def.unit)?;
                         let param = def.param.clone().expect("fun: параметр");
                         let body = def.expr.clone().expect("fun: тело");
                         // Восстановить внешнее значение: параметры вложенных
@@ -384,18 +394,18 @@ impl CxTy<'_> {
         }
     }
 
-    fn enter(&mut self, name: &str, sys: bool) -> Result<(), Error> {
+    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
         if self.stack.iter().any(|(n, _)| n == name) {
             return Err(Error::e12_recursive(name));
         }
-        let prev = std::mem::replace(&mut self.sys, sys);
+        let prev = std::mem::replace(&mut self.unit, unit);
         self.stack.push((name.to_owned(), prev));
         Ok(())
     }
 
     fn leave(&mut self) {
         if let Some((_, prev)) = self.stack.pop() {
-            self.sys = prev;
+            self.unit = prev;
         }
     }
 
@@ -479,7 +489,7 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
     let mut ev = CxEv {
         defs: cx.defs,
         stack: cx.stack.clone(),
-        sys: cx.sys,
+        unit: cx.unit,
         vars: HashMap::new(),
     };
     let r = eval_expr(expr, 0, &mut ev);
@@ -545,25 +555,25 @@ pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
     CxEv {
         defs,
         stack: Vec::new(),
-        sys: false,
+        unit: defs.main,
         vars: HashMap::new(),
     }
     .eval_cond(cond, at)
 }
 
 impl CxEv<'_> {
-    fn enter(&mut self, name: &str, sys: bool) -> Result<(), Error> {
+    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
         if self.stack.iter().any(|(n, _)| n == name) {
             return Err(Error::e12_recursive(name));
         }
-        let prev = std::mem::replace(&mut self.sys, sys);
+        let prev = std::mem::replace(&mut self.unit, unit);
         self.stack.push((name.to_owned(), prev));
         Ok(())
     }
 
     fn leave(&mut self) {
         if let Some((_, prev)) = self.stack.pop() {
-            self.sys = prev;
+            self.unit = prev;
         }
     }
 
@@ -596,12 +606,12 @@ impl CxEv<'_> {
                     Value::Str(_) => return Err(Error::e12_mismatch()),
                 };
                 let defs = self.defs;
-                let def = resolve(defs, name, self.sys)?;
+                let def = resolve(defs, name, self.unit)?;
                 match def.kind {
                     DefKind::Pred => {}
                     _ => return Err(Error::e12_not_pred(name)),
                 }
-                self.enter(name, def.system)?;
+                self.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.eval_cond(&body, at_arg);
                 self.leave();
@@ -684,14 +694,14 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 return Ok(v.clone());
             }
             let defs = cx.defs;
-            let (system, body) = match resolve(defs, name, cx.sys) {
+            let (unit, body) = match resolve(defs, name, cx.unit) {
                 Ok(def) if def.kind == DefKind::Const => {
-                    (def.system, def.expr.clone().expect("const: тело"))
+                    (def.unit, def.expr.clone().expect("const: тело"))
                 }
                 Ok(_) => return Err(Error::e12_mismatch()),
                 Err(e) => return Err(e),
             };
-            cx.enter(name, system)?;
+            cx.enter(name, unit)?;
             let r = eval_expr(&body, at, cx);
             cx.leave();
             r
@@ -762,7 +772,7 @@ fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> 
 fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     let defs = cx.defs;
     if let Some(def) = defs.map.get(name) {
-        if !(def.private && !cx.sys) {
+        if !(def.private && def.unit != cx.unit) {
             return eval_def_call(name, def, args, at, cx);
         }
     }
@@ -829,7 +839,7 @@ fn eval_def_call(
             if !args.is_empty() {
                 return Err(Error::e12_arity(name));
             }
-            cx.enter(name, def.system)?;
+            cx.enter(name, def.unit)?;
             let body = def.expr.clone().expect("const: тело");
             let r = eval_expr(&body, at, cx);
             cx.leave();
@@ -840,7 +850,7 @@ fn eval_def_call(
                 [a] => eval_expr(a, at, cx)?,
                 _ => return Err(Error::e12_arity(name)),
             };
-            cx.enter(name, def.system)?;
+            cx.enter(name, def.unit)?;
             let param = def.param.clone().expect("fun: параметр");
             let body = def.expr.clone().expect("fun: тело");
             let old = cx.vars.insert(param.clone(), arg);
@@ -901,7 +911,7 @@ mod tests {
         CxTy {
             defs: d,
             stack: Vec::new(),
-            sys: false,
+            unit: d.main,
             vars: HashMap::new(),
         }
         .infer_cond(c)
@@ -1133,5 +1143,43 @@ mod tests {
                 "для {row:?}"
             );
         }
+    }
+
+    #[test]
+    fn cross_file_shadow_wins_silently() {
+        // Импорт переопределяет системное имя без E04; программа — поверх.
+        let imp = p::parse_decls("const sat = 3;").unwrap();
+        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let c = cond_of("weekend(at)");
+        check_single(&c, &d).unwrap();
+        assert!(eval_cond(&c, 0, &d).unwrap());
+    }
+
+    #[test]
+    fn private_names_do_not_cross_files() {
+        // `__` импорта не видно из программы — E11.
+        let imp = p::parse_decls("fun __h(t) = t;").unwrap();
+        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let c = cond_of("__h(at) == 1");
+        let e = check_single(&c, &d).expect_err("чужое __ — ошибка");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__h'"));
+        // Своё `__` внутри своего файла работает.
+        let prog = p::parse_decls("fun __p(t) = t + 1;").unwrap();
+        let d = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
+        let c = cond_of("__p(at) == 3");
+        check_single(&c, &d).unwrap();
+        assert!(eval_cond(&c, 2, &d).unwrap());
+    }
+
+    #[test]
+    fn duplicate_across_files_is_not_e04() {
+        // Дубль — только внутри одного файла.
+        let a = p::parse_decls("const K = 1;").unwrap();
+        let b = p::parse_decls("const K = 2;").unwrap();
+        let d = resolve_units(&[a, b]).expect("склейка обязана сходиться");
+        let c = cond_of("at >= K");
+        check_single(&c, &d).unwrap();
+        assert!(eval_cond(&c, 2, &d).unwrap());
+        assert!(!eval_cond(&c, 1, &d).unwrap());
     }
 }
