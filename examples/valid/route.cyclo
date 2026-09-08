@@ -1,4 +1,4 @@
-use "route_lib.cyclo";
+use "libs/route_lib.cyclo";
 
 fun rush_top(x) = x + 1;
 

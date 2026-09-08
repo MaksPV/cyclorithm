@@ -210,11 +210,11 @@ mod tests {
         let t = validate_names(ast).unwrap();
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();
-        // Импорты — из памяти: route_lib.cyclo лежит рядом с route.cyclo.
+        // Импорты — из памяти: route_lib.cyclo лежит в libs/ рядом с route.cyclo.
         // Без `use` чтение не вызывается, остальные фикстуры не меняются.
         let libs: HashMap<PathBuf, String> = HashMap::from([(
-            PathBuf::from("route_lib.cyclo"),
-            include_str!("../../../examples/valid/route_lib.cyclo").to_owned(),
+            PathBuf::from("libs/route_lib.cyclo"),
+            include_str!("../../../examples/valid/libs/route_lib.cyclo").to_owned(),
         )]);
         let mut groups = crate::imports::collect_units(&file.uses, Path::new(""), &mut |p| {
             libs.get(p)
