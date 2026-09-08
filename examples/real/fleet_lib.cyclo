@@ -1,0 +1,6 @@
+// Общая библиотека парка: порог вечера, зазор и час пик.
+const EVENING = 17;
+
+fun gap(x) = x + 2;
+
+pred rush(at) = hour(at) >= 7 and hour(at) <= 9 or hour(at) >= 17 and hour(at) <= 19;

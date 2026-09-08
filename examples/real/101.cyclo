@@ -1,0 +1,39 @@
+schedule "101 Кулички - Тамбов" {
+  point KULICHKI {actions = [depart, arrive];}
+  point TAMBOV {actions = [depart, arrive];}
+  point TATANOVO {actions = [depart, arrive];}
+  point DONSKOYE {actions = [depart, arrive];}
+
+  cycle TAMBOV_KULICHKI
+    duration = 1h
+  {
+    0m: TAMBOV.depart();
+    10m: DONSKOYE.arrive();
+    30m: TATANOVO.arrive();
+    50m: KULICHKI.arrive();
+  }
+
+  cycle KULICHKI_TAMBOV
+    duration = 1h
+  {
+    0m: KULICHKI.depart();
+    20m: TATANOVO.arrive();
+    30m: DONSKOYE.arrive();
+    50m: TAMBOV.arrive();
+  }
+
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    [not weekend(at)] 6h50m: KULICHKI_TAMBOV();
+    8h00m: TAMBOV_KULICHKI();
+    9h00m: KULICHKI_TAMBOV();
+    13h00m: TAMBOV_KULICHKI();
+    14h00m: KULICHKI_TAMBOV();
+    16h25m: TAMBOV_KULICHKI();
+    17h20m: KULICHKI_TAMBOV();
+    [not weekend(at)] 18h30m: TAMBOV_KULICHKI();
+  }
+}

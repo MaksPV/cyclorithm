@@ -1,0 +1,21 @@
+fun a(t) = b(t);
+fun b(t) = a(t);
+
+schedule "E12-recursive" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    [a(at) == 1] 6h: R();
+  }
+}

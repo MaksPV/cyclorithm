@@ -1,0 +1,89 @@
+// Cyclorithm grammar — дословно §3 спеки (EBNF почти 1:1).
+//
+// Осознанно пропуски грамматики (ловит валидация, E05):
+// - порядок/уникальность компонентов длительности (`1h2h`, `30s1d`);
+// - переполнение i64 и нулевой период root_cycle.
+//
+// Ловушка: `ms` в альтернативе раньше `m`, иначе `1ms` режется на `m` + `s`.
+
+file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
+// Только объявления (системный файл): расписания там нет.
+decls_file  = { SOI ~ decl* ~ EOI }
+// Единица импорта: объявления и свои use, расписание — опционально
+// (его наличие бракует резолвер кодом E14, а не синтаксис).
+unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
+use_decl    = { "use" ~ string ~ ";" }
+schedule    = { "schedule" ~ string ~ "{" ~ point* ~ cycle* ~ root_cycle ~ "}" }
+// Объявления — только до schedule. Параметр предиката — буквально `at`
+// (проверяет build); truth — сравнение в скобках для арифметики (1/0).
+decl        = { const_decl | fun_decl | pred_decl }
+const_decl  = { "const" ~ IDENT ~ "=" ~ decl_value ~ ";" }
+fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
+pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
+// Тело const/fun — склейка или арифметика (datestr возвращает строку).
+// Порядок как у операндов: сначала concat, иначе arith съедает префикс.
+decl_value  = { concat | arith }
+point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ "}" }
+action_list = { IDENT ~ ("," ~ IDENT)* }
+cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
+// Условия (§3 спеки). `concat` раньше `arith`: иначе `arith` съедает
+// строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).
+condition_block = { "[" ~ condition ~ "]" }
+condition   = { or_expr }
+or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
+and_expr    = { not_expr ~ (kw_and ~ not_expr)* }
+not_expr    = { kw_not? ~ (comparison | call) }
+// `notx == 1` не должно читаться как `not (x == 1)`.
+// Атомарные: пробел между словом и границей запрещён, иначе lookahead
+// смотрел бы символ после пробелов, а не сразу за словом.
+kw_or       = @{ "or" ~ !word_tail }
+kw_and      = @{ "and" ~ !word_tail }
+kw_not      = @{ "not" ~ !word_tail }
+word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
+comparison  = { cmp_side ~ cmp_op ~ cmp_right }
+// Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
+cmp_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+cmp_side    = { concat | arith }
+cmp_right   = { concat | arith | alternation }
+alternation = { "(" ~ arith ~ (kw_or ~ arith)+ ~ ")" }
+arith       = { term ~ (add_op ~ term)* }
+add_op      = { "+" | "-" }
+term        = { factor ~ (mul_op ~ factor)* }
+mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
+factor      = { neg_sign? ~ (number | string | call | IDENT | truth | "(" ~ arith ~ ")") }
+truth       = { "(" ~ comparison ~ ")" }
+concat      = { concat_term ~ ("++" ~ concat_term)+ }
+concat_term = { number | string | call | IDENT | "(" ~ concat ~ ")" }
+call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
+cond_arg    = { concat | arith }
+// Тело строки: сначала пробуем модификатор + вызов, иначе голый вызов.
+// Порядок важен: цикл с именем `fill` (`6h: fill();`) разбирается второй
+// веткой — PEG сбрасывает позицию при неудаче первой.
+stmt_body   = { repeat_mod ~ invocation | invocation }
+repeat_mod  = { repeat_n | fill_mod }
+repeat_n    = { "repeat" ~ number }
+fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
+// Минус смещения — именованное правило, чтобы парсер его видел; слитность
+// (`-10m` ок, `- 10m` — ошибка) проверяется в `build_stmt` по спанам:
+// неявные пробелы `~` здесь пропускают пробел осознанно.
+neg_sign    = { "-" }
+invocation  = { point_action | cycle_call }
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" }
+cycle_call   = { IDENT ~ "(" ~ ")" }
+duration     = { duration_item+ }
+// Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),
+// между компонентами разрешены (`1h 20m` ок).
+duration_item = ${ number ~ duration_unit }
+duration_unit = { "ms" | "w" | "d" | "h" | "m" | "s" }
+number        = @{ ASCII_DIGIT+ }
+// Атомарное: комментарии `//` и пробелы внутрь строк не проникают.
+string      = @{ "\"" ~ string_char* ~ "\"" }
+string_char = _{ !("\"" | "\n" | "\r") ~ ANY }
+// ASCII-only: кириллица в именах запрещена (проверяется самим классом).
+IDENT = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+// Строчные комментарии до конца строки — как пробелы; блочных нет.
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }

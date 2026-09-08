@@ -3,24 +3,24 @@
 version = 4
 
 [[package]]
-name = "cycloritm-cli"
-version = "0.1.0"
+name = "cyclorithm-cli"
+version = "0.2.0"
 dependencies = [
- "cycloritm-core",
- "cycloritm-parser",
+ "cyclorithm-core",
+ "cyclorithm-parser",
  "serde_json",
 ]
 
 [[package]]
-name = "cycloritm-core"
-version = "0.1.0"
+name = "cyclorithm-core"
+version = "0.2.0"
 dependencies = [
- "cycloritm-parser",
+ "cyclorithm-parser",
 ]
 
 [[package]]
-name = "cycloritm-parser"
-version = "0.1.0"
+name = "cyclorithm-parser"
+version = "0.2.0"
 dependencies = [
  "pest",
  "pest_derive",

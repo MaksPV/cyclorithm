@@ -1,0 +1,15 @@
+[package]
+name = "cyclorithm-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Grammar and AST for the Cyclorithm DSL"
+
+[lib]
+name = "cyclorithm_parser"
+path = "src/lib.rs"
+
+[dependencies]
+pest = "2"
+pest_derive = "2"

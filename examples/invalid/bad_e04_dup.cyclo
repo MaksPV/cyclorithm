@@ -1,0 +1,21 @@
+const K = 1;
+const K = 2;
+
+schedule "E04-dup" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    [at >= K] 6h: R();
+  }
+}
