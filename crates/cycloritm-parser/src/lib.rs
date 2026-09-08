@@ -16,10 +16,12 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
         .next()
         .expect("file непуст");
     debug_assert_eq!(file.as_rule(), Rule::file);
+    let mut uses = Vec::new();
     let mut decls = Vec::new();
     let mut schedule = None;
     for p in file.into_inner() {
         match p.as_rule() {
+            Rule::use_decl => uses.push(build_use(p)),
             Rule::decl => decls.push(build_decl(p)?),
             Rule::schedule => schedule = Some(build_schedule(p)?),
             Rule::EOI => {}
@@ -27,9 +29,17 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
         }
     }
     Ok(SourceFile {
+        uses,
         decls,
         schedule: schedule.expect("file содержит ровно schedule"),
     })
+}
+
+/// Путь из `use "path";` — без кавычек (строки без escapes, как везде).
+fn build_use(pair: Pair<Rule>) -> String {
+    debug_assert_eq!(pair.as_rule(), Rule::use_decl);
+    let s = pair.into_inner().next().expect("use: путь").as_str();
+    s[1..s.len() - 1].to_owned()
 }
 
 /// Разбор файла одних объявлений (системная библиотека): расписания нет.
@@ -546,9 +556,10 @@ fn unquote(pair: Pair<Rule>) -> String {
 // Поэтому числа и сырой текст длительностей хранятся как есть.
 // ---------------------------------------------------------------------------
 
-/// Корень файла: объявления и `schedule`.
+/// Корень файла: импорты, объявления и `schedule`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
+    pub uses: Vec<String>,
     pub decls: Vec<Decl>,
     pub schedule: Schedule,
 }
@@ -1084,6 +1095,35 @@ mod tests {
     #[test]
     fn rejects_pred_param_not_at() {
         let src = "pred p(t) = t == 1; schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn parses_uses_before_decls() {
+        let src = "use \"a.cyclo\"; use \"b/c.cyclo\"; const K = 1; schedule \"T\" { \
+            point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let s = parse(src).expect("use обязаны разбираться");
+        assert_eq!(s.uses, vec!["a.cyclo".to_owned(), "b/c.cyclo".to_owned()]);
+        assert_eq!(s.decls.len(), 1);
+    }
+
+    #[test]
+    fn rejects_use_after_schedule() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } } \
+            use \"a.cyclo\";";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn rejects_use_between_decls_and_schedule() {
+        let src = "const K = 1; use \"a.cyclo\"; schedule \"T\" { \
+            point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         assert!(parse(src).is_err());

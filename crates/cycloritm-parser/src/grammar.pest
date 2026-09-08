@@ -6,9 +6,10 @@
 //
 // Ловушка: `ms` в альтернативе раньше `m`, иначе `1ms` режется на `m` + `s`.
 
-file        = { SOI ~ decl* ~ schedule ~ EOI }
+file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
+use_decl    = { "use" ~ string ~ ";" }
 schedule    = { "schedule" ~ string ~ "{" ~ point* ~ cycle* ~ root_cycle ~ "}" }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
