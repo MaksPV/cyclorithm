@@ -1,0 +1,81 @@
+// Автобусный парк № 7: 5 бортов, маршруты A (аэропорт), B (вокзал), C (кольцевой).
+// Соглашение: автобус — точка, действие — назначение. out/in — выезд/возврат в парк.
+// Правило условий: каждое содержит date-зависимую часть (выходные/дата ТО),
+// иначе оно константно во всех экземплярах. Исключение — условия на цепочках
+// repeat/fill: там проверка идёт на каждый экземпляр, дыра внутри цепочки легитимна.
+// Прогон: cyclo run fleet.cyclo --start 2026-01-12T00:00:00 --end 2026-01-19T00:00:00
+// (пн–вс: будни — все борта, выходные — дежурные, 15.01 (чт) борт 3 на ТО).
+use "fleet_lib.cyclo";
+
+pred midday(at) = hour(at) >= 11 and hour(at) <= 15;
+
+schedule "Автобусный парк № 7" {
+  point BUS_1 { actions = [out, A, B, in]; }
+  point BUS_2 { actions = [out, A, C, in]; }
+  point BUS_3 { actions = [out, B, C, in]; }
+  point BUS_4 { actions = [out, A, B, in]; }
+  point BUS_5 { actions = [out, C, in]; }
+
+  cycle CITY_LOOP duration = 30m {
+    0m: BUS_2.C();
+  }
+
+  cycle SPARE_LOOP duration = 30m {
+    0m: BUS_5.C();
+  }
+
+  cycle BUS_1_DAY duration = 14h {
+    0m: BUS_1.out();
+    30m: BUS_1.A();
+    [rush(at) and not weekend(at)] 2h: BUS_1.A();
+    [not weekend(at)] 5h: BUS_1.A();
+    [not weekend(at)] 8h: BUS_1.B();
+    [hour(at) >= EVENING and not weekend(at)] 12h: BUS_1.B();
+    -0m: BUS_1.in();
+  }
+
+  cycle BUS_2_DAY duration = 14h {
+    0m: BUS_2.out();
+    30m: BUS_2.A();
+    [weekend(at)] 3h: BUS_2.C();
+    4h: repeat 6 CITY_LOOP();
+    [hour(at) >= gap(9) and not weekend(at)] 6h: BUS_2.C();
+    8h: BUS_2.C();
+    -0m: BUS_2.in();
+  }
+
+  cycle BUS_3_DAY duration = 14h {
+    0m: BUS_3.out();
+    1h: BUS_3.B();
+    [midday(at) and not weekend(at)] 6h: BUS_3.C();
+    [midday(at) and weekend(at)] 9h: BUS_3.C();
+    12h: BUS_3.B();
+    -0m: BUS_3.in();
+  }
+
+  cycle BUS_4_DAY duration = 12h {
+    0m: BUS_4.out();
+    30m: BUS_4.A();
+    5h: BUS_4.B();
+    8h: BUS_4.A();
+    -0m: BUS_4.in();
+  }
+
+  cycle BUS_5_DAY duration = 10h {
+    0m: BUS_5.out();
+    [hour(at) != 10] 2h: fill until 6h SPARE_LOOP();
+    8h: BUS_5.C();
+    -0m: BUS_5.in();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    5h30m: BUS_1_DAY();
+    5h30m: BUS_2_DAY();
+    [datestr(at) != "2026-01-15"] 5h30m: BUS_3_DAY();
+    [not weekend(at)] 5h30m: BUS_4_DAY();
+    [not weekend(at)] 6h: BUS_5_DAY();
+  }
+}
