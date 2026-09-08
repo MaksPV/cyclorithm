@@ -1,15 +1,25 @@
 {
   "schedule": "Автобусный парк",
-  "start": "2026-01-10T00:00:00",
-  "end": "2026-01-11T00:00:00",
+  "start": "2026-01-09T00:00:00",
+  "end": "2026-01-10T00:00:00",
   "events": [
-    {"time": "2026-01-10T06:00:00", "action": "depart", "point": "DEPOT"},
-    {"time": "2026-01-10T06:40:00", "action": "arrive", "point": "AIRPORT"},
-    {"time": "2026-01-10T06:50:00", "action": "depart", "point": "AIRPORT"},
-    {"time": "2026-01-10T07:20:00", "action": "arrive", "point": "DEPOT"},
-    {"time": "2026-01-10T18:00:00", "action": "depart", "point": "DEPOT"},
-    {"time": "2026-01-10T18:40:00", "action": "arrive", "point": "AIRPORT"},
-    {"time": "2026-01-10T18:50:00", "action": "depart", "point": "AIRPORT"},
-    {"time": "2026-01-10T19:20:00", "action": "arrive", "point": "DEPOT"}
+    {"time": "2026-01-09T06:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T06:40:00", "action": "arrive", "point": "AIRPORT"},
+    {"time": "2026-01-09T06:50:00", "action": "depart", "point": "AIRPORT"},
+    {"time": "2026-01-09T07:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T10:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T10:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T10:20:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T10:40:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T14:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:20:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T14:40:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:40:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T15:00:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T18:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T18:40:00", "action": "arrive", "point": "AIRPORT"},
+    {"time": "2026-01-09T18:50:00", "action": "depart", "point": "AIRPORT"},
+    {"time": "2026-01-09T19:20:00", "action": "arrive", "point": "DEPOT"}
   ]
 }

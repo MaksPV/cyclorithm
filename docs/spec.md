@@ -5,64 +5,98 @@
 ## 1. Пример
 
 ```text
+use "route_lib.cyclo";
+
+fun rush_top(x) = x + 1;
+
 schedule "Автобусный парк" {
   point DEPOT {
     actions = [depart, arrive];
   }
-  
+
   point AIRPORT {
     actions = [arrive, depart];
   }
-  
+
   cycle CITY_ROUTE
     duration = 1h20m
   {
     0m: DEPOT.depart();
     40m: AIRPORT.arrive();
     50m: AIRPORT.depart();
-    80m: DEPOT.arrive();
+    -0m: DEPOT.arrive();
   }
-  
+
+  cycle SHUTTLE
+    duration = 20m
+  {
+    0m: DEPOT.depart();
+    20m: DEPOT.arrive();
+  }
+
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
     6h: CITY_ROUTE();
-    18h: CITY_ROUTE();
+    [hour(at) >= rush_top(MORNING) and not weekend(at)] 10h: repeat 2 SHUTTLE();
+    [not weekend(at)] 14h: fill until 15h SHUTTLE();
+    [commute(at) and not weekend(at)] 18h: CITY_ROUTE();
+    [weekend(at)] 12h: CITY_ROUTE();
   }
 }
 ```
 
+Файл `route_lib.cyclo` рядом (общие объявления, подключаются первой строкой):
+
+```text
+const MORNING = 6;
+
+pred commute(at) = morning(at) or evening(at);
+```
+
+Что здесь показано: `use`-импорт (`MORNING`, `commute`), свои объявления (`rush_top`), системный файл (`hour`, `weekend`, `morning`, `evening` — `use` не нужен), условия (будние ветки + выходной рейс в 12:00), повторы (`repeat 2`, `fill until 15h` — горизонт от старта `root_cycle`, не от строки) и отрицательное смещение встык (`-0m` ≡ `80m`). Условия со временем суток всегда идут в паре с датой (`weekend`): иначе они константны во всех экземплярах (см. раздел 17).
+
 ### Пример поведения программы (CLI)
 
-Входной файл `route.cyclo` — пример из раздела выше.
+Входные файлы `route.cyclo` + `route_lib.cyclo` — пример из раздела выше. Окно — пятница 09.01 (будни: работают все ветки; в субботу останутся только рейсы в 6:00 и 12:00).
 
 Вызов:
 
 ```console
-$ cyclo run route.cyclo --start 2026-01-10T00:00:00 --end 2026-01-11T00:00:00
+$ cyclo run route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00
 ```
 
 Ожидаемое поведение:
 
-1. Программа читает `route.cyclo`.
+1. Программа читает `route.cyclo` (и `route_lib.cyclo` по `use`).
 2. Разворачивает циклы в плоский список событий за `[start, end)`.
 3. Печатает один JSON-объект в stdout:
 
 ```json
 {
   "schedule": "Автобусный парк",
-  "start": "2026-01-10T00:00:00",
-  "end": "2026-01-11T00:00:00",
+  "start": "2026-01-09T00:00:00",
+  "end": "2026-01-10T00:00:00",
   "events": [
-    {"time": "2026-01-10T06:00:00", "action": "depart", "point": "DEPOT"},
-    {"time": "2026-01-10T06:40:00", "action": "arrive", "point": "AIRPORT"},
-    {"time": "2026-01-10T06:50:00", "action": "depart", "point": "AIRPORT"},
-    {"time": "2026-01-10T07:20:00", "action": "arrive", "point": "DEPOT"},
-    {"time": "2026-01-10T18:00:00", "action": "depart", "point": "DEPOT"},
-    {"time": "2026-01-10T18:40:00", "action": "arrive", "point": "AIRPORT"},
-    {"time": "2026-01-10T18:50:00", "action": "depart", "point": "AIRPORT"},
-    {"time": "2026-01-10T19:20:00", "action": "arrive", "point": "DEPOT"}
+    {"time": "2026-01-09T06:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T06:40:00", "action": "arrive", "point": "AIRPORT"},
+    {"time": "2026-01-09T06:50:00", "action": "depart", "point": "AIRPORT"},
+    {"time": "2026-01-09T07:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T10:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T10:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T10:20:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T10:40:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T14:20:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:20:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T14:40:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T14:40:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T15:00:00", "action": "arrive", "point": "DEPOT"},
+    {"time": "2026-01-09T18:00:00", "action": "depart", "point": "DEPOT"},
+    {"time": "2026-01-09T18:40:00", "action": "arrive", "point": "AIRPORT"},
+    {"time": "2026-01-09T18:50:00", "action": "depart", "point": "AIRPORT"},
+    {"time": "2026-01-09T19:20:00", "action": "arrive", "point": "DEPOT"}
   ]
 }
 ```
@@ -77,6 +111,11 @@ $ cyclo run route.cyclo --start 2026-01-10T00:00:00 --end 2026-01-11T00:00:00
 - **cycle** — именованный цикл: длительность `duration` и список строк `<смещение>: <вызов>;`. Сам по себе ничего не порождает, только вызывается.
 - **root_cycle** — корневой цикл: `start_time`, `duration` и список строк `<смещение>: <вызов>;`. Определяет, когда запускаются циклы и одиночные действия.
 - **вызов (invocation)** — либо действие точки `<POINT>.<action>()`, либо вызов цикла `<CYCLE>()`. Допустим в любом цикле (`cycle` и `root_cycle`); вызовы циклов могут быть вложенными.
+- **условие** — `[выражение]` перед смещением строки. Вычисляется для абсолютного времени строки (`at`); ложь гасит строку (для цепочек повторов — каждый экземпляр в его старте, см. раздел 17).
+- **at** — абсолютное время строки в миллисекундах от unix epoch: запуск объемлющего цикла + смещение (для экземпляра цепочки — его старт). Единственный источник текущего времени в выражениях.
+- **объявление** — `const` (число), `fun` (число от аргумента), `pred` (истина/ложь от `at`); только верхний уровень файла, до `schedule`. Плюс неявный системный файл (календарь и словарь, `use` не нужен).
+- **импорт (`use`)** — `use "path";` вверху файла: подключает объявления другого файла (транзитивно). Путь — относительно директории импортирующего.
+- **повтор** — модификатор строки между `:` и вызовом: `repeat N` (ровно `N` экземпляров), `fill` (сколько влезет в объемлющий цикл), `fill until T` (сколько влезет до смещения `T` от старта объемлющего цикла). Только для вызовов циклов.
 - **event (событие)** — одна запись вывода: `{time, action, point}`. Источник — строка с действием точки внутри вызванного (возможно, вложенного) цикла.
 - **смещение / длительность** — человеческий формат: последовательность компонентов `w`, `d`, `h`, `m`, `s`, `ms` (например `0m`, `40m`, `6h`, `1h20m`, `1d2s`).
 - **фактическая длительность** — конец занятого циклом отрезка относительно его старта. Считается снизу вверх:

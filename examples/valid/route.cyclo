@@ -1,3 +1,7 @@
+use "route_lib.cyclo";
+
+fun rush_top(x) = x + 1;
+
 schedule "Автобусный парк" {
   point DEPOT {
     actions = [depart, arrive];
@@ -13,7 +17,14 @@ schedule "Автобусный парк" {
     0m: DEPOT.depart();
     40m: AIRPORT.arrive();
     50m: AIRPORT.depart();
-    80m: DEPOT.arrive();
+    -0m: DEPOT.arrive();
+  }
+
+  cycle SHUTTLE
+    duration = 20m
+  {
+    0m: DEPOT.depart();
+    20m: DEPOT.arrive();
   }
 
   root_cycle
@@ -21,6 +32,9 @@ schedule "Автобусный парк" {
     duration = 24h
   {
     6h: CITY_ROUTE();
-    18h: CITY_ROUTE();
+    [hour(at) >= rush_top(MORNING) and not weekend(at)] 10h: repeat 2 SHUTTLE();
+    [not weekend(at)] 14h: fill until 15h SHUTTLE();
+    [commute(at) and not weekend(at)] 18h: CITY_ROUTE();
+    [weekend(at)] 12h: CITY_ROUTE();
   }
 }

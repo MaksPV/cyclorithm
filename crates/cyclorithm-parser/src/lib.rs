@@ -892,35 +892,58 @@ mod tests {
                     actions: vec!["arrive".to_owned(), "depart".to_owned()],
                 },
             ],
-            cycles: vec![Cycle {
-                name: "CITY_ROUTE".to_owned(),
-                duration: dur(
-                    "1h20m",
-                    vec![("1", DurationUnit::Hour), ("20", DurationUnit::Minute)],
-                ),
-                stmts: vec![
-                    point_call(
-                        dur("0m", vec![("0", DurationUnit::Minute)]),
-                        "DEPOT",
-                        "depart",
+            cycles: vec![
+                Cycle {
+                    name: "CITY_ROUTE".to_owned(),
+                    duration: dur(
+                        "1h20m",
+                        vec![("1", DurationUnit::Hour), ("20", DurationUnit::Minute)],
                     ),
-                    point_call(
-                        dur("40m", vec![("40", DurationUnit::Minute)]),
-                        "AIRPORT",
-                        "arrive",
-                    ),
-                    point_call(
-                        dur("50m", vec![("50", DurationUnit::Minute)]),
-                        "AIRPORT",
-                        "depart",
-                    ),
-                    point_call(
-                        dur("80m", vec![("80", DurationUnit::Minute)]),
-                        "DEPOT",
-                        "arrive",
-                    ),
-                ],
-            }],
+                    stmts: vec![
+                        point_call(
+                            dur("0m", vec![("0", DurationUnit::Minute)]),
+                            "DEPOT",
+                            "depart",
+                        ),
+                        point_call(
+                            dur("40m", vec![("40", DurationUnit::Minute)]),
+                            "AIRPORT",
+                            "arrive",
+                        ),
+                        point_call(
+                            dur("50m", vec![("50", DurationUnit::Minute)]),
+                            "AIRPORT",
+                            "depart",
+                        ),
+                        Stmt {
+                            offset: dur("0m", vec![("0", DurationUnit::Minute)]),
+                            negative: true,
+                            repeat: Repeat::Once,
+                            condition: None,
+                            invocation: Invocation::PointAction {
+                                point: "DEPOT".to_owned(),
+                                action: "arrive".to_owned(),
+                            },
+                        },
+                    ],
+                },
+                Cycle {
+                    name: "SHUTTLE".to_owned(),
+                    duration: dur("20m", vec![("20", DurationUnit::Minute)]),
+                    stmts: vec![
+                        point_call(
+                            dur("0m", vec![("0", DurationUnit::Minute)]),
+                            "DEPOT",
+                            "depart",
+                        ),
+                        point_call(
+                            dur("20m", vec![("20", DurationUnit::Minute)]),
+                            "DEPOT",
+                            "arrive",
+                        ),
+                    ],
+                },
+            ],
             root: RootCycle {
                 start_time: "2026-01-01T00:00:00".to_owned(),
                 duration: dur("24h", vec![("24", DurationUnit::Hour)]),
@@ -935,10 +958,73 @@ mod tests {
                         },
                     },
                     Stmt {
+                        offset: dur("10h", vec![("10", DurationUnit::Hour)]),
+                        negative: false,
+                        repeat: Repeat::Times("2".to_owned()),
+                        condition: Some(Cond::And(vec![
+                            Cond::Cmp {
+                                op: CmpOp::Ge,
+                                left: Expr::Call {
+                                    name: "hour".to_owned(),
+                                    args: vec![Expr::At],
+                                },
+                                right: CondRhs::One(Expr::Call {
+                                    name: "rush_top".to_owned(),
+                                    args: vec![Expr::Name("MORNING".to_owned())],
+                                }),
+                            },
+                            Cond::Not(Box::new(Cond::Pred {
+                                name: "weekend".to_owned(),
+                                args: vec![Expr::At],
+                            })),
+                        ])),
+                        invocation: Invocation::CycleCall {
+                            name: "SHUTTLE".to_owned(),
+                        },
+                    },
+                    Stmt {
+                        offset: dur("14h", vec![("14", DurationUnit::Hour)]),
+                        negative: false,
+                        repeat: Repeat::Fill {
+                            until: Some(Until {
+                                negative: false,
+                                duration: dur("15h", vec![("15", DurationUnit::Hour)]),
+                            }),
+                        },
+                        condition: Some(Cond::Not(Box::new(Cond::Pred {
+                            name: "weekend".to_owned(),
+                            args: vec![Expr::At],
+                        }))),
+                        invocation: Invocation::CycleCall {
+                            name: "SHUTTLE".to_owned(),
+                        },
+                    },
+                    Stmt {
                         offset: dur("18h", vec![("18", DurationUnit::Hour)]),
                         negative: false,
                         repeat: Repeat::Once,
-                        condition: None,
+                        condition: Some(Cond::And(vec![
+                            Cond::Pred {
+                                name: "commute".to_owned(),
+                                args: vec![Expr::At],
+                            },
+                            Cond::Not(Box::new(Cond::Pred {
+                                name: "weekend".to_owned(),
+                                args: vec![Expr::At],
+                            })),
+                        ])),
+                        invocation: Invocation::CycleCall {
+                            name: "CITY_ROUTE".to_owned(),
+                        },
+                    },
+                    Stmt {
+                        offset: dur("12h", vec![("12", DurationUnit::Hour)]),
+                        negative: false,
+                        repeat: Repeat::Once,
+                        condition: Some(Cond::Pred {
+                            name: "weekend".to_owned(),
+                            args: vec![Expr::At],
+                        }),
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                         },
@@ -1211,8 +1297,10 @@ mod tests {
         let s = route_ast();
         assert_eq!(s.name, "Автобусный парк");
         assert_eq!(s.points.len(), 2);
-        assert_eq!(s.cycles.len(), 1);
+        assert_eq!(s.cycles.len(), 2);
         assert_eq!(s.cycles[0].stmts.len(), 4);
-        assert_eq!(s.root.stmts.len(), 2);
+        assert!(s.cycles[0].stmts[3].negative);
+        assert_eq!(s.cycles[1].stmts.len(), 2);
+        assert_eq!(s.root.stmts.len(), 5);
     }
 }
