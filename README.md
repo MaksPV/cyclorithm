@@ -1,8 +1,8 @@
 <div align="center">
 
-# Cycloritm
+# Cyclorithm
 
-[![CI](https://github.com/MaksPV/cycloritm/actions/workflows/ci.yml/badge.svg)](https://github.com/MaksPV/cycloritm/actions/workflows/ci.yml)
+[![CI](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
@@ -19,7 +19,7 @@
 Требуется стабильный Rust (`rustup`).
 
 ```console
-$ cargo run -p cycloritm-cli -- run examples/route.cyclo --start 2026-01-10T00:00:00 --end 2026-01-11T00:00:00
+$ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo --start 2026-01-10T00:00:00 --end 2026-01-11T00:00:00
 {"schedule":"Автобусный парк","start":"2026-01-10T00:00:00","end":"2026-01-11T00:00:00","events":[{"time":"2026-01-10T06:00:00","action":"depart","point":"DEPOT"}, ... ]}
 ```
 
@@ -39,15 +39,15 @@ $ cargo run -p cycloritm-cli -- run examples/route.cyclo --start 2026-01-10T00:0
 | E08 | Некорректная дата/время |
 | E09 | Перепутан род имени (точку вызвали как цикл и наоборот) |
 
-Подробности и точные тексты — в `docs/spec.md` §5. На каждый код есть минимальный пример: `examples/bad_e01.cyclo` … `examples/bad_e09.cyclo` (плюс `bad_syntax.cyclo` — ошибка парсера без кода).
+Подробности и точные тексты — в `docs/spec.md` §5. На каждый код есть минимальный пример: `examples/invalid/bad_e01.cyclo` … (плюс `bad_syntax.cyclo` — ошибка парсера без кода).
 
 ## Устройство репозитория
 
 - `docs/spec.md` — спецификация языка и поведения.
-- `crates/cycloritm-parser` — грамматика (`pest`) и AST, без валидации.
-- `crates/cycloritm-core` — валидация, развёртка решётки `root_cycle`, сортировка `(time, k, порядок объявления)`.
-- `crates/cycloritm-cli` — бинарь `cyclo` (`run`).
-- `examples/` — примеры расписаний.
+- `crates/cyclorithm-parser` — грамматика (`pest`) и AST, без валидации.
+- `crates/cyclorithm-core` — валидация, развёртка решётки `root_cycle`, сортировка `(time, k, порядок объявления)`.
+- `crates/cyclorithm-cli` — бинарь `cyclo` (`run`).
+- `examples/` — примеры: `valid/` (контракт + `.expected.json`), `invalid/` (негативные кейсы), `real/` (живые расписания).
 
 Проверки: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` (то же гоняет CI).
 
