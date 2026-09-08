@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+# Нативные раннеры под каждую пару OS/arch — кросс-тулчейн не нужен.
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            bin: cyclo
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bin: cyclo
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: cyclo.exe
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bin: cyclo.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ${{ matrix.target }}
+      - name: build
+        run: cargo build --release -p cyclorithm-cli --target ${{ matrix.target }}
+      - name: smoke test
+        shell: bash
+        run: ./target/${{ matrix.target }}/release/${{ matrix.bin }} run examples/valid/route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00 > /dev/null
+      - name: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclo-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          if-no-files-found: error
