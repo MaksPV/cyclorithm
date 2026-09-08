@@ -9,6 +9,9 @@
 file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
+// Единица импорта: объявления и свои use, расписание — опционально
+// (его наличие бракует резолвер кодом E14, а не синтаксис).
+unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { "use" ~ string ~ ";" }
 schedule    = { "schedule" ~ string ~ "{" ~ point* ~ cycle* ~ root_cycle ~ "}" }
 // Объявления — только до schedule. Параметр предиката — буквально `at`

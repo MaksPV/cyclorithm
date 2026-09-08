@@ -54,6 +54,43 @@ pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
         .collect()
 }
 
+/// Единица импорта: свои `use`, объявления, флаг наличия `schedule`
+/// (расписание внутри импорта запрещено кодом E14 — решает резолвер).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnitFile {
+    pub uses: Vec<String>,
+    pub decls: Vec<Decl>,
+    pub has_schedule: bool,
+}
+
+/// Разбор импортированного файла: объявления и транзитивные `use`.
+pub fn parse_unit(src: &str) -> Result<UnitFile, pest::error::Error<Rule>> {
+    let file = CycloParser::parse(Rule::unit_file, src)?
+        .next()
+        .expect("unit_file непуст");
+    debug_assert_eq!(file.as_rule(), Rule::unit_file);
+    let mut uses = Vec::new();
+    let mut decls = Vec::new();
+    let mut has_schedule = false;
+    for p in file.into_inner() {
+        match p.as_rule() {
+            Rule::use_decl => uses.push(build_use(p)),
+            Rule::decl => decls.push(build_decl(p)?),
+            Rule::schedule => {
+                // Тело не строим: наличие расписания — уже E14.
+                has_schedule = true;
+            }
+            Rule::EOI => {}
+            r => unreachable!("unit_file: неожиданное правило {r:?}"),
+        }
+    }
+    Ok(UnitFile {
+        uses,
+        decls,
+        has_schedule,
+    })
+}
+
 /// Объявление верхнего уровня: `const` — число, `fun` — число от аргумента,
 /// `pred` — истина/ложь (параметр буквально `at`, иначе синтаксис).
 fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
@@ -1140,6 +1177,22 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_unit_with_schedule_flag() {
+        let u = parse_unit("use \"a.cyclo\"; const K = 1;")
+            .expect("единица без расписания обязана разбираться");
+        assert_eq!(u.uses, vec!["a.cyclo".to_owned()]);
+        assert_eq!(u.decls.len(), 1);
+        assert!(!u.has_schedule);
+        let sched = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let u = parse_unit(&format!("const K = 1; {sched}"))
+            .expect("единица с расписанием разбирается");
+        assert!(u.has_schedule);
+        assert_eq!(u.decls.len(), 1);
     }
 
     #[test]
