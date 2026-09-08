@@ -1,4 +1,4 @@
-//! Core logic for Cycloritm: validation (E01–E09), lattice expansion,
+//! Core logic for Cyclorithm: validation (E01–E09), lattice expansion,
 //! ordering `(time, k, declaration order)`.
 
 use std::fmt;

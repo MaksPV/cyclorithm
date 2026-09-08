@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cycloritm_parser::{ArithOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
+use cyclorithm_parser::{ArithOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
 
 use crate::Error;
 
@@ -64,7 +64,7 @@ pub fn resolve_defs(decls: &[Decl]) -> Result<Defs, Error> {
 // (последняя группа — тело программы), затем проверить все тела.
 // Дубли — только внутри одной группы (`E04`); между файлами побеждает последнее.
 pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
-    let system = cycloritm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
+    let system = cyclorithm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
     let mut map = HashMap::new();
     let mut all: Vec<String> = Vec::new();
     for d in &system {
@@ -873,7 +873,7 @@ fn eval_def_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cycloritm_parser as p;
+    use cyclorithm_parser as p;
 
     fn cond_of(row: &str) -> Cond {
         let src = format!(

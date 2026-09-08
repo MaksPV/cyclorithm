@@ -6,7 +6,7 @@
 //! Ноль (`0m`) сам по себе валиден; запрет нулевого *периода* `root_cycle`
 //! (деление на ноль в решётке) проверяется отдельно, тоже E05.
 
-use cycloritm_parser::{Duration, DurationUnit, RootCycle};
+use cyclorithm_parser::{Duration, DurationUnit, RootCycle};
 
 use crate::Error;
 
@@ -88,7 +88,7 @@ pub fn root_period_ms(root: &RootCycle) -> Result<i64, Error> {
 /// `parent_raw` — сырой текст длительности родителя для сообщения.
 /// Невалидная запись самого смещения (`1h2h`) — сначала E05.
 pub fn effective_offset_ms(
-    stmt: &cycloritm_parser::Stmt,
+    stmt: &cyclorithm_parser::Stmt,
     parent_ms: i64,
     parent_raw: &str,
 ) -> Result<i64, Error> {
@@ -130,7 +130,7 @@ mod tests {
             raw: raw.to_owned(),
             items: items
                 .iter()
-                .map(|(n, u)| cycloritm_parser::DurationItem {
+                .map(|(n, u)| cyclorithm_parser::DurationItem {
                     number: n.to_string(),
                     unit: *u,
                 })
@@ -194,13 +194,13 @@ mod tests {
 
     #[test]
     fn resolves_negative_offsets() {
-        use cycloritm_parser::Stmt;
+        use cyclorithm_parser::Stmt;
         let stmt = |negative: bool, raw: &str, items: &[(&str, DurationUnit)]| Stmt {
             offset: dur(raw, items),
             negative,
-            repeat: cycloritm_parser::Repeat::Once,
+            repeat: cyclorithm_parser::Repeat::Once,
             condition: None,
-            invocation: cycloritm_parser::Invocation::CycleCall {
+            invocation: cyclorithm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },
         };
@@ -223,15 +223,15 @@ mod tests {
 
     #[test]
     fn rejects_negative_out_of_bounds() {
-        use cycloritm_parser::Stmt;
+        use cyclorithm_parser::Stmt;
         use DurationUnit::*;
         // -2h при родителе 1h20m: эффективное -40m — E07, код и сообщение по §5.
         let st = Stmt {
             offset: dur("2h", &[("2", Hour)]),
             negative: true,
-            repeat: cycloritm_parser::Repeat::Once,
+            repeat: cyclorithm_parser::Repeat::Once,
             condition: None,
-            invocation: cycloritm_parser::Invocation::CycleCall {
+            invocation: cyclorithm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
             },
         };
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_root_period() {
-        use cycloritm_parser::{RootCycle, Stmt};
+        use cyclorithm_parser::{RootCycle, Stmt};
         use DurationUnit::*;
         let root = |raw: &str, items: &[(&str, DurationUnit)]| RootCycle {
             start_time: "2026-01-01T00:00:00".to_owned(),

@@ -11,7 +11,7 @@
 //! валидации (`validate_names`, `check_recursion`, `check_bounds`):
 //! рекурсивные цепочки здесь зациклили бы развёртку.
 
-use cycloritm_parser::{Invocation, Schedule};
+use cyclorithm_parser::{Invocation, Schedule};
 
 use crate::cond::{eval_cond, Defs};
 use crate::datetime::parse_datetime;
@@ -117,7 +117,7 @@ struct Frame<'a> {
 /// Развёртка строки: цепочка экземпляров по `chain` (валидация уже прошла,
 /// счёт конечен). Порядок обхода задаёт `seq` для сортировки.
 fn unfold_stmt(
-    stmt: &cycloritm_parser::Stmt,
+    stmt: &cyclorithm_parser::Stmt,
     frame: Frame<'_>,
     tables: &NameTables<'_>,
     defs: &Defs,
@@ -198,13 +198,13 @@ mod tests {
     fn setup(
         src: &str,
     ) -> (
-        &'static cycloritm_parser::Schedule,
+        &'static cyclorithm_parser::Schedule,
         NameTables<'static>,
         &'static Defs,
     ) {
-        let file: &'static cycloritm_parser::SourceFile =
-            Box::leak(Box::new(cycloritm_parser::parse(src).unwrap()));
-        let ast: &'static cycloritm_parser::Schedule = &file.schedule;
+        let file: &'static cyclorithm_parser::SourceFile =
+            Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        let ast: &'static cyclorithm_parser::Schedule = &file.schedule;
         let t = validate_names(ast).unwrap();
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();

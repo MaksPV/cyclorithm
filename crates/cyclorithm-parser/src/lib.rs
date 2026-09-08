@@ -1,4 +1,4 @@
-//! Grammar and AST for the Cycloritm DSL.
+//! Grammar and AST for the Cyclorithm DSL.
 
 use pest::iterators::Pair;
 use pest::Parser as _;
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[test]
     fn parses_system_prelude() {
-        let src = include_str!("../../cycloritm-core/src/std.cyclo");
+        let src = include_str!("../../cyclorithm-core/src/std.cyclo");
         let decls = parse_decls(src).expect("прелюдия обязана разбираться");
         assert!(decls.len() >= 20, "в прелюдии десятки объявлений");
         assert!(decls.iter().any(|d| matches!(

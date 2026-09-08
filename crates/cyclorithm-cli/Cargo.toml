@@ -1,17 +1,17 @@
 [package]
-name = "cycloritm-cli"
+name = "cyclorithm-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CLI for Cycloritm: check and run .cyclo files"
+description = "CLI for Cyclorithm: check and run .cyclo files"
 
 [[bin]]
 name = "cyclo"
 path = "src/main.rs"
 
 [dependencies]
-cycloritm-core = { path = "../cycloritm-core" }
-cycloritm-parser = { path = "../cycloritm-parser" }
+cyclorithm-core = { path = "../cyclorithm-core" }
+cyclorithm-parser = { path = "../cyclorithm-parser" }
 # preserve_order: ключи JSON в порядке вставки (schedule, start, end, events).
 serde_json = { version = "1", features = ["preserve_order"] }

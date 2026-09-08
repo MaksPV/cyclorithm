@@ -4,11 +4,11 @@
 //! - любая ошибка ввода/валидации → текст в stderr, в stdout ничего, код 1;
 //! - неверные аргументы → usage в stderr, код 2.
 
-use cycloritm_core::cond::{check_conditions, resolve_units};
-use cycloritm_core::datetime::{format_datetime, parse_datetime};
-use cycloritm_core::expand::expand;
-use cycloritm_core::imports::collect_units;
-use cycloritm_core::validate::{check_bounds, check_recursion, validate_names};
+use cyclorithm_core::cond::{check_conditions, resolve_units};
+use cyclorithm_core::datetime::{format_datetime, parse_datetime};
+use cyclorithm_core::expand::expand;
+use cyclorithm_core::imports::collect_units;
+use cyclorithm_core::validate::{check_bounds, check_recursion, validate_names};
 
 fn main() {
     std::process::exit(run());
@@ -31,7 +31,7 @@ fn run() -> i32 {
         }
     };
     // Ошибка парсера — без E-кода (§5): текст pest как есть.
-    let src = match cycloritm_parser::parse(&src) {
+    let src = match cyclorithm_parser::parse(&src) {
         Ok(src) => src,
         Err(e) => {
             eprintln!("{e}");

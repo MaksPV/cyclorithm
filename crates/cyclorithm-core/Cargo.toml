@@ -1,0 +1,14 @@
+[package]
+name = "cyclorithm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validation, cycle expansion and get_schedule for Cyclorithm"
+
+[lib]
+name = "cyclorithm_core"
+path = "src/lib.rs"
+
+[dependencies]
+cyclorithm-parser = { path = "../cyclorithm-parser" }

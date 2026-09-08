@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/cycloritm-parser",
-    "crates/cycloritm-core",
-    "crates/cycloritm-cli",
+    "crates/cyclorithm-parser",
+    "crates/cyclorithm-core",
+    "crates/cyclorithm-cli",
 ]
 resolver = "2"
 
@@ -10,7 +10,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/MaksPV/cycloritm"
+repository = "https://github.com/MaksPV/cyclorithm"
 
 [workspace.lints.rust]
 warnings = "warn"

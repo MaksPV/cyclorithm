@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cycloritm_parser::{Invocation, Repeat, Schedule, Stmt};
+use cyclorithm_parser::{Invocation, Repeat, Schedule, Stmt};
 
 use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 use crate::Error;
@@ -19,9 +19,9 @@ use crate::Error;
 #[derive(Debug)]
 pub struct NameTables<'a> {
     /// Точка → её объявление (список `actions`).
-    pub points: HashMap<&'a str, &'a cycloritm_parser::Point>,
+    pub points: HashMap<&'a str, &'a cyclorithm_parser::Point>,
     /// Цикл → его объявление.
-    pub cycles: HashMap<&'a str, &'a cycloritm_parser::Cycle>,
+    pub cycles: HashMap<&'a str, &'a cyclorithm_parser::Cycle>,
 }
 
 /// Проверить объявления и вызовы. Возвращает таблицы имён либо первую ошибку.
@@ -52,7 +52,7 @@ pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
 }
 
 /// Проверить вызовы списка строк в порядке объявления.
-fn check_stmts(tables: &NameTables<'_>, stmts: &[cycloritm_parser::Stmt]) -> Result<(), Error> {
+fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Result<(), Error> {
     for st in stmts {
         match &st.invocation {
             Invocation::PointAction { point, action } => {
@@ -284,7 +284,7 @@ fn step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Erro
 }
 
 /// Объявление вызываемого цикла (имена уже проверены).
-fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a cycloritm_parser::Cycle {
+fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a cyclorithm_parser::Cycle {
     tables.cycles.get(name).expect("имена уже проверены")
 }
 
@@ -312,8 +312,8 @@ fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
 mod tests {
     use super::*;
 
-    fn parsed(src: &str) -> cycloritm_parser::Schedule {
-        cycloritm_parser::parse(src)
+    fn parsed(src: &str) -> cyclorithm_parser::Schedule {
+        cyclorithm_parser::parse(src)
             .expect("фикстура обязана разбираться")
             .schedule
     }
@@ -410,8 +410,8 @@ mod tests {
 
     /// Разобранная фикстура + таблицы имён. `Box::leak` — тестовый приём,
     /// чтобы таблицы жили `'static` рядом со своим AST.
-    fn tables(src: &str) -> (&'static cycloritm_parser::Schedule, NameTables<'static>) {
-        let ast: &'static cycloritm_parser::Schedule = Box::leak(Box::new(parsed(src)));
+    fn tables(src: &str) -> (&'static cyclorithm_parser::Schedule, NameTables<'static>) {
+        let ast: &'static cyclorithm_parser::Schedule = Box::leak(Box::new(parsed(src)));
         let t = validate_names(ast).expect("имена обязаны проходить");
         (ast, t)
     }
