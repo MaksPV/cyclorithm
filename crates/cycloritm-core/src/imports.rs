@@ -87,9 +87,14 @@ fn clean_join(base: &Path, rel: &str) -> PathBuf {
     for c in out.components() {
         match c {
             Component::CurDir => {}
-            Component::ParentDir => {
-                clean.pop();
-            }
+            Component::ParentDir => match clean.components().next_back() {
+                // Откат только через обычное имя; ведущие `..` и корень храним.
+                Some(Component::Normal(_)) => {
+                    clean.pop();
+                }
+                _ if clean.has_root() => {}
+                _ => clean.push(".."),
+            },
             _ => clean.push(c.as_os_str()),
         }
     }
@@ -192,5 +197,19 @@ mod tests {
         ]);
         let groups = collect(&["b.cyclo", "c.cyclo"], "/lib", &files).unwrap();
         assert_eq!(names(&groups), vec!["D", "B", "C"]);
+    }
+
+    #[test]
+    fn keeps_leading_parent_segments() {
+        // База с `..`: ведущие выходы вверх не съедаются чисткой
+        // (кейс e2e: запуск из подкаталога с `../../examples/...`).
+        let files = mem(&[
+            ("/lib/d.cyclo", "const D = 1;"),
+            ("../../examples/d.cyclo", "const E = 1;"),
+        ]);
+        let groups = collect(&["../d.cyclo"], "/lib/sub", &files).unwrap();
+        assert_eq!(names(&groups), vec!["D"]);
+        let groups = collect(&["d.cyclo"], "../../examples", &files).unwrap();
+        assert_eq!(names(&groups), vec!["E"]);
     }
 }
