@@ -313,7 +313,9 @@ mod tests {
     use super::*;
 
     fn parsed(src: &str) -> cycloritm_parser::Schedule {
-        cycloritm_parser::parse(src).expect("фикстура обязана разбираться")
+        cycloritm_parser::parse(src)
+            .expect("фикстура обязана разбираться")
+            .schedule
     }
 
     fn err(src: &str) -> Error {

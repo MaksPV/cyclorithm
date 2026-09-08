@@ -3,9 +3,11 @@
 
 use std::fmt;
 
+pub mod cond;
 pub mod datetime;
 pub mod duration;
 pub mod expand;
+pub mod imports;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
@@ -129,6 +131,64 @@ impl Error {
             "E10",
             format!("repeat of point action '{action}' not allowed"),
         )
+    }
+
+    /// E11: неизвестное имя в условии.
+    pub fn e11(name: &str) -> Self {
+        Self::coded("E11", format!("unknown name '{name}'"))
+    }
+
+    /// E12: смешение числа и строки в условии.
+    pub fn e12_mismatch() -> Self {
+        Self::coded(
+            "E12",
+            "type mismatch: cannot mix number and string".to_owned(),
+        )
+    }
+
+    /// E12: неверное число аргументов вызова в условии.
+    pub fn e12_arity(name: &str) -> Self {
+        Self::coded("E12", format!("wrong arguments for '{name}'"))
+    }
+
+    /// E12: деление на ноль в условии.
+    pub fn e12_divzero() -> Self {
+        Self::coded("E12", "division by zero".to_owned())
+    }
+
+    /// E12: рекурсивное определение.
+    pub fn e12_recursive(name: &str) -> Self {
+        Self::coded("E12", format!("recursive definition '{name}'"))
+    }
+
+    /// E12: вызов не-предиката в позиции условия.
+    pub fn e12_not_pred(name: &str) -> Self {
+        Self::coded("E12", format!("'{name}' is not a predicate"))
+    }
+
+    /// E12: число вне диапазона `i64` в условии.
+    pub fn e12_range(raw: &str) -> Self {
+        Self::coded("E12", format!("integer out of range '{raw}'"))
+    }
+
+    /// E12: кривой литерал даты в условии.
+    pub fn e12_date(raw: &str) -> Self {
+        Self::coded("E12", format!("invalid date '{raw}'"))
+    }
+
+    /// E13: импорт не читается.
+    pub fn e13_read(path: &str) -> Self {
+        Self::coded("E13", format!("cannot read import '{path}'"))
+    }
+
+    /// E13: цикл импорта.
+    pub fn e13_cycle(path: &str) -> Self {
+        Self::coded("E13", format!("import cycle '{path}'"))
+    }
+
+    /// E14: расписание внутри импорта.
+    pub fn e14_schedule(path: &str) -> Self {
+        Self::coded("E14", format!("schedule not allowed in import '{path}'"))
     }
 }
 

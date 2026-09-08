@@ -4,8 +4,10 @@
 //! - любая ошибка ввода/валидации → текст в stderr, в stdout ничего, код 1;
 //! - неверные аргументы → usage в stderr, код 2.
 
+use cycloritm_core::cond::{check_conditions, resolve_units};
 use cycloritm_core::datetime::{format_datetime, parse_datetime};
 use cycloritm_core::expand::expand;
+use cycloritm_core::imports::collect_units;
 use cycloritm_core::validate::{check_bounds, check_recursion, validate_names};
 
 fn main() {
@@ -29,16 +31,41 @@ fn run() -> i32 {
         }
     };
     // Ошибка парсера — без E-кода (§5): текст pest как есть.
-    let ast = match cycloritm_parser::parse(&src) {
-        Ok(ast) => ast,
+    let src = match cycloritm_parser::parse(&src) {
+        Ok(src) => src,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let tables = match validate_names(&ast)
-        .and_then(|t| check_recursion(&ast, &t).map(|()| t))
-        .and_then(|t| check_bounds(&ast, &t).map(|()| t))
+    let ast = &src.schedule;
+    // Объявления — сверху файла: их ошибки (E04/E11/E12) раньше проверок решётки.
+    // Импорты (E13/E14) — раньше объявлений: склейка «импорты → программа».
+    let mut groups = match collect_units(
+        &src.uses,
+        std::path::Path::new(&file)
+            .parent()
+            .unwrap_or(std::path::Path::new("")),
+        &mut |p| std::fs::read_to_string(p),
+    ) {
+        Ok(groups) => groups,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    groups.push(src.decls.clone());
+    let defs = match resolve_units(&groups) {
+        Ok(defs) => defs,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let tables = match validate_names(ast)
+        .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| check_bounds(ast, &t).map(|()| t))
+        .and_then(|t| check_conditions(ast, &defs).map(|()| t))
     {
         Ok(t) => t,
         Err(e) => {
@@ -61,7 +88,7 @@ fn run() -> i32 {
             return 1;
         }
     };
-    let events = match expand(&ast, &tables, start_ms, end_ms) {
+    let events = match expand(ast, &tables, &defs, start_ms, end_ms) {
         Ok(events) => events,
         Err(e) => {
             eprintln!("{e}");

@@ -1,0 +1,52 @@
+// std.cyclo — системная библиотека. Движок знает только §1, всё ниже — текст.
+
+const DAY = 86400000;
+
+fun days(t) = floordiv(t, DAY);
+fun day_millis(t) = t - days(t) * DAY;
+
+fun hour(t) = day_millis(t) / 3600000;
+fun minute(t) = (day_millis(t) / 60000) % 60;
+fun second(t) = (day_millis(t) / 1000) % 60;
+fun millisecond(t) = day_millis(t) % 1000;
+fun dow(t) = floormod(days(t) + 3, 7);
+// +3: эпоха 1970-01-01 — четверг, а mon = 0 (mon=0,tue=1,wed=2,thu=3).
+
+// Календарь, civil-from-days. Всё целочисленное, doe ≥ 0 — деления обычные.
+fun __z(t) = days(t) + 719468;
+fun __era(t) = floordiv(__z(t), 146097);
+fun __doe(t) = __z(t) - __era(t) * 146097;
+fun __yoe(t) = (__doe(t) - __doe(t) / 1460 + __doe(t) / 36524 - __doe(t) / 146096) / 365;
+fun __y(t) = __yoe(t) + __era(t) * 400;
+fun __doy(t) = __doe(t) - (365 * __yoe(t) + __yoe(t) / 4 - __yoe(t) / 100);
+fun __mp(t) = (5 * __doy(t) + 2) / 153;
+
+fun day(t) = __doy(t) - (153 * __mp(t) + 2) / 5 + 1;
+fun month(t) = __mp(t) + 3 - 12 * (__mp(t) >= 10);
+fun year(t) = __y(t) + (month(t) <= 2);
+
+// Строковые формы (для сравнений дат, см. §7).
+fun datestr(t) = pad(year(t), 4) ++ "-" ++ pad(month(t), 2) ++ "-" ++ pad(day(t), 2);
+fun datetimestr(t) = datestr(t) ++ "T" ++ pad(hour(t), 2) ++ ":" ++ pad(minute(t), 2)
+  ++ ":" ++ pad(second(t), 2) ++ "." ++ pad(millisecond(t), 3);
+
+// Дни недели: совпадают с dow (0 = mon … 6 = sun).
+const mon = 0;
+const tue = 1;
+const wed = 2;
+const thu = 3;
+const fri = 4;
+const sat = 5;
+const sun = 6;
+
+pred weekend(at) = dow(at) == (sat or sun);
+
+pred night(at) = hour(at) >= 22 or hour(at) < 6;
+pred morning(at) = hour(at) >= 6 and hour(at) < 12;
+pred afternoon(at) = hour(at) >= 12 and hour(at) < 18;
+pred evening(at) = hour(at) >= 18 and hour(at) < 22;
+
+pred spring(at) = month(at) == (3 or 4 or 5);
+pred summer(at) = month(at) == (6 or 7 or 8);
+pred autumn(at) = month(at) == (9 or 10 or 11);
+pred winter(at) = month(at) == (12 or 1 or 2);

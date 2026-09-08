@@ -1,0 +1,20 @@
+use "no_such_lib.cyclo";
+
+schedule "E13-missing" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: R();
+  }
+}

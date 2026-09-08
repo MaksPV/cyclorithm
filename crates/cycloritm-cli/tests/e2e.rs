@@ -71,6 +71,41 @@ fn repeat_matches_expected_json() {
 }
 
 #[test]
+fn conditions_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/conditions.cyclo",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/conditions.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn imports_matches_expected_json() {
+    // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
+    let out = run(&[
+        "run",
+        "../../examples/imports.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/imports.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn empty_window_gives_empty_events() {
     let out = run(&[
         "run",
@@ -110,6 +145,19 @@ fn validation_errors_go_to_stderr() {
             "bad_e10_action",
             "repeat of point action 'depart' not allowed",
         ),
+        ("bad_e11", "unknown name 'banana'"),
+        ("bad_e11_private", "unknown name '__z'"),
+        ("bad_e12_recursive", "recursive definition 'a'"),
+        ("bad_e12_datestr", "invalid date '2026-13-01'"),
+        ("bad_e13_cycle", "import cycle 'bad_e13_cycle_a.cyclo'"),
+        ("bad_e13_missing", "cannot read import 'no_such_lib.cyclo'"),
+        (
+            "bad_e14_schedule",
+            "schedule not allowed in import 'bad_e14_lib.cyclo'",
+        ),
+        ("bad_e04_dup", "duplicate const 'K'"),
+        ("bad_e12", "type mismatch: cannot mix number and string"),
+        ("bad_e12_div", "division by zero"),
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
     ] {
