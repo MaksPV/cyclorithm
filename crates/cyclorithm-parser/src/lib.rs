@@ -35,6 +35,15 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     })
 }
 
+/// Позиция синтаксической ошибки для редактора: 1-базные
+/// (строка, колонка); у спан-ошибки — начало спана.
+pub fn error_position(e: &pest::error::Error<Rule>) -> (usize, usize) {
+    match e.line_col {
+        pest::error::LineColLocation::Pos((l, c)) => (l, c),
+        pest::error::LineColLocation::Span((sl, sc), _) => (sl, sc),
+    }
+}
+
 /// Путь из `use "path";` — без кавычек (строки без escapes, как везде).
 fn build_use(pair: Pair<Rule>) -> String {
     debug_assert_eq!(pair.as_rule(), Rule::use_decl);
