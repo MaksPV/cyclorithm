@@ -1,0 +1,20 @@
+use "bad_e13_cycle_a.cyclo";
+
+schedule "E13-cycle" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: R();
+  }
+}

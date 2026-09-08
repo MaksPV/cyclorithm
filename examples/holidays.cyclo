@@ -1,0 +1,4 @@
+// Общая библиотека выходных: только объявления, без расписания.
+const NEW_YEAR = 1;
+
+pred holiday(at) = month(at) == NEW_YEAR and day(at) == 1;
