@@ -4,9 +4,10 @@
 //! - любая ошибка ввода/валидации → текст в stderr, в stdout ничего, код 1;
 //! - неверные аргументы → usage в stderr, код 2.
 
-use cycloritm_core::cond::{check_conditions, resolve_defs};
+use cycloritm_core::cond::{check_conditions, resolve_units};
 use cycloritm_core::datetime::{format_datetime, parse_datetime};
 use cycloritm_core::expand::expand;
+use cycloritm_core::imports::collect_units;
 use cycloritm_core::validate::{check_bounds, check_recursion, validate_names};
 
 fn main() {
@@ -39,7 +40,22 @@ fn run() -> i32 {
     };
     let ast = &src.schedule;
     // Объявления — сверху файла: их ошибки (E04/E11/E12) раньше проверок решётки.
-    let defs = match resolve_defs(&src.decls) {
+    // Импорты (E13/E14) — раньше объявлений: склейка «импорты → программа».
+    let mut groups = match collect_units(
+        &src.uses,
+        std::path::Path::new(&file)
+            .parent()
+            .unwrap_or(std::path::Path::new("")),
+        &mut |p| std::fs::read_to_string(p),
+    ) {
+        Ok(groups) => groups,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    groups.push(src.decls.clone());
+    let defs = match resolve_units(&groups) {
         Ok(defs) => defs,
         Err(e) => {
             eprintln!("{e}");
