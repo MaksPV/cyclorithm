@@ -27,13 +27,13 @@ schedule "101 Кулички - Тамбов" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h50m: KULICHKI_TAMBOV();
+    [not weekend(at)] 6h50m: KULICHKI_TAMBOV();
     8h00m: TAMBOV_KULICHKI();
     9h00m: KULICHKI_TAMBOV();
     13h00m: TAMBOV_KULICHKI();
     14h00m: KULICHKI_TAMBOV();
     16h25m: TAMBOV_KULICHKI();
     17h20m: KULICHKI_TAMBOV();
-    18h30m: TAMBOV_KULICHKI();
+    [not weekend(at)] 18h30m: TAMBOV_KULICHKI();
   }
 }

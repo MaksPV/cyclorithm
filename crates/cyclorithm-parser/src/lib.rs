@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn parse_route_matches_fixture() {
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let got = parse(src).expect("route.cyclo обязан разбираться");
         assert_eq!(got.schedule, route_ast());
     }
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn parse_rejects_missing_root_cycle() {
         // bad_syntax.cyclo: нет root_cycle → ошибка парсера без E-кода.
-        let src = include_str!("../../../examples/bad_syntax.cyclo");
+        let src = include_str!("../../../examples/invalid/bad_syntax.cyclo");
         assert!(parse(src).is_err());
     }
 
@@ -834,24 +834,24 @@ mod tests {
         // Граница парсер/ядро: файлы bad_e01–e09 синтаксически корректны,
         // их ошибки — валидация (E01–E09), а не синтаксис.
         for src in [
-            include_str!("../../../examples/bad_e01.cyclo"),
-            include_str!("../../../examples/bad_e02.cyclo"),
-            include_str!("../../../examples/bad_e03.cyclo"),
-            include_str!("../../../examples/bad_e04.cyclo"),
-            include_str!("../../../examples/bad_e05.cyclo"),
-            include_str!("../../../examples/bad_e06.cyclo"),
-            include_str!("../../../examples/bad_e07.cyclo"),
-            include_str!("../../../examples/bad_e08.cyclo"),
-            include_str!("../../../examples/bad_e09.cyclo"),
-            include_str!("../../../examples/bad_e07_neg.cyclo"),
-            include_str!("../../../examples/bad_e10_zero.cyclo"),
-            include_str!("../../../examples/bad_e10_fill0.cyclo"),
-            include_str!("../../../examples/bad_e10_action.cyclo"),
-            include_str!("../../../examples/bad_e07_chain.cyclo"),
-            include_str!("../../../examples/bad_e07_until.cyclo"),
-            include_str!("../../../examples/bad_e11.cyclo"),
-            include_str!("../../../examples/bad_e12.cyclo"),
-            include_str!("../../../examples/bad_e12_div.cyclo"),
+            include_str!("../../../examples/invalid/bad_e01.cyclo"),
+            include_str!("../../../examples/invalid/bad_e02.cyclo"),
+            include_str!("../../../examples/invalid/bad_e03.cyclo"),
+            include_str!("../../../examples/invalid/bad_e04.cyclo"),
+            include_str!("../../../examples/invalid/bad_e05.cyclo"),
+            include_str!("../../../examples/invalid/bad_e06.cyclo"),
+            include_str!("../../../examples/invalid/bad_e07.cyclo"),
+            include_str!("../../../examples/invalid/bad_e08.cyclo"),
+            include_str!("../../../examples/invalid/bad_e09.cyclo"),
+            include_str!("../../../examples/invalid/bad_e07_neg.cyclo"),
+            include_str!("../../../examples/invalid/bad_e10_zero.cyclo"),
+            include_str!("../../../examples/invalid/bad_e10_fill0.cyclo"),
+            include_str!("../../../examples/invalid/bad_e10_action.cyclo"),
+            include_str!("../../../examples/invalid/bad_e07_chain.cyclo"),
+            include_str!("../../../examples/invalid/bad_e07_until.cyclo"),
+            include_str!("../../../examples/invalid/bad_e11.cyclo"),
+            include_str!("../../../examples/invalid/bad_e12.cyclo"),
+            include_str!("../../../examples/invalid/bad_e12_div.cyclo"),
         ] {
             parse(src).expect("bad_e*.cyclo обязан разбираться грамматикой");
         }

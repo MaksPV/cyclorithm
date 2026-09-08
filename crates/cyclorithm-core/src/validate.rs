@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn accepts_route() {
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let ast = parsed(src);
         let tables = validate_names(&ast).expect("route обязан проходить проверку имён");
         assert_eq!(tables.points.len(), 2);
@@ -338,31 +338,31 @@ mod tests {
         for (file, src, code, message) in [
             (
                 "bad_e01",
-                include_str!("../../../examples/bad_e01.cyclo"),
+                include_str!("../../../examples/invalid/bad_e01.cyclo"),
                 "E01",
                 "unknown point 'PORT'",
             ),
             (
                 "bad_e02",
-                include_str!("../../../examples/bad_e02.cyclo"),
+                include_str!("../../../examples/invalid/bad_e02.cyclo"),
                 "E02",
                 "action 'arrive' not allowed for point 'DEPOT'",
             ),
             (
                 "bad_e03",
-                include_str!("../../../examples/bad_e03.cyclo"),
+                include_str!("../../../examples/invalid/bad_e03.cyclo"),
                 "E03",
                 "unknown cycle 'NIGHT_ROUTE'",
             ),
             (
                 "bad_e04",
-                include_str!("../../../examples/bad_e04.cyclo"),
+                include_str!("../../../examples/invalid/bad_e04.cyclo"),
                 "E04",
                 "duplicate point 'DEPOT'",
             ),
             (
                 "bad_e09",
-                include_str!("../../../examples/bad_e09.cyclo"),
+                include_str!("../../../examples/invalid/bad_e09.cyclo"),
                 "E09",
                 "point 'DEPOT' is not a cycle",
             ),
@@ -421,13 +421,13 @@ mod tests {
         for (file, src, code, message) in [
             (
                 "bad_e06",
-                include_str!("../../../examples/bad_e06.cyclo"),
+                include_str!("../../../examples/invalid/bad_e06.cyclo"),
                 "E06",
                 "recursive cycle 'A'",
             ),
             (
                 "bad_e07",
-                include_str!("../../../examples/bad_e07.cyclo"),
+                include_str!("../../../examples/invalid/bad_e07.cyclo"),
                 "E07",
                 "cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)",
             ),
@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn accepts_route_recursion_and_bounds() {
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let (ast, t) = tables(src);
         check_recursion(ast, &t).expect("route без рекурсии");
         check_bounds(ast, &t).expect("route в границах");
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn actual_duration_matches_spec_formula() {
         // actual(C) = max(o + D): D = 0 для точки, declared для цикла.
-        let (_, t) = tables(include_str!("../../../examples/route.cyclo"));
+        let (_, t) = tables(include_str!("../../../examples/valid/route.cyclo"));
         assert_eq!(actual_ms("CITY_ROUTE", &t), Ok(4_800_000));
         // Многорядный цикл: max(10m+50m, 90m+5m) = 95m ≤ 100m — валидно.
         let src = "schedule \"T\" { point A { actions = [x]; } \

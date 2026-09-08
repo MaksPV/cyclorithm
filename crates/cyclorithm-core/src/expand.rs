@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn expands_route_like_expected_json() {
         // Контракт §1: окно и все 8 событий дословно как route.expected.json.
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-10T00:00:00", "2026-01-11T00:00:00");
         let events = expand(ast, &t, d, s, e).unwrap();
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn empty_window_and_window_before_anchor() {
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let (ast, t, d) = setup(src);
         // end <= start — пусто без ошибки.
         let (s, e) = window("2026-01-11T00:00:00", "2026-01-10T00:00:00");
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn builds_only_covering_instances() {
         // Окно внутри второго периода: строится ровно экземпляр k=1.
-        let src = include_str!("../../../examples/route.cyclo");
+        let src = include_str!("../../../examples/valid/route.cyclo");
         let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-02T06:30:00", "2026-01-02T07:00:00");
         let events = expand(ast, &t, d, s, e).unwrap();

@@ -1,4 +1,4 @@
-use "holidays.cyclo";
+use "libs/holidays.cyclo";
 
 schedule "Импорты" {
   point DEPOT {

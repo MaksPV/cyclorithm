@@ -23,14 +23,14 @@ fn stdout_json(out: &Output) -> serde_json::Value {
 fn route_matches_expected_json() {
     let out = run(&[
         "run",
-        "../../examples/route.cyclo",
+        "../../examples/valid/route.cyclo",
         "--start",
         "2026-01-10T00:00:00",
         "--end",
         "2026-01-11T00:00:00",
     ]);
     let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/route.expected.json");
+    let expected = include_str!("../../../examples/valid/route.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -40,14 +40,14 @@ fn route_matches_expected_json() {
 fn neg_offsets_matches_expected_json() {
     let out = run(&[
         "run",
-        "../../examples/neg_offsets.cyclo",
+        "../../examples/valid/neg_offsets.cyclo",
         "--start",
         "2026-01-10T00:00:00",
         "--end",
         "2026-01-11T00:00:00",
     ]);
     let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/neg_offsets.expected.json");
+    let expected = include_str!("../../../examples/valid/neg_offsets.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -57,14 +57,14 @@ fn neg_offsets_matches_expected_json() {
 fn repeat_matches_expected_json() {
     let out = run(&[
         "run",
-        "../../examples/repeat.cyclo",
+        "../../examples/valid/repeat.cyclo",
         "--start",
         "2026-01-10T00:00:00",
         "--end",
         "2026-01-11T00:00:00",
     ]);
     let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/repeat.expected.json");
+    let expected = include_str!("../../../examples/valid/repeat.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -74,14 +74,14 @@ fn repeat_matches_expected_json() {
 fn conditions_matches_expected_json() {
     let out = run(&[
         "run",
-        "../../examples/conditions.cyclo",
+        "../../examples/valid/conditions.cyclo",
         "--start",
         "2026-01-10T00:00:00",
         "--end",
         "2026-01-11T00:00:00",
     ]);
     let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/conditions.expected.json");
+    let expected = include_str!("../../../examples/valid/conditions.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -92,14 +92,14 @@ fn imports_matches_expected_json() {
     // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
     let out = run(&[
         "run",
-        "../../examples/imports.cyclo",
+        "../../examples/valid/imports.cyclo",
         "--start",
         "2026-01-01T00:00:00",
         "--end",
         "2026-01-02T00:00:00",
     ]);
     let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/imports.expected.json");
+    let expected = include_str!("../../../examples/valid/imports.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -109,7 +109,7 @@ fn imports_matches_expected_json() {
 fn empty_window_gives_empty_events() {
     let out = run(&[
         "run",
-        "../../examples/route.cyclo",
+        "../../examples/valid/route.cyclo",
         "--start",
         "2026-01-11T00:00:00",
         "--end",
@@ -161,7 +161,7 @@ fn validation_errors_go_to_stderr() {
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
     ] {
-        let path = format!("../../examples/{file}.cyclo");
+        let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
             "run",
             &path,
@@ -184,7 +184,7 @@ fn validation_errors_go_to_stderr() {
 fn syntax_error_has_no_e_code() {
     let out = run(&[
         "run",
-        "../../examples/bad_syntax.cyclo",
+        "../../examples/invalid/bad_syntax.cyclo",
         "--start",
         "2026-01-10T00:00:00",
         "--end",
@@ -200,16 +200,16 @@ fn bad_cli_args_give_usage() {
     for args in [
         vec![],
         vec!["run"],
-        vec!["run", "../../examples/route.cyclo"],
+        vec!["run", "../../examples/valid/route.cyclo"],
         vec![
             "run",
-            "../../examples/route.cyclo",
+            "../../examples/valid/route.cyclo",
             "--start",
             "2026-01-10T00:00:00",
         ],
         vec![
             "run",
-            "../../examples/route.cyclo",
+            "../../examples/valid/route.cyclo",
             "--start",
             "not-a-datetime",
             "--end",
