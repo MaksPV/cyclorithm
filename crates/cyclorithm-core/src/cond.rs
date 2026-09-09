@@ -358,6 +358,30 @@ impl CxTy<'_> {
                 }
                 Ok(Ty::Num)
             }
+            // Конструктор даты — встроенная функция (§4.13): ровно 7 чисел.
+            // Все-константа проверяется сразу (как константный ноль у деления),
+            // иначе — в момент строки.
+            "mkdate" if !self.defs.map.contains_key(name) => {
+                if args.len() != 7 {
+                    return Err(Error::e12_arity(name));
+                }
+                for a in args {
+                    if self.infer(a)? != Ty::Num {
+                        return Err(Error::e12_mismatch());
+                    }
+                }
+                let mut vals = Vec::with_capacity(7);
+                for a in args {
+                    match const_eval(a, self) {
+                        None => return Ok(Ty::Num),
+                        Some(Err(e)) => return Err(e),
+                        Some(Ok(Value::Num(v))) => vals.push(v),
+                        Some(Ok(_)) => return Err(Error::e12_mismatch()),
+                    }
+                }
+                build_date(&vals, name)?;
+                Ok(Ty::Num)
+            }
             _ => {
                 let defs = self.defs;
                 let def = resolve(defs, name, self.unit)?;
@@ -849,7 +873,34 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
                 x.rem_euclid(y)
             }))
         }
+        "mkdate" => {
+            if args.len() != 7 {
+                return Err(Error::e12_arity(name));
+            }
+            let mut vals = Vec::with_capacity(7);
+            for a in args {
+                match eval_expr(a, at, cx)? {
+                    Value::Num(v) => vals.push(v),
+                    _ => return Err(Error::e12_mismatch()),
+                }
+            }
+            build_date(&vals, name).map(Value::Num)
+        }
         _ => Err(Error::e11(name)),
+    }
+}
+
+/// Собрать дату из 7 чисел (§4.13): кривые компоненты — `invalid date`,
+/// переполнение сборки — `integer out of range`. Сырь — числа как даны.
+fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
+    let [y, mo, d, h, mi, s, ms] = v else {
+        return Err(Error::e12_arity(name));
+    };
+    let raw = format!("{y}-{mo}-{d}T{h}:{mi}:{s}.{ms}");
+    match crate::datetime::make_datetime(*y, *mo, *d, *h, *mi, *s, *ms) {
+        Ok(t) => Ok(t),
+        Err(crate::datetime::DateBuildErr::Invalid) => Err(Error::e12_date(&raw)),
+        Err(crate::datetime::DateBuildErr::Overflow) => Err(Error::e12_range(&raw)),
     }
 }
 
@@ -1252,6 +1303,104 @@ mod tests {
             (e.code, e.message.as_str()),
             ("E12", "type mismatch: cannot mix number and string")
         );
+    }
+
+    #[test]
+    fn mkdate_epoch_and_known_dates() {
+        assert!(yes("mkdate(1970, 1, 1, 0, 0, 0, 0) == 0", 0));
+        assert!(yes("mkdate(2026, 1, 1, 0, 0, 0, 0) == 1767225600000", 0));
+        assert!(yes(
+            "mkdate(2026, 1, 1, 12, 30, 15, 250) == 1767270615250",
+            0
+        ));
+        assert!(yes("mkdate(2000, 2, 29, 0, 0, 0, 0) == 951782400000", 0));
+        assert!(yes(
+            "mkdate(1960, 5, 5, 12, 30, 15, 250) == 0 - 304774184750",
+            0
+        ));
+    }
+
+    #[test]
+    fn mkdate_validates_components_statically() {
+        for bad in [
+            "mkdate(2026, 13, 1, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 0, 1, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 4, 31, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 2, 29, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 1, 0, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 1, 1, 24, 0, 0, 0) == 0",
+            "mkdate(2026, 1, 1, 0, 60, 0, 0) == 0",
+            "mkdate(2026, 1, 1, 0, 0, 60, 0) == 0",
+            "mkdate(2026, 1, 1, 0, 0, 0, 1000) == 0",
+            "mkdate(2026, 1, 1, 0, 0, 0, 0 - 1) == 0",
+            "mkdate(1900, 2, 29, 0, 0, 0, 0) == 0",
+        ] {
+            let e = static_err(bad);
+            assert_eq!(e.code, "E12", "{bad}");
+            assert!(
+                e.message.starts_with("invalid date"),
+                "{bad}: {}",
+                e.message
+            );
+        }
+    }
+
+    #[test]
+    fn mkdate_rejects_bad_arity_mixing_and_overflow() {
+        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0) == 0");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "wrong arguments for 'mkdate'")
+        );
+        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0, 0, 0) == 0");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "wrong arguments for 'mkdate'")
+        );
+        let e = static_err("mkdate(2026, \"x\", 1, 0, 0, 0, 0) == 0");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
+        let e = static_err("mkdate(300000000, 1, 1, 0, 0, 0, 0) == 0");
+        assert_eq!(e.code, "E12");
+        assert!(
+            e.message.starts_with("integer out of range"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn mkdate_runtime_invalid_is_error_not_skip() {
+        // 29 февраля невисокосного через выражение: статика проходит,
+        // в момент строки — ошибка (как деление на ноль выражением).
+        let c = cond_of("mkdate(2026, 2, 27 + (at - at) + 2, 0, 0, 0, 0) == 0");
+        let d = test_defs();
+        check_single(&c, &d).expect("день не константа — статика проходит");
+        let e = eval_cond(&c, 100, &d).expect_err("кривая дата — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "invalid date '2026-2-29T0:0:0.0'")
+        );
+    }
+
+    #[test]
+    fn mkdate_roundtrips_calendar() {
+        // Разборка собирается обратно в ту же метку (включая до эпохи).
+        for t in [
+            1767225600000i64,
+            1767270615250,
+            0,
+            946684800000,
+            0 - 2208988800000,
+        ] {
+            let row = format!(
+                "mkdate(year({t}), month({t}), day({t}), hour({t}), \
+                minute({t}), second({t}), millisecond({t})) == {t}"
+            );
+            assert!(yes(&row, 0), "{t}");
+        }
     }
 
     #[test]

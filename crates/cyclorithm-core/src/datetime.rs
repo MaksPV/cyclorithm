@@ -115,6 +115,48 @@ pub(crate) fn days_in_month(y: i64, m: i64) -> i64 {
     }
 }
 
+/// Ошибка сборки даты из компонентов (`mkdate`, §4.13 спеки).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DateBuildErr {
+    /// Кривые компоненты: месяц вне 1..12, день вне месяца (високосный
+    /// февраль учтён), время суток вне границ.
+    Invalid,
+    /// День в миллисекундах не влез в `i64` (годы — весь диапазон).
+    Overflow,
+}
+
+/// Дата и время из компонентов в миллисекунды epoch (наивное, как везде).
+/// Порядок проверок: месяц → день → время суток → checked-сборка.
+pub(crate) fn make_datetime(
+    y: i64,
+    mo: i64,
+    d: i64,
+    h: i64,
+    mi: i64,
+    s: i64,
+    ms: i64,
+) -> Result<i64, DateBuildErr> {
+    use DateBuildErr::{Invalid, Overflow};
+    // Месяц раньше дня: `days_in_month` на месяце вне 1..12 врёт `_`-веткой.
+    if !(1..=12).contains(&mo) || d < 1 || d > days_in_month(y, mo) {
+        return Err(Invalid);
+    }
+    if !(0..=23).contains(&h)
+        || !(0..=59).contains(&mi)
+        || !(0..=59).contains(&s)
+        || !(0..=999).contains(&ms)
+    {
+        return Err(Invalid);
+    }
+    let day_ms = days_from_civil(y, mo, d)
+        .checked_mul(MS_PER_DAY)
+        .ok_or(Overflow)?;
+    // Время суток влезает всегда (< суток); переполнение — только от даты.
+    day_ms
+        .checked_add(h * MS_PER_HOUR + mi * MS_PER_MIN + s * MS_PER_SEC + ms)
+        .ok_or(Overflow)
+}
+
 /// Дни от unix epoch (алгоритм Хиннанта; `div_euclid` корректен и до epoch).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
