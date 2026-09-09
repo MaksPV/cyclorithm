@@ -317,6 +317,7 @@ fn build_not(pair: Pair<Rule>) -> Cond {
         (false, first)
     };
     let cond = match atom.as_rule() {
+        Rule::bool_group => build_or(atom.into_inner().next().expect("bool_group: выражение")),
         Rule::comparison => build_comparison(atom),
         Rule::call => {
             let (name, args) = build_call_parts(atom);
@@ -977,6 +978,107 @@ mod tests {
             right: CondRhs::One(Expr::Num("2".to_owned())),
         };
         assert_eq!(cond, expected);
+    }
+
+    #[test]
+    fn parse_bool_group_is_transparent() {
+        // Группа без операторов — тот же AST, что без скобок (узла нет).
+        let plain = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [at == 1] 0m: A.x(); } }";
+        let grouped = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [(at == 1)] 0m: A.x(); } }";
+        let nested = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [((at == 1))] 0m: A.x(); } }";
+        let cond_of = |src: &str| {
+            parse(src)
+                .expect("условие обязано разбираться")
+                .schedule
+                .root
+                .stmts
+                .into_iter()
+                .next()
+                .expect("строка есть")
+                .condition
+                .expect("условие есть")
+        };
+        assert_eq!(cond_of(grouped), cond_of(plain));
+        assert_eq!(cond_of(nested), cond_of(plain));
+    }
+
+    #[test]
+    fn parse_bool_group_overrides_precedence() {
+        // `(a or b) and c`: группа связывает or раньше and.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [(at == 1 or at == 2) and at == 3] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("группа обязана разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond,
+            Cond::And(vec![Cond::Or(vec![cmp("1"), cmp("2")]), cmp("3")])
+        );
+    }
+
+    #[test]
+    fn parse_bool_group_under_not() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [not (at == 1 or at == 2)] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("not с группой обязан разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond,
+            Cond::Not(Box::new(Cond::Or(vec![cmp("1"), cmp("2")])))
+        );
+    }
+
+    #[test]
+    fn parse_alternation_stays_numeric() {
+        // `(1 or 2)` в правой части сравнения — альтернация, а не группа.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [at == (1 or 2)] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("альтернация обязана разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        assert_eq!(
+            cond,
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::At,
+                right: CondRhs::Alt(vec![Expr::Num("1".to_owned()), Expr::Num("2".to_owned())]),
+            }
+        );
     }
 
     #[test]

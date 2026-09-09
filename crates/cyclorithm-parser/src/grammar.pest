@@ -34,7 +34,10 @@ condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
 or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
 and_expr    = { not_expr ~ (kw_and ~ not_expr)* }
-not_expr    = { kw_not? ~ (comparison | call) }
+not_expr    = { kw_not? ~ (bool_group | comparison | call) }
+// Скобочная группа — прозрачный атом уровня условий (как в C/Python):
+// приоритет задаёт пользователь, узла в AST нет (сборка вернёт внутреннее).
+bool_group  = { "(" ~ or_expr ~ ")" }
 // `notx == 1` не должно читаться как `not (x == 1)`.
 // Атомарные: пробел между словом и границей запрещён, иначе lookahead
 // смотрел бы символ после пробелов, а не сразу за словом.
