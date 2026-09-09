@@ -24,6 +24,7 @@ fun __mp(t) = (5 * __doy(t) + 2) / 153;
 fun day(t) = __doy(t) - (153 * __mp(t) + 2) / 5 + 1;
 fun month(t) = __mp(t) + 3 - 12 * (__mp(t) >= 10);
 fun year(t) = __y(t) + (month(t) <= 2);
+fun quarter(t) = floordiv(month(t) - 1, 3) + 1;
 
 // Строковые формы (для сравнений дат, см. §7).
 fun datestr(t) = pad(year(t), 4) ++ "-" ++ pad(month(t), 2) ++ "-" ++ pad(day(t), 2);
@@ -40,6 +41,7 @@ const sat = 5;
 const sun = 6;
 
 pred weekend(at) = dow(at) == (sat or sun);
+pred workday(at) = dow(at) < 5;
 
 pred night(at) = hour(at) >= 22 or hour(at) < 6;
 pred morning(at) = hour(at) >= 6 and hour(at) < 12;

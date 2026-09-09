@@ -1146,6 +1146,27 @@ mod tests {
     }
 
     #[test]
+    fn workday_weekends() {
+        // Метки — полночи UTC: 2026-01-01 чт, далее пт/сб/вс/пн.
+        assert!(yes("workday(1767225600000)", 0));
+        assert!(yes("workday(1767312000000)", 0));
+        assert!(no("workday(1767398400000)", 0));
+        assert!(no("workday(1767484800000)", 0));
+        assert!(yes("workday(1767571200000)", 0));
+    }
+
+    #[test]
+    fn quarter_boundaries() {
+        assert!(yes("quarter(1767225600000) == 1", 0)); // 01.01
+        assert!(yes("quarter(1774915200000) == 1", 0)); // 31.03
+        assert!(yes("quarter(1775001600000) == 2", 0)); // 01.04
+        assert!(yes("quarter(1776211200000) == 2", 0)); // 15.04
+        assert!(yes("quarter(1784073600000) == 3", 0)); // 15.07
+        assert!(yes("quarter(1792022400000) == 4", 0)); // 15.10
+        assert!(yes("quarter(1797292800000) == 4", 0)); // 15.12
+    }
+
+    #[test]
     fn rand_is_deterministic_across_runs() {
         // Эталонные значения: один и тот же вход — один и тот же выход
         // в любом прогоне (контракт детерминизма прелюдии).
