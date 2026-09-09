@@ -80,17 +80,14 @@ impl Diag {
     }
 }
 
-/// Развернуть расписание из строки в JSON §6 (компактный, ключи
-/// `schedule,start,end,events`, у событий — `time,action,point`;
-/// без завершающего `\n`, в отличие от stdout CLI).
-/// `libs` — содержимое библиотек для `use`: `(путь, текст)`, путь пишется
-/// как в `use`, относительно корня (`libs/holidays.cyclo`).
-pub fn run_schedule(
+/// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
+/// Порядок фаз — как в `cyclo run` (§5).
+fn pipeline(
     src: &str,
     start_raw: &str,
     end_raw: &str,
     libs: &[(&str, &str)],
-) -> Result<String, Diag> {
+) -> Result<(String, Vec<crate::expand::Event>), Diag> {
     let file = match cyclorithm_parser::parse(src) {
         Ok(f) => f,
         Err(e) => {
@@ -120,8 +117,23 @@ pub fn run_schedule(
     let start_ms = parse_datetime(start_raw).map_err(Diag::valid)?;
     let end_ms = parse_datetime(end_raw).map_err(Diag::valid)?;
     let events = expand(ast, &tables, &defs, start_ms, end_ms).map_err(Diag::valid)?;
+    Ok((ast.name.clone(), events))
+}
+
+/// Развернуть расписание из строки в JSON §6 (компактный, ключи
+/// `schedule,start,end,events`, у событий — `time,action,point`;
+/// без завершающего `\n`, в отличие от stdout CLI).
+/// `libs` — содержимое библиотек для `use`: `(путь, текст)`, путь пишется
+/// как в `use`, относительно корня (`libs/holidays.cyclo`).
+pub fn run_schedule(
+    src: &str,
+    start_raw: &str,
+    end_raw: &str,
+    libs: &[(&str, &str)],
+) -> Result<String, Diag> {
+    let (name, events) = pipeline(src, start_raw, end_raw, libs)?;
     let mut out = String::from("{\"schedule\":");
-    out.push_str(&esc(&ast.name));
+    out.push_str(&esc(&name));
     out.push_str(",\"start\":");
     out.push_str(&esc(start_raw));
     out.push_str(",\"end\":");
@@ -141,6 +153,61 @@ pub fn run_schedule(
     }
     out.push_str("]}");
     Ok(out)
+}
+
+/// Развернуть расписание для таймлайна: как `run_schedule`, плюс
+/// `spans` — различные спаны событий окна (имя цикла и границы ISO),
+/// упорядочены по `(start, cycle)`. У событий — дополнительное поле
+/// `span` с их спаном. CLI не меняется: это API встраивания.
+pub fn run_timeline(
+    src: &str,
+    start_raw: &str,
+    end_raw: &str,
+    libs: &[(&str, &str)],
+) -> Result<String, Diag> {
+    let (name, events) = pipeline(src, start_raw, end_raw, libs)?;
+    let mut out = String::from("{\"schedule\":");
+    out.push_str(&esc(&name));
+    out.push_str(",\"start\":");
+    out.push_str(&esc(start_raw));
+    out.push_str(",\"end\":");
+    out.push_str(&esc(end_raw));
+    out.push_str(",\"events\":[");
+    for (i, e) in events.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"time\":");
+        out.push_str(&esc(&format_datetime(e.time)));
+        out.push_str(",\"action\":");
+        out.push_str(&esc(&e.action));
+        out.push_str(",\"point\":");
+        out.push_str(&esc(&e.point));
+        out.push_str(",\"span\":");
+        out.push_str(&span_json(&e.span));
+        out.push('}');
+    }
+    out.push_str("],\"spans\":[");
+    let mut spans: Vec<&crate::expand::Span> = events.iter().map(|e| &e.span).collect();
+    spans.sort_by(|a, b| (a.start, &a.cycle, a.end).cmp(&(b.start, &b.cycle, b.end)));
+    spans.dedup();
+    for (i, s) in spans.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&span_json(s));
+    }
+    out.push_str("]}");
+    Ok(out)
+}
+
+fn span_json(s: &crate::expand::Span) -> String {
+    format!(
+        "{{\"cycle\":{},\"start\":{},\"end\":{}}}",
+        esc(&s.cycle),
+        esc(&format_datetime(s.start)),
+        esc(&format_datetime(s.end)),
+    )
 }
 
 /// JSON-строка с экранированием (без внешних зависимостей — важно для WASM).
@@ -220,6 +287,25 @@ mod tests {
         let src = MINI.replace("[not weekend(at)]", "[banana(at)]");
         let d = run_schedule(&src, "2026-01-09T00:00:00", "2026-01-10T00:00:00", &[]).unwrap_err();
         assert_eq!((d.kind, d.code), ("valid", Some("E11")));
+    }
+
+    #[test]
+    fn timeline_carries_event_spans_and_distinct_list() {
+        // HOP — один экземпляр [06:00,06:20); прямое действие — root_cycle.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle HOP duration = 20m { 0m: A.x(); 20m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 6h: HOP(); 8h: A.x(); } }";
+        let got = run_timeline(src, "2026-01-01T00:00:00", "2026-01-02T00:00:00", &[]).unwrap();
+        assert!(got.contains(
+            "\"point\":\"A\",\"span\":\
+             {\"cycle\":\"HOP\",\"start\":\"2026-01-01T06:00:00\",\"end\":\"2026-01-01T06:20:00\"}"
+        ));
+        assert!(got.contains(
+            "\"spans\":[\
+             {\"cycle\":\"root_cycle\",\"start\":\"2026-01-01T00:00:00\",\"end\":\"2026-01-02T00:00:00\"},\
+             {\"cycle\":\"HOP\",\"start\":\"2026-01-01T06:00:00\",\"end\":\"2026-01-01T06:20:00\"}]"
+        ));
     }
 
     #[test]

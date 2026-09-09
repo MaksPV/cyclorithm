@@ -19,6 +19,16 @@ use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
 use crate::validate::{chain, root_actual_ms, NameTables};
 use crate::Error;
 
+/// Спан экземпляра цикла для таймлайна: имя цикла и границы
+/// `[start, end)` в мс epoch (конец — по объявленной длительности).
+/// У действий напрямую в `root_cycle` — `cycle: "root_cycle"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    pub cycle: String,
+    pub start: i64,
+    pub end: i64,
+}
+
 /// Событие вывода (§2, §6): время — `i64` мс epoch, остальное — имена
 /// из исходника. Вектор от `expand` уже упорядочен.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +36,8 @@ pub struct Event {
     pub time: i64,
     pub point: String,
     pub action: String,
+    /// Ближайший экземпляр цикла, породивший событие.
+    pub span: Span,
 }
 
 /// Развернуть расписание на окне `[start_ms, end_ms)`.
@@ -56,6 +68,17 @@ pub fn expand(
     let period_ms = period as i64;
     while t0 + k * period < end {
         let base = t0 + k * period;
+        let root_span = Span {
+            cycle: "root_cycle".to_owned(),
+            start: clamp_i64(base),
+            end: clamp_i64(base + period),
+        };
+        let mut ctx = Ctx {
+            tables,
+            defs,
+            out: &mut raw,
+            seq: &mut seq,
+        };
         for st in &schedule.root.stmts {
             let offset = effective_offset_ms(st, period_ms, &schedule.root.duration.raw)?;
             unfold_stmt(
@@ -67,10 +90,8 @@ pub fn expand(
                     limit_raw: &schedule.root.duration.raw,
                     k,
                 },
-                tables,
-                defs,
-                &mut raw,
-                &mut seq,
+                &root_span,
+                &mut ctx,
             )?;
         }
         k += 1;
@@ -84,6 +105,7 @@ pub fn expand(
             time: e.time as i64,
             point: e.point,
             action: e.action,
+            span: e.span,
         })
         .collect())
 }
@@ -94,6 +116,11 @@ fn ceil_div(a: i128, p: i128) -> i128 {
     -((-a).div_euclid(p))
 }
 
+/// Кламп i128 → i64 для границ спанов (вне окна точности не нужно).
+fn clamp_i64(v: i128) -> i64 {
+    i64::try_from(v).unwrap_or(if v < 0 { i64::MIN } else { i64::MAX })
+}
+
 /// Сырое событие до фильтра и сортировки: `k` — экземпляр корня,
 /// `seq` — глобальный порядок объявления при обходе.
 struct RawEvent {
@@ -102,6 +129,7 @@ struct RawEvent {
     seq: usize,
     point: String,
     action: String,
+    span: Span,
 }
 
 /// Кадр развёртки строки: база родителя, эффективное смещение,
@@ -114,58 +142,70 @@ struct Frame<'a> {
     k: i128,
 }
 
+/// Общее состояние обхода: таблицы, определения и аккумуляторы.
+struct Ctx<'a, 'n, 'o> {
+    tables: &'a NameTables<'n>,
+    defs: &'a Defs,
+    out: &'o mut Vec<RawEvent>,
+    seq: &'o mut usize,
+}
+
 /// Развёртка строки: цепочка экземпляров по `chain` (валидация уже прошла,
 /// счёт конечен). Порядок обхода задаёт `seq` для сортировки.
 fn unfold_stmt(
     stmt: &cyclorithm_parser::Stmt,
     frame: Frame<'_>,
-    tables: &NameTables<'_>,
-    defs: &Defs,
-    out: &mut Vec<RawEvent>,
-    seq: &mut usize,
+    parent: &Span,
+    ctx: &mut Ctx<'_, '_, '_>,
 ) -> Result<(), Error> {
-    let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, tables)?;
+    let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, ctx.tables)?;
     for i in 0..count {
         let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
         if let Some(cond) = &stmt.condition {
             let at = i64::try_from(base).unwrap_or(i64::MAX);
-            if !eval_cond(cond, at, defs)? {
+            if !eval_cond(cond, at, ctx.defs)? {
                 continue;
             }
         }
-        unfold(&stmt.invocation, base, frame.k, tables, defs, out, seq)?;
+        unfold(&stmt.invocation, base, frame.k, parent, ctx)?;
     }
     Ok(())
 }
 
 /// Рекурсивная развёртка вызова с накопленной базой времени.
+/// `parent` — спан ближайшего цикла (для корня — `root_cycle`).
 fn unfold(
     invocation: &Invocation,
     base: i128,
     k: i128,
-    tables: &NameTables<'_>,
-    defs: &Defs,
-    out: &mut Vec<RawEvent>,
-    seq: &mut usize,
+    parent: &Span,
+    ctx: &mut Ctx<'_, '_, '_>,
 ) -> Result<(), Error> {
     match invocation {
         Invocation::PointAction { point, action } => {
-            out.push(RawEvent {
+            ctx.out.push(RawEvent {
                 time: base,
                 k,
-                seq: *seq,
+                seq: *ctx.seq,
                 point: point.clone(),
                 action: action.clone(),
+                span: parent.clone(),
             });
-            *seq += 1;
+            *ctx.seq += 1;
             Ok(())
         }
         Invocation::CycleCall { name } => {
-            let cycle = tables
+            let cycle = ctx
+                .tables
                 .cycles
                 .get(name.as_str())
                 .expect("имена уже проверены");
             let limit = duration_ms(&cycle.duration)?;
+            let child = Span {
+                cycle: name.clone(),
+                start: clamp_i64(base),
+                end: clamp_i64(base + limit as i128),
+            };
             for st in &cycle.stmts {
                 let offset = effective_offset_ms(st, limit, &cycle.duration.raw)?;
                 unfold_stmt(
@@ -177,10 +217,8 @@ fn unfold(
                         limit_raw: &cycle.duration.raw,
                         k,
                     },
-                    tables,
-                    defs,
-                    out,
-                    seq,
+                    &child,
+                    ctx,
                 )?;
             }
             Ok(())
@@ -307,6 +345,47 @@ mod tests {
         assert_eq!(times(&events), vec!["2026-01-01T06:00:00"; 3]);
         let actions: Vec<&str> = events.iter().map(|ev| ev.action.as_str()).collect();
         assert_eq!(actions, vec!["x", "y", "x"]);
+    }
+
+    #[test]
+    fn events_carry_innermost_span() {
+        // Спан — ближайший экземпляр цикла; у прямых действий — root_cycle.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); 60m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); 8h: A.x(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        let spans: Vec<(&str, String, String)> = events
+            .iter()
+            .map(|ev| {
+                (
+                    ev.span.cycle.as_str(),
+                    format_datetime(ev.span.start),
+                    format_datetime(ev.span.end),
+                )
+            })
+            .collect();
+        assert_eq!(
+            spans,
+            vec![
+                (
+                    "R",
+                    "2026-01-01T06:00:00".to_owned(),
+                    "2026-01-01T07:00:00".to_owned()
+                ),
+                (
+                    "R",
+                    "2026-01-01T06:00:00".to_owned(),
+                    "2026-01-01T07:00:00".to_owned()
+                ),
+                (
+                    "root_cycle",
+                    "2026-01-01T00:00:00".to_owned(),
+                    "2026-01-02T00:00:00".to_owned()
+                ),
+            ]
+        );
     }
 
     #[test]
