@@ -1,0 +1,14 @@
+schedule "mkdate" {
+  point P {
+    actions = [rule, built];
+  }
+
+  cycle DAY duration = 1d {
+    [month(at) == 9 and dow(at) == thu and month(at + 604800000) == 10] 0m: P.rule();
+    [at == mkdate(2026, 9, 24, 0, 0, 0, 0)] 0m: P.built();
+  }
+
+  root_cycle start_time = "2026-09-01T00:00:00", duration = 30d {
+    0m: fill DAY();
+  }
+}
