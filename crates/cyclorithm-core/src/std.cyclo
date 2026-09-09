@@ -50,3 +50,13 @@ pred spring(at) = month(at) == (3 or 4 or 5);
 pred summer(at) = month(at) == (6 or 7 or 8);
 pred autumn(at) = month(at) == (9 or 10 or 11);
 pred winter(at) = month(at) == (12 or 1 or 2);
+
+// Детерминированный ГСЧ: xorshift32 (13/17/5) от младших 32 бит времени.
+// Только wrap-операции (`&`, `^`, `<<`, логический `>>`): `E12` невозможен
+// по построению. Нулевой сид (t кратно 2^32 мс) даёт 0 — как у xorshift.
+fun __rands(t) = t & 4294967295;
+fun __rand1(t) = __rands(t) ^ ((__rands(t) << 13) & 4294967295);
+fun __rand2(t) = __rand1(t) ^ (__rand1(t) >> 17);
+fun __rand3(t) = __rand2(t) ^ ((__rand2(t) << 5) & 4294967295);
+// 0..9999: смещение от деления 2^32 на 10000 пренебрежимо (~2e-7).
+fun rand(t) = floormod(__rand3(t), 10000);
