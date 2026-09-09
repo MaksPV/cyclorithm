@@ -72,6 +72,23 @@ fn bitwise_matches_expected_json() {
 }
 
 #[test]
+fn bool_groups_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/bool_groups.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/bool_groups.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn repeat_matches_expected_json() {
     let out = run(&[
         "run",
