@@ -106,6 +106,23 @@ fn rand_matches_expected_json() {
 }
 
 #[test]
+fn mkdate_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/mkdate.cyclo",
+        "--start",
+        "2026-09-01T00:00:00",
+        "--end",
+        "2026-10-01T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/mkdate.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn repeat_matches_expected_json() {
     let out = run(&[
         "run",
