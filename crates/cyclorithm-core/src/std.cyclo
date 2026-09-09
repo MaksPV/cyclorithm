@@ -25,6 +25,8 @@ fun day(t) = __doy(t) - (153 * __mp(t) + 2) / 5 + 1;
 fun month(t) = __mp(t) + 3 - 12 * (__mp(t) >= 10);
 fun year(t) = __y(t) + (month(t) <= 2);
 fun quarter(t) = floordiv(month(t) - 1, 3) + 1;
+fun start_of_day(t) = t - day_millis(t);
+fun start_of_month(t) = t - (day(t) - 1) * DAY - day_millis(t);
 
 // Високосность — мостиком truth (1/0): первое боевое `and`/`or` в прелюдии.
 fun is_leap(t) = (year(t) % 4 == 0 and (year(t) % 100 != 0 or year(t) % 400 == 0));

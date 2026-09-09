@@ -1198,6 +1198,15 @@ mod tests {
     }
 
     #[test]
+    fn start_of_day_month_rounding() {
+        assert!(yes("start_of_day(1767225600000) == 1767225600000", 0)); // полночь
+        assert!(yes("start_of_day(1767268800123) == 1767225600000", 0)); // 12:00:00.123
+        assert!(yes("start_of_month(1768478400000) == 1767225600000", 0)); // 15.01 12:00
+        assert!(yes("start_of_month(1773554400000) == 1772323200000", 0)); // 15.03 06:00
+        assert!(yes("day(start_of_month(1773554400000)) == 1", 0)); // композиция
+    }
+
+    #[test]
     fn rand_is_deterministic_across_runs() {
         // Эталонные значения: один и тот же вход — один и тот же выход
         // в любом прогоне (контракт детерминизма прелюдии).
