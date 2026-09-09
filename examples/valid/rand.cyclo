@@ -1,0 +1,33 @@
+schedule "rand" {
+  point P {
+    actions = [heads, tails, rare, grouped];
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 1h {
+    [rand(at) < 5000] 0m: P.heads();
+    [rand(at) >= 5000] 0m: P.tails();
+    [rand(at) < 5000] 5m: P.heads();
+    [rand(at) >= 5000] 5m: P.tails();
+    [rand(at) < 1000] 5m: P.rare();
+    [rand(at) < 5000] 10m: P.heads();
+    [rand(at) >= 5000] 10m: P.tails();
+    [rand(at) < 5000] 15m: P.heads();
+    [rand(at) >= 5000] 15m: P.tails();
+    [rand(at) < 5000] 20m: P.heads();
+    [rand(at) >= 5000] 20m: P.tails();
+    [rand(at) < 5000] 25m: P.heads();
+    [rand(at) >= 5000] 25m: P.tails();
+    [rand(at) < 5000] 30m: P.heads();
+    [rand(at) >= 5000] 30m: P.tails();
+    [rand(at) < 5000] 35m: P.heads();
+    [rand(at) >= 5000] 35m: P.tails();
+    [rand(at) < 1000] 35m: P.rare();
+    [rand(at) < 5000] 40m: P.heads();
+    [rand(at) >= 5000] 40m: P.tails();
+    [rand(at) < 5000] 45m: P.heads();
+    [rand(at) >= 5000] 45m: P.tails();
+    [rand(at) < 5000] 50m: P.heads();
+    [rand(at) >= 5000] 50m: P.tails();
+    [rand(at) < 5000 and (rand(at) > 1000 and 1 + 2 == 3)] 55m: P.grouped();
+  }
+}

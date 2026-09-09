@@ -1070,6 +1070,152 @@ mod tests {
         assert!(yes("1 * (at == 1 or 1 / (at - at) == 0) == 1", 1));
     }
 
+    fn rand_vals(t0: i64, step: i64, n: usize) -> Vec<i64> {
+        let d = test_defs();
+        let mut cx = CxEv {
+            defs: &d,
+            stack: Vec::new(),
+            unit: d.main,
+            vars: HashMap::new(),
+        };
+        (0..n)
+            .map(|i| {
+                let t = t0 + i as i64 * step;
+                let e = Expr::Call {
+                    name: "rand".to_owned(),
+                    args: vec![Expr::Num(t.to_string())],
+                };
+                match eval_expr(&e, 0, &mut cx) {
+                    Ok(Value::Num(v)) => v,
+                    _ => panic!("rand обязан давать число"),
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn rand_passes_statistical_guard() {
+        // Страж качества прелюдийного ГСЧ: минутные метки января 2026.
+        // Границы с запасом (замер: chi2 98, WW z 0.5, доли 0.504/0.100/0.010).
+        let v = rand_vals(1767225600000, 60000, 43200);
+        let n = v.len() as f64;
+        assert!(v.iter().all(|&x| (0..10000).contains(&x)));
+        for (th, want, tol) in [(5000, 0.5, 0.01), (1000, 0.1, 0.005), (100, 0.01, 0.002)] {
+            let got = v.iter().filter(|&&x| x < th).count() as f64 / n;
+            assert!((got - want).abs() < tol, "доля < {th}: {got}");
+        }
+        let mut bins = [0u32; 100];
+        for &x in &v {
+            bins[(x / 100) as usize] += 1;
+        }
+        let exp = n / 100.0;
+        let chi2: f64 = bins
+            .iter()
+            .map(|&b| (f64::from(b) - exp).powi(2) / exp)
+            .sum();
+        assert!(chi2 < 140.0, "chi2: {chi2}");
+        let med = {
+            let mut s = v.clone();
+            s.sort_unstable();
+            s[v.len() / 2]
+        };
+        let s: Vec<u8> = v.iter().map(|&x| u8::from(x >= med)).collect();
+        let n1 = s.iter().filter(|&&b| b == 1).count() as f64;
+        let n0 = n - n1;
+        let runs = 1.0 + s.windows(2).filter(|w| w[0] != w[1]).count() as f64;
+        let mu = 2.0 * n1 * n0 / n + 1.0;
+        let var = 2.0 * n1 * n0 * (2.0 * n1 * n0 - n) / (n * n * (n - 1.0));
+        let z = (runs - mu) / var.sqrt();
+        assert!(z.abs() < 2.5, "Вальд–Вольфовиц z: {z}");
+        let lag1 = {
+            let (a, b) = (&v[..v.len() - 1], &v[1..]);
+            let (ma, mb) = (
+                a.iter().sum::<i64>() as f64 / a.len() as f64,
+                b.iter().sum::<i64>() as f64 / b.len() as f64,
+            );
+            let cov: f64 = a
+                .iter()
+                .zip(b.iter())
+                .map(|(&x, &y)| (x as f64 - ma) * (y as f64 - mb))
+                .sum::<f64>()
+                / a.len() as f64;
+            let va: f64 = a.iter().map(|&x| (x as f64 - ma).powi(2)).sum::<f64>() / a.len() as f64;
+            cov / va.sqrt() / va.sqrt()
+        };
+        assert!(lag1.abs() < 0.03, "лаг-1: {lag1}");
+    }
+
+    #[test]
+    fn workday_weekends() {
+        // Метки — полночи UTC: 2026-01-01 чт, далее пт/сб/вс/пн.
+        assert!(yes("workday(1767225600000)", 0));
+        assert!(yes("workday(1767312000000)", 0));
+        assert!(no("workday(1767398400000)", 0));
+        assert!(no("workday(1767484800000)", 0));
+        assert!(yes("workday(1767571200000)", 0));
+    }
+
+    #[test]
+    fn quarter_boundaries() {
+        assert!(yes("quarter(1767225600000) == 1", 0)); // 01.01
+        assert!(yes("quarter(1774915200000) == 1", 0)); // 31.03
+        assert!(yes("quarter(1775001600000) == 2", 0)); // 01.04
+        assert!(yes("quarter(1776211200000) == 2", 0)); // 15.04
+        assert!(yes("quarter(1784073600000) == 3", 0)); // 15.07
+        assert!(yes("quarter(1792022400000) == 4", 0)); // 15.10
+        assert!(yes("quarter(1797292800000) == 4", 0)); // 15.12
+    }
+
+    #[test]
+    fn is_leap_century_rules() {
+        assert!(yes("is_leap(1704067200000) == 1", 0)); // 2024
+        assert!(yes("is_leap(1767225600000) == 0", 0)); // 2026
+        assert!(yes("is_leap(946684800000) == 1", 0)); // 2000 (% 400)
+        assert!(yes("is_leap(0 - 2208988800000) == 0", 0)); // 1900 (% 100)
+    }
+
+    #[test]
+    fn days_in_month_year_table() {
+        // 15-е числа 2026 (невисокосный): 31/28/31/30/31/30/31/31/30/31/30/31.
+        for (t, want) in [
+            (1768435200000i64, 31),
+            (1771113600000i64, 28),
+            (1773532800000i64, 31),
+            (1776211200000i64, 30),
+            (1778803200000i64, 31),
+            (1781481600000i64, 30),
+            (1784073600000i64, 31),
+            (1786752000000i64, 31),
+            (1789430400000i64, 30),
+            (1792022400000i64, 31),
+            (1794700800000i64, 30),
+            (1797292800000i64, 31),
+        ] {
+            assert!(yes(&format!("days_in_month({t}) == {want}"), 0));
+        }
+        assert!(yes("days_in_month(1707955200000) == 29", 0)); // 02.2024
+        assert!(yes("days_in_month(0 - 2205100800000) == 28", 0)); // 02.1900
+    }
+
+    #[test]
+    fn start_of_day_month_rounding() {
+        assert!(yes("start_of_day(1767225600000) == 1767225600000", 0)); // полночь
+        assert!(yes("start_of_day(1767268800123) == 1767225600000", 0)); // 12:00:00.123
+        assert!(yes("start_of_month(1768478400000) == 1767225600000", 0)); // 15.01 12:00
+        assert!(yes("start_of_month(1773554400000) == 1772323200000", 0)); // 15.03 06:00
+        assert!(yes("day(start_of_month(1773554400000)) == 1", 0)); // композиция
+    }
+
+    #[test]
+    fn rand_is_deterministic_across_runs() {
+        // Эталонные значения: один и тот же вход — один и тот же выход
+        // в любом прогоне (контракт детерминизма прелюдии).
+        // Соседние миллисекунды лавинят (9453 → 5532 → 1487).
+        assert_eq!(rand_vals(1767225600000, 1, 3), vec![9453, 5532, 1487]);
+        // Дальняя метка: 2026-06-15T00:00:00Z.
+        assert_eq!(rand_vals(1781481600000, 1, 1), vec![1737]);
+    }
+
     #[test]
     fn static_errors_propagate_through_group() {
         let e = static_err("(at + \"x\" == \"y\")");
