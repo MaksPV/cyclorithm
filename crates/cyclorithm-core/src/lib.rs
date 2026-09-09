@@ -8,6 +8,7 @@ pub mod datetime;
 pub mod duration;
 pub mod expand;
 pub mod imports;
+pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
