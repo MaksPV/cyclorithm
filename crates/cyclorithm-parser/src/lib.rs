@@ -376,9 +376,9 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
         .expect("cmp_right: содержимое");
     let right = if right.as_rule() == Rule::alternation {
         let mut alts = right.into_inner();
-        let mut values = vec![build_arith(alts.next().expect("alternation: ветка"))];
+        let mut values = vec![build_bitor(alts.next().expect("alternation: ветка"))];
         while alts.next().is_some() {
-            values.push(build_arith(alts.next().expect("alternation: ветка")));
+            values.push(build_bitor(alts.next().expect("alternation: ветка")));
         }
         CondRhs::Alt(values)
     } else {
@@ -387,12 +387,12 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
     Cond::Cmp { op, left, right }
 }
 
-/// Операнд сравнения: склейка или арифметика. Обёртки (`cmp_side`,
+/// Операнд сравнения: склейка или битовое выражение. Обёртки (`cmp_side`,
 /// `cmp_right`, `cond_arg`) снимает вызывающий.
 fn build_operand(pair: Pair<Rule>) -> Expr {
     match pair.as_rule() {
         Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
-        Rule::arith => build_arith(pair),
+        Rule::bitor => build_bitor(pair),
         r => unreachable!("операнд: неожиданное правило {r:?}"),
     }
 }
@@ -414,6 +414,70 @@ fn build_arith(pair: Pair<Rule>) -> Expr {
             o => unreachable!("add_op: неожиданный оператор {o:?}"),
         };
         acc = Expr::Bin {
+            op,
+            left: Box::new(acc),
+            right: Box::new(rhs),
+        };
+    }
+    acc
+}
+
+/// Битовые уровни — та же левоассоциативная свёртка, что у арифметики.
+fn build_bitor(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::bitor);
+    let mut inner = pair.into_inner();
+    let mut acc = build_bitxor(inner.next().expect("bitor: левый операнд"));
+    // `"|"` — безымянный литерал, пары не даёт: дальше идут только операнды.
+    for rhs in inner {
+        acc = Expr::Bit {
+            op: BitOp::Or,
+            left: Box::new(acc),
+            right: Box::new(build_bitxor(rhs)),
+        };
+    }
+    acc
+}
+
+fn build_bitxor(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::bitxor);
+    let mut inner = pair.into_inner();
+    let mut acc = build_bitand(inner.next().expect("bitxor: левый операнд"));
+    for rhs in inner {
+        acc = Expr::Bit {
+            op: BitOp::Xor,
+            left: Box::new(acc),
+            right: Box::new(build_bitand(rhs)),
+        };
+    }
+    acc
+}
+
+fn build_bitand(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::bitand);
+    let mut inner = pair.into_inner();
+    let mut acc = build_shift(inner.next().expect("bitand: левый операнд"));
+    for rhs in inner {
+        acc = Expr::Bit {
+            op: BitOp::And,
+            left: Box::new(acc),
+            right: Box::new(build_shift(rhs)),
+        };
+    }
+    acc
+}
+
+fn build_shift(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::shift);
+    let mut inner = pair.into_inner();
+    let mut acc = build_arith(inner.next().expect("shift: левый операнд"));
+    while let Some(op) = inner.next() {
+        let rhs = build_arith(inner.next().expect("shift: правый операнд"));
+        let op = match op.as_str() {
+            "<<" => BitOp::Shl,
+            ">>" => BitOp::Shr,
+            o => unreachable!("shift_op: неожиданный оператор {o:?}"),
+        };
+        acc = Expr::Bit {
             op,
             left: Box::new(acc),
             right: Box::new(rhs),
@@ -483,6 +547,7 @@ fn build_value(pair: Pair<Rule>) -> Expr {
             }
         }
         Rule::arith => build_arith(pair),
+        Rule::bitor => build_bitor(pair),
         Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
         Rule::truth => {
             let cmp = pair.into_inner().next().expect("truth: сравнение");
@@ -708,6 +773,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    Bit {
+        op: BitOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     Concat(Vec<Expr>),
     Truth(Box<Cond>),
     Call {
@@ -737,6 +807,16 @@ pub enum ArithOp {
     Mod,
     FloorDiv,
     FloorMod,
+}
+
+/// Битовый оператор (§4.13 спеки): только над числами, с wrap-семантикой.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOp {
+    Shl,
+    Shr,
+    And,
+    Or,
+    Xor,
 }
 
 impl Stmt {
@@ -820,6 +900,83 @@ mod tests {
         let src = include_str!("../../../examples/valid/route.cyclo");
         let got = parse(src).expect("route.cyclo обязан разбираться");
         assert_eq!(got.schedule, route_ast());
+    }
+
+    #[test]
+    fn parse_bitwise_precedence() {
+        // `<<` сильнее `&`, `&` сильнее `^`, `^` сильнее `|`,
+        // все слабее `+`, все сильнее сравнения.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [1 + 2 << 3 & 5 ^ 6 | 7 == 8] 0m: A.x(); } }";
+        let got = parse(src).expect("битовое условие обязано разбираться");
+        let cond = got
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let bit = |op, l: Expr, r: Expr| Expr::Bit {
+            op,
+            left: Box::new(l),
+            right: Box::new(r),
+        };
+        let num = |n: &str| Expr::Num(n.to_owned());
+        let expected = Cond::Cmp {
+            op: CmpOp::Eq,
+            left: bit(
+                BitOp::Or,
+                bit(
+                    BitOp::Xor,
+                    bit(
+                        BitOp::And,
+                        bit(
+                            BitOp::Shl,
+                            Expr::Bin {
+                                op: ArithOp::Add,
+                                left: Box::new(num("1")),
+                                right: Box::new(num("2")),
+                            },
+                            num("3"),
+                        ),
+                        num("5"),
+                    ),
+                    num("6"),
+                ),
+                num("7"),
+            ),
+            right: CondRhs::One(num("8")),
+        };
+        assert_eq!(cond, expected);
+    }
+
+    #[test]
+    fn parse_shr_is_not_ge() {
+        // `>>` — сдвиг, а не два сравнения: `8 >> 2 == 2` истинно.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [8 >> 2 == 2] 0m: A.x(); } }";
+        let got = parse(src).expect("сдвиг вправо обязан разбираться");
+        let cond = got
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let expected = Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::Bit {
+                op: BitOp::Shr,
+                left: Box::new(Expr::Num("8".to_owned())),
+                right: Box::new(Expr::Num("2".to_owned())),
+            },
+            right: CondRhs::One(Expr::Num("2".to_owned())),
+        };
+        assert_eq!(cond, expected);
     }
 
     #[test]

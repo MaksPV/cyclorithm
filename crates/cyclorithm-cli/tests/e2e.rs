@@ -55,6 +55,23 @@ fn neg_offsets_matches_expected_json() {
 }
 
 #[test]
+fn bitwise_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/bitwise.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-01T01:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/bitwise.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn repeat_matches_expected_json() {
     let out = run(&[
         "run",
