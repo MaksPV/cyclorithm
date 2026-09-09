@@ -26,6 +26,11 @@ fun month(t) = __mp(t) + 3 - 12 * (__mp(t) >= 10);
 fun year(t) = __y(t) + (month(t) <= 2);
 fun quarter(t) = floordiv(month(t) - 1, 3) + 1;
 
+// Високосность — мостиком truth (1/0): первое боевое `and`/`or` в прелюдии.
+fun is_leap(t) = (year(t) % 4 == 0 and (year(t) % 100 != 0 or year(t) % 400 == 0));
+fun days_in_month(t) = 31 - (month(t) == 4 or month(t) == 6 or month(t) == 9 or month(t) == 11)
+  - (month(t) == 2) * (3 - is_leap(t));
+
 // Строковые формы (для сравнений дат, см. §7).
 fun datestr(t) = pad(year(t), 4) ++ "-" ++ pad(month(t), 2) ++ "-" ++ pad(day(t), 2);
 fun datetimestr(t) = datestr(t) ++ "T" ++ pad(hour(t), 2) ++ ":" ++ pad(minute(t), 2)
