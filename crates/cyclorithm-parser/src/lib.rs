@@ -551,8 +551,8 @@ fn build_value(pair: Pair<Rule>) -> Expr {
         Rule::bitor => build_bitor(pair),
         Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
         Rule::truth => {
-            let cmp = pair.into_inner().next().expect("truth: сравнение");
-            Expr::Truth(Box::new(build_comparison(cmp)))
+            let expr = pair.into_inner().next().expect("truth: условие");
+            Expr::Truth(Box::new(build_or(expr)))
         }
         r => unreachable!("значение: неожиданное правило {r:?}"),
     }
@@ -1077,6 +1077,40 @@ mod tests {
                 op: CmpOp::Eq,
                 left: Expr::At,
                 right: CondRhs::Alt(vec![Expr::Num("1".to_owned()), Expr::Num("2".to_owned())]),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_truth_bridge_takes_full_condition() {
+        // Мостик в арифметике: `2 * (or-условие)` — Truth держит Or целиком.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [2 * (at == 1 or at == 2) == 2] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("мостик с or обязан разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond,
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::Bin {
+                    op: ArithOp::Mul,
+                    left: Box::new(Expr::Num("2".to_owned())),
+                    right: Box::new(Expr::Truth(Box::new(Cond::Or(vec![cmp("1"), cmp("2")])))),
+                },
+                right: CondRhs::One(Expr::Num("2".to_owned())),
             }
         );
     }

@@ -63,7 +63,9 @@ add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
 factor      = { neg_sign? ~ (number | string | call | IDENT | truth | "(" ~ bitor ~ ")") }
-truth       = { "(" ~ comparison ~ ")" }
+// Мостик булева в арифметику (как в C: истина — 1, ложь — 0):
+// внутри скобок полное условие, а не одно сравнение.
+truth       = { "(" ~ or_expr ~ ")" }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
 concat_term = { number | string | call | IDENT | "(" ~ concat ~ ")" }
 call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
