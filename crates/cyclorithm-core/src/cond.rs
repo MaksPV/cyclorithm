@@ -1045,6 +1045,41 @@ mod tests {
     }
 
     #[test]
+    fn and_binds_tighter_than_or() {
+        // Без скобок: `at == 1 or (at == 2 and at == 2)`.
+        assert!(yes("at == 1 or at == 2 and at == 2", 1));
+        assert!(no("at == 1 or at == 2 and at == 2", 3));
+        // Группа переопределяет: `(at == 1 or at == 2) and at == 2`.
+        assert!(no("(at == 1 or at == 2) and at == 2", 1));
+        assert!(yes("(at == 1 or at == 2) and at == 2", 2));
+        assert!(yes("not (at == 1 or at == 2)", 3));
+    }
+
+    #[test]
+    fn truth_bridge_takes_and_or() {
+        assert!(yes("2 * (at == 1 or at == 2) == 2", 2));
+        assert!(yes("2 * (at == 1 or at == 2) == 0", 3));
+        assert!(yes("1 + (at == 1 and not at == 2) == 2", 1));
+        assert!(yes("1 + (at == 1 and not at == 2) == 1", 2));
+    }
+
+    #[test]
+    fn truth_bridge_short_circuits() {
+        // Ленивость or действует и внутри мостика: деление на ноль
+        // в мёртвой ветке не срабатывает при истинной первой.
+        assert!(yes("1 * (at == 1 or 1 / (at - at) == 0) == 1", 1));
+    }
+
+    #[test]
+    fn static_errors_propagate_through_group() {
+        let e = static_err("(at + \"x\" == \"y\")");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
+    }
+
+    #[test]
     fn truth_bridge_gives_one_zero() {
         assert!(yes("12 * (at >= 2) == 12", 2));
         assert!(yes("12 * (at >= 3) == 0", 2));
