@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cyclorithm_parser::{ArithOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
+use cyclorithm_parser::{ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
 
 use crate::Error;
 
@@ -311,6 +311,14 @@ impl CxTy<'_> {
                 }
                 Ok(Ty::Num)
             }
+            // Битовые — те же числовые операнды, но деления нет:
+            // статической проверки делителя не требуется, сдвиг не ошибается.
+            Expr::Bit { left, right, .. } => {
+                if self.infer(left)? != Ty::Num || self.infer(right)? != Ty::Num {
+                    return Err(Error::e12_mismatch());
+                }
+                Ok(Ty::Num)
+            }
             Expr::Concat(xs) => {
                 for x in xs {
                     if self.infer(x)? != Ty::Str {
@@ -502,7 +510,9 @@ fn has_at(expr: &Expr) -> bool {
         Expr::Num(_) | Expr::Str(_) | Expr::Name(_) => false,
         Expr::Neg(x) => has_at(x),
         Expr::Truth(c) => has_cond_at(c),
-        Expr::Bin { left, right, .. } => has_at(left) || has_at(right),
+        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
+            has_at(left) || has_at(right)
+        }
         Expr::Concat(xs) => xs.iter().any(has_at),
         Expr::Call { args, .. } => args.iter().any(has_at),
     }
@@ -529,7 +539,9 @@ fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
         Expr::At | Expr::Num(_) | Expr::Str(_) => false,
         Expr::Neg(x) => has_param(x, cx),
         Expr::Truth(c) => has_cond_param(c, cx),
-        Expr::Bin { left, right, .. } => has_param(left, cx) || has_param(right, cx),
+        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
+            has_param(left, cx) || has_param(right, cx)
+        }
         Expr::Concat(xs) => xs.iter().any(|x| has_param(x, cx)),
         Expr::Call { args, .. } => args.iter().any(|a| has_param(a, cx)),
     }
@@ -751,6 +763,23 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             v.map(Value::Num)
                 .ok_or_else(|| Error::e12_range("arithmetic overflow"))
         }
+        // Битовые (§4.13): two's complement с wrap'ом, ошибок нет по построению.
+        // `>>` — логический (добивка нулями), величина сдвига — по модулю 64.
+        Expr::Bit { op, left, right } => {
+            let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
+                (Value::Num(a), Value::Num(b)) => (a, b),
+                _ => return Err(Error::e12_mismatch()),
+            };
+            let k = b.rem_euclid(64) as u32;
+            let v = match op {
+                BitOp::And => a & b,
+                BitOp::Or => a | b,
+                BitOp::Xor => a ^ b,
+                BitOp::Shl => a.wrapping_shl(k),
+                BitOp::Shr => (a as u64).wrapping_shr(k) as i64,
+            };
+            Ok(Value::Num(v))
+        }
         Expr::Concat(xs) => {
             let mut out = String::new();
             for x in xs {
@@ -948,6 +977,52 @@ mod tests {
         assert!(yes("0 - 7 % 3 == 0 - 1", 0));
         assert!(yes("(0 - 7) floordiv 2 == 0 - 4", 0));
         assert!(yes("(0 - 7) floormod 2 == 1", 0));
+    }
+
+    #[test]
+    fn bitwise_operators_wrap() {
+        assert!(yes("1 << 3 == 8", 0));
+        assert!(yes("256 >> 2 == 64", 0));
+        assert!(yes("14 & 11 == 10", 0));
+        assert!(yes("7 ^ 3 == 4", 0));
+        assert!(yes("8 | 3 == 11", 0));
+        // `1 << 63` — минимум i64: равен вычисленному выражением.
+        assert!(yes("(1 << 63) + 9223372036854775807 == 0 - 1", 0));
+        // `>>` логический: `-1 >> 1` — максимум i64.
+        assert!(yes("(0 - 1 >> 1) == 9223372036854775807", 0));
+        // Величина сдвига — по модулю 64.
+        assert!(yes("1 << 64 == 1", 0));
+        assert!(yes("1 << (0 - 1) == 1 << 63", 0));
+        assert!(yes("(0 - 1 >> 65) == 9223372036854775807", 0));
+    }
+
+    #[test]
+    fn bitwise_precedence() {
+        // Сдвиг слабее сложения: `(1 + 2) << 3`.
+        assert!(yes("1 + 2 << 3 == 24", 0));
+        // `&` сильнее `^`, `^` сильнее `|`: `1 | 2 ^ (3 & 12) == 3`.
+        assert!(yes("1 | 2 ^ 3 & 12 == 3", 0));
+        assert!(yes("1 << (1 + 1) == 4", 0));
+        assert!(no("1 << 2 + 1 == 5", 0));
+    }
+
+    #[test]
+    fn bitwise_rejects_string_mixing() {
+        let e = static_err("at & \"x\" == \"y\"");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
+    }
+
+    #[test]
+    fn bitwise_shift_by_zero_expression_never_errors() {
+        // Правый операнд-константа 0 — не деление: статика проходит,
+        // в момент строки ошибки тоже нет.
+        let c = cond_of("1 << (at - at) == 1");
+        let d = test_defs();
+        check_single(&c, &d).expect("сдвиг на ноль выражения — не ошибка");
+        assert!(eval_cond(&c, 100, &d).expect("вычисление обязано пройти"));
     }
 
     #[test]

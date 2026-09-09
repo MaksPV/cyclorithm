@@ -20,15 +20,15 @@ decl        = { const_decl | fun_decl | pred_decl }
 const_decl  = { "const" ~ IDENT ~ "=" ~ decl_value ~ ";" }
 fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
-// Тело const/fun — склейка или арифметика (datestr возвращает строку).
-// Порядок как у операндов: сначала concat, иначе arith съедает префикс.
-decl_value  = { concat | arith }
+// Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
+// Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
+decl_value  = { concat | bitor }
 point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
 cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
-// Условия (§3 спеки). `concat` раньше `arith`: иначе `arith` съедает
+// Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
 // строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).
 condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
@@ -45,19 +45,26 @@ word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
 cmp_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
-cmp_side    = { concat | arith }
-cmp_right   = { concat | arith | alternation }
-alternation = { "(" ~ arith ~ (kw_or ~ arith)+ ~ ")" }
+cmp_side    = { concat | bitor }
+cmp_right   = { concat | bitor | alternation }
+alternation = { "(" ~ bitor ~ (kw_or ~ bitor)+ ~ ")" }
+// Битовые уровни (слабее сложения, сильнее сравнения; внутри — как в Python:
+// `|` слабее `^`, `^` слабее `&`, сдвиги сильнее всех трёх).
+bitor       = { bitxor ~ ("|" ~ bitxor)* }
+bitxor      = { bitand ~ ("^" ~ bitand)* }
+bitand      = { shift ~ ("&" ~ shift)* }
+shift       = { arith ~ (shift_op ~ arith)* }
+shift_op    = { "<<" | ">>" }
 arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { neg_sign? ~ (number | string | call | IDENT | truth | "(" ~ arith ~ ")") }
+factor      = { neg_sign? ~ (number | string | call | IDENT | truth | "(" ~ bitor ~ ")") }
 truth       = { "(" ~ comparison ~ ")" }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
 concat_term = { number | string | call | IDENT | "(" ~ concat ~ ")" }
 call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
-cond_arg    = { concat | arith }
+cond_arg    = { concat | bitor }
 // Тело строки: сначала пробуем модификатор + вызов, иначе голый вызов.
 // Порядок важен: цикл с именем `fill` (`6h: fill();`) разбирается второй
 // веткой — PEG сбрасывает позицию при неудаче первой.
