@@ -1,17 +1,23 @@
 //! Проверка имён: дубликаты (E04) и разрешение вызовов (E01/E02/E03/E09).
 //!
 //! Порядок проверок: сначала все объявления (E04, E09 на столкновение
-//! имён точки и цикла), затем все вызовы в порядке объявления
-//! (циклы по порядку, потом `root_cycle`). Первая ошибка побеждает.
+//! имён точки, рутины и цикла; E12 на пустые параметры рутины; E04 на дубли
+//! меток таблиц), затем все вызовы в порядке объявления (циклы, рутины,
+//! `root_cycle`, пожары `->` таблиц). Первая ошибка побеждает.
 //!
-//! Правило общего пространства (§3): одно имя не может обозначать и точку,
-//! и цикл — нарушение E09. На вызове: точка как цикл —
-//! `point 'X' is not a cycle`, цикл как точка — `cycle 'X' is not a point`.
+//! Правило общего пространства (§3): одно имя не может обозначать точку,
+//! рутину и цикл одновременно — нарушение E09. На вызове: точка как цикл —
+//! `point 'X' is not a cycle`, цикл как точка — `cycle 'X' is not a point`,
+//! рутина как точка — `routine 'X' is not a point`.
+//! Вызов `NAME(...)` — это вызов рутины, если имя — рутина (первый аргумент
+//! обязателен и является таблицей: проброс своего параметра или литеральное
+//! имя из реестра, иначе E16); иначе — обычный вызов цикла.
 
 use std::collections::{HashMap, HashSet};
 
-use cyclorithm_parser::{Invocation, Repeat, Schedule, Stmt};
+use cyclorithm_parser::{Expr, Invocation, Repeat, Routine, Schedule, Stmt};
 
+use crate::cond::TableReg;
 use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 use crate::Error;
 
@@ -22,16 +28,44 @@ pub struct NameTables<'a> {
     pub points: HashMap<&'a str, &'a cyclorithm_parser::Point>,
     /// Цикл → его объявление.
     pub cycles: HashMap<&'a str, &'a cyclorithm_parser::Cycle>,
+    /// Рутина → её объявление.
+    pub routines: HashMap<&'a str, &'a Routine>,
+    /// Реестр таблиц (`time_const`) из объявлений.
+    pub tables: &'a TableReg,
 }
 
 /// Проверить объявления и вызовы. Возвращает таблицы имён либо первую ошибку.
-pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
+pub fn validate_names<'a>(
+    schedule: &'a Schedule,
+    reg: &'a TableReg,
+) -> Result<NameTables<'a>, Error> {
     let mut points = HashMap::new();
     for p in &schedule.points {
         if points.contains_key(p.name.as_str()) {
             return Err(Error::e04("point", &p.name));
         }
         points.insert(p.name.as_str(), p);
+    }
+    let mut routines = HashMap::new();
+    for r in &schedule.routines {
+        if routines.contains_key(r.name.as_str()) {
+            return Err(Error::e04("routine", &r.name));
+        }
+        if points.contains_key(r.name.as_str()) {
+            return Err(Error::e09_not_routine(&r.name));
+        }
+        // Первый параметр рутины — таблица: без него вызывать нечем.
+        if r.params.is_empty() {
+            return Err(Error::e12_no_table_param(&r.name));
+        }
+        // Дубли параметров — E04, как у циклов.
+        let mut seen = HashSet::new();
+        for p in &r.params {
+            if !seen.insert(p) {
+                return Err(Error::e04("param", p));
+            }
+        }
+        routines.insert(r.name.as_str(), r);
     }
     let mut cycles = HashMap::new();
     for c in &schedule.cycles {
@@ -40,6 +74,9 @@ pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
         }
         if points.contains_key(c.name.as_str()) {
             return Err(Error::e09_not_cycle(&c.name));
+        }
+        if routines.contains_key(c.name.as_str()) {
+            return Err(Error::e09_routine_not_cycle(&c.name));
         }
         // Дубли параметров (`cycle C(a, a)`) — E04, как дубли объявлений.
         let mut seen = HashSet::new();
@@ -50,18 +87,61 @@ pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
         }
         cycles.insert(c.name.as_str(), c);
     }
-    let tables = NameTables { points, cycles };
-    for c in &schedule.cycles {
-        check_stmts(&tables, &c.stmts)?;
+    // Дубли меток таблицы — E04, как дубли объявлений.
+    for tname in &reg.order {
+        let t = reg.get(tname.as_str()).expect("порядок — по реестру");
+        let mut seen = HashSet::new();
+        for row in &t.rows {
+            if !seen.insert(row.label.as_str()) {
+                return Err(Error::e04("slot", &row.label));
+            }
+        }
     }
-    check_stmts(&tables, &schedule.root.stmts)?;
+    let tables = NameTables {
+        points,
+        cycles,
+        routines,
+        tables: reg,
+    };
+    for c in &schedule.cycles {
+        check_invocations(&tables, c.stmts.iter().map(|st| &st.invocation), None)?;
+    }
+    for r in &schedule.routines {
+        check_invocations(
+            &tables,
+            r.stmts.iter().map(|st| &st.invocation),
+            Some(r.params[0].as_str()),
+        )?;
+    }
+    check_invocations(
+        &tables,
+        schedule.root.stmts.iter().map(|st| &st.invocation),
+        None,
+    )?;
+    for tname in &reg.order {
+        let t = reg.get(tname.as_str()).expect("порядок — по реестру");
+        check_invocations(
+            &tables,
+            t.rows.iter().filter_map(|row| row.firing.as_ref()),
+            None,
+        )?;
+    }
     Ok(tables)
 }
 
-/// Проверить вызовы списка строк в порядке объявления.
-fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Result<(), Error> {
-    for st in stmts {
-        match &st.invocation {
+/// Проверить вызовы в порядке объявления.
+/// `scope` — имя табличного параметра объемлющей рутины (`None` — вне рутин):
+/// в позиции таблицы разрешены его проброс и литеральные имена из реестра.
+fn check_invocations<'i, I>(
+    tables: &NameTables<'_>,
+    invocations: I,
+    scope: Option<&str>,
+) -> Result<(), Error>
+where
+    I: IntoIterator<Item = &'i Invocation>,
+{
+    for inv in invocations {
+        match inv {
             Invocation::PointAction { point, action, .. } => {
                 if let Some(p) = tables.points.get(point.as_str()) {
                     if !p.actions.iter().any(|a| a == action) {
@@ -69,12 +149,26 @@ fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Re
                     }
                 } else if tables.cycles.contains_key(point.as_str()) {
                     return Err(Error::e09_not_point(point));
+                } else if tables.routines.contains_key(point.as_str()) {
+                    return Err(Error::e09_routine_not_point(point));
                 } else {
                     return Err(Error::e01(point));
                 }
             }
             Invocation::CycleCall { name, args } => {
-                if let Some(callee) = tables.cycles.get(name.as_str()) {
+                if let Some(routine) = tables.routines.get(name.as_str()) {
+                    // Арность — сразу за существованием (E12, прецедент
+                    // арности fun/pred); выражения аргументов — позже, со строками.
+                    if routine.params.len() != args.len() {
+                        return Err(Error::e12_arity(name));
+                    }
+                    match args.first() {
+                        Some(Expr::Name(t)) if Some(t.as_str()) == scope => {}
+                        Some(Expr::Name(t)) if tables.tables.get(t.as_str()).is_some() => {}
+                        Some(Expr::Name(t)) => return Err(Error::e16_table(t)),
+                        _ => return Err(Error::e16_table_arg(name)),
+                    }
+                } else if let Some(callee) = tables.cycles.get(name.as_str()) {
                     // Арность — сразу за существованием (E12, прецедент
                     // арности fun/pred); выражения аргументов — позже, со строками.
                     if callee.params.len() != args.len() {
@@ -97,39 +191,239 @@ fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Re
 // разрешены (неизвестных циклов уже нет).
 // ---------------------------------------------------------------------------
 
-/// Запрет самовызовов циклов — прямых и через цепочку (E06).
-/// Обход в порядке объявления; сообщается повторно вошедший цикл.
+/// Запрет самовызовов — прямых и через цепочку (E06): циклы, рутины
+/// и таблицы в одном графе. Пожары `->` таблицы — рёбра таблицы: срабатывают
+/// при каждом инстанцировании с ней. Обход в порядке объявления (циклы,
+/// рутины, таблицы); сообщается повторно вошедший узел своим сообщением
+/// (`recursive cycle/routine/table`). Корень не участвует: в него ничто
+/// не возвращается.
+/// Вызывать после `validate_names`: неизвестных имён уже нет.
 pub fn check_recursion(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), Error> {
-    let mut gray: HashSet<&str> = HashSet::new();
-    let mut black: HashSet<&str> = HashSet::new();
+    let pairs = instantiation_pairs(schedule, tables);
+    let mut gray: HashSet<(u8, &str)> = HashSet::new();
+    let mut black: HashSet<(u8, &str)> = HashSet::new();
     for c in &schedule.cycles {
-        visit_cycle(c.name.as_str(), tables, &mut gray, &mut black)?;
+        visit(
+            (KIND_CYCLE, c.name.as_str()),
+            tables,
+            &pairs,
+            &mut gray,
+            &mut black,
+        )?;
+    }
+    for r in &schedule.routines {
+        visit(
+            (KIND_ROUTINE, r.name.as_str()),
+            tables,
+            &pairs,
+            &mut gray,
+            &mut black,
+        )?;
+    }
+    for t in &tables.tables.order {
+        visit(
+            (KIND_TABLE, t.as_str()),
+            tables,
+            &pairs,
+            &mut gray,
+            &mut black,
+        )?;
     }
     Ok(())
 }
 
-/// DFS по графу вызовов циклов. Серая вершина при повторном входе — E06.
-fn visit_cycle<'a>(
-    name: &'a str,
+/// Виды узлов графа рекурсии (имена таблиц живут отдельно от циклов/рутин).
+const KIND_CYCLE: u8 = 0;
+const KIND_ROUTINE: u8 = 1;
+const KIND_TABLE: u8 = 2;
+
+/// DFS по графу вызовов. Серая вершина при повторном входе — E06.
+fn visit<'a>(
+    node: (u8, &'a str),
     tables: &NameTables<'a>,
-    gray: &mut HashSet<&'a str>,
-    black: &mut HashSet<&'a str>,
+    pairs: &[(&'a str, &'a str)],
+    gray: &mut HashSet<(u8, &'a str)>,
+    black: &mut HashSet<(u8, &'a str)>,
 ) -> Result<(), Error> {
-    if black.contains(name) {
+    if black.contains(&node) {
         return Ok(());
     }
-    if !gray.insert(name) {
-        return Err(Error::e06(name));
+    if !gray.insert(node) {
+        return Err(match node.0 {
+            KIND_ROUTINE => Error::e06_routine(node.1),
+            KIND_TABLE => Error::e06_table(node.1),
+            _ => Error::e06(node.1),
+        });
     }
-    let cycle = tables.cycles.get(name).expect("имена уже проверены");
-    for st in &cycle.stmts {
-        if let Invocation::CycleCall { name: callee, .. } = &st.invocation {
-            visit_cycle(callee.as_str(), tables, gray, black)?;
+    for next in outgoing(node, tables, pairs) {
+        visit(next, tables, pairs, gray, black)?;
+    }
+    gray.remove(&node);
+    black.insert(node);
+    Ok(())
+}
+
+/// Рёбра узла: вызовы тела (для таблицы — её пожары `->`) плюс рёбра
+/// в таблицы литеральных вызовов рутин (их пожары срабатывают при развёртке);
+/// проброс табличного параметра — во все таблицы пары инстанцирования.
+/// Неизвестные имена пропускаются (сообщит `validate_names`).
+fn outgoing<'a>(
+    node: (u8, &'a str),
+    tables: &NameTables<'a>,
+    pairs: &[(&'a str, &'a str)],
+) -> Vec<(u8, &'a str)> {
+    let mut out: Vec<(u8, &'a str)> = Vec::new();
+    // Вызов `NAME(...)`: ребро в цикл/рутину; вызов рутины с литеральной
+    // таблицей — ещё и ребро в таблицу.
+    let call = |out: &mut Vec<(u8, &'a str)>, name: &'a str, args: &'a [Expr]| {
+        if tables.cycles.contains_key(name) {
+            push_edge(out, KIND_CYCLE, name);
+        } else if tables.routines.contains_key(name) {
+            push_edge(out, KIND_ROUTINE, name);
+            if let Some(Expr::Name(t)) = args.first() {
+                if tables.tables.get(t.as_str()).is_some() {
+                    push_edge(out, KIND_TABLE, t.as_str());
+                }
+            }
+        }
+    };
+    match node.0 {
+        KIND_CYCLE => {
+            if let Some(c) = tables.cycles.get(node.1) {
+                for st in &c.stmts {
+                    if let Invocation::CycleCall { name, args } = &st.invocation {
+                        call(&mut out, name.as_str(), args);
+                    }
+                }
+            }
+        }
+        KIND_ROUTINE => {
+            if let Some(r) = tables.routines.get(node.1) {
+                for st in &r.stmts {
+                    if let Invocation::CycleCall { name, args } = &st.invocation {
+                        call(&mut out, name.as_str(), args);
+                        // Проброс табличного параметра: пожары всех таблиц,
+                        // с которыми рутина инстанцируется, — тоже рёбра.
+                        if let Some(Expr::Name(t)) = args.first() {
+                            let is_passthrough = r.params.first().is_some_and(|p| p == t);
+                            if is_passthrough {
+                                for (_, tt) in pairs.iter().filter(|(rn, _)| *rn == node.1) {
+                                    push_edge(&mut out, KIND_TABLE, tt);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            if let Some(t) = tables.tables.get(node.1) {
+                for row in &t.rows {
+                    if let Some(Invocation::CycleCall { name, args }) = &row.firing {
+                        call(&mut out, name.as_str(), args);
+                    }
+                }
+            }
         }
     }
-    gray.remove(name);
-    black.insert(name);
-    Ok(())
+    out
+}
+
+/// Добавить ребро без дублей (порядок — порядок объявления).
+fn push_edge<'a>(out: &mut Vec<(u8, &'a str)>, kind: u8, name: &'a str) {
+    if !out.contains(&(kind, name)) {
+        out.push((kind, name));
+    }
+}
+
+/// Пары `(рутина, таблица)` инстанцирования в порядке первого использования:
+/// циклы, рутины, корень, пожары таблиц. Пробросы табличных параметров
+/// замыкаются fixpoint-ом (конечен: множество пар ограничено).
+/// Нужны E06 (рёбра пожаров) и `check_tables` (проверка каждой пары один раз).
+pub fn instantiation_pairs<'a>(
+    schedule: &'a Schedule,
+    tables: &NameTables<'a>,
+) -> Vec<(&'a str, &'a str)> {
+    let mut pairs: Vec<(&'a str, &'a str)> = Vec::new();
+    let mut site = |routine: &'a str, args: &'a [Expr]| {
+        if !tables.routines.contains_key(routine) {
+            return;
+        }
+        if let Some(Expr::Name(t)) = args.first() {
+            if tables.tables.get(t.as_str()).is_some() && !pairs.contains(&(routine, t.as_str())) {
+                pairs.push((routine, t.as_str()));
+            }
+        }
+    };
+    // Пробросы `(вызывающая, вызываемая)`: `R2(TC)` в теле `R1(TC)`.
+    let mut passthrough: Vec<(&'a str, &'a str)> = Vec::new();
+    for r in &schedule.routines {
+        for st in &r.stmts {
+            if let Invocation::CycleCall { name, args } = &st.invocation {
+                if let Some(Expr::Name(t)) = args.first() {
+                    // Пустые параметры рутины бракует `validate_names`;
+                    // здесь — аккуратный доступ ради прямых вызовов в тестах.
+                    let is_passthrough = r.params.first().is_some_and(|p| p == t);
+                    if is_passthrough
+                        && tables.routines.contains_key(name.as_str())
+                        && !passthrough.contains(&(r.name.as_str(), name.as_str()))
+                    {
+                        passthrough.push((r.name.as_str(), name.as_str()));
+                    }
+                }
+            }
+        }
+    }
+    for c in &schedule.cycles {
+        for st in &c.stmts {
+            if let Invocation::CycleCall { name, args } = &st.invocation {
+                site(name.as_str(), args);
+            }
+        }
+    }
+    for r in &schedule.routines {
+        for st in &r.stmts {
+            if let Invocation::CycleCall { name, args } = &st.invocation {
+                site(name.as_str(), args);
+            }
+        }
+    }
+    for st in &schedule.root.stmts {
+        if let Invocation::CycleCall { name, args } = &st.invocation {
+            site(name.as_str(), args);
+        }
+    }
+    for tname in &tables.tables.order {
+        let t = tables
+            .tables
+            .get(tname.as_str())
+            .expect("порядок — по реестру");
+        for row in &t.rows {
+            if let Some(Invocation::CycleCall { name, args }) = &row.firing {
+                site(name.as_str(), args);
+            }
+        }
+    }
+    loop {
+        let mut added = false;
+        for (caller, callee) in &passthrough {
+            let inherit: Vec<&'a str> = pairs
+                .iter()
+                .filter(|(r, _)| r == caller)
+                .map(|(_, t)| *t)
+                .collect();
+            for t in inherit {
+                if !pairs.contains(&(*callee, t)) {
+                    pairs.push((*callee, t));
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    pairs
 }
 
 /// Граница циклов (E07, правило 8): `actual(C) ≤ duration(C)` для каждого
@@ -235,9 +529,7 @@ pub fn chain(
         Repeat::Once => {
             let span = match &st.invocation {
                 Invocation::PointAction { .. } => 0,
-                Invocation::CycleCall { name, .. } => {
-                    duration_ms(&cycle_duration(tables, name).duration)?
-                }
+                Invocation::CycleCall { name, args } => cycle_or_table_ms(name, args, tables)?,
             };
             Ok((1, span))
         }
@@ -285,12 +577,33 @@ pub fn chain(
 }
 
 /// Длительность шага цепочки: `0` для действия точки,
-/// объявленная длительность для вызова цикла.
+/// объявленная длительность для вызова цикла,
+/// длительность таблицы для вызова рутины.
 /// Повтор действия точки — E10.
 fn step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
     match invocation {
         Invocation::PointAction { action, .. } => Err(Error::e10_repeat_action(action)),
-        Invocation::CycleCall { name, .. } => duration_ms(&cycle_duration(tables, name).duration),
+        Invocation::CycleCall { name, args } => cycle_or_table_ms(name, args, tables),
+    }
+}
+
+/// Длина вызова цикла или рутины: объявленная длительность либо длительность
+/// таблицы. Таблица — литеральная: пробросы подставляются при инстанцировании
+/// (см. `check_tables`), форма вызова проверена в `validate_names`.
+fn cycle_or_table_ms(name: &str, args: &[Expr], tables: &NameTables<'_>) -> Result<i64, Error> {
+    if tables.routines.contains_key(name) {
+        match args.first() {
+            Some(Expr::Name(t)) => {
+                let table = tables
+                    .tables
+                    .get(t.as_str())
+                    .expect("таблица уже проверена");
+                duration_ms(&table.duration)
+            }
+            _ => unreachable!("форма вызова рутины проверена в validate_names"),
+        }
+    } else {
+        duration_ms(&cycle_duration(tables, name).duration)
     }
 }
 
@@ -333,14 +646,16 @@ mod tests {
 
     fn err(src: &str) -> Error {
         let ast = parsed(src);
-        validate_names(&ast).expect_err("ожидалась ошибка имён")
+        let reg = TableReg::default();
+        validate_names(&ast, &reg).expect_err("ожидалась ошибка имён")
     }
 
     #[test]
     fn accepts_route() {
         let src = include_str!("../../../examples/valid/route.cyclo");
         let ast = parsed(src);
-        let tables = validate_names(&ast).expect("route обязан проходить проверку имён");
+        let reg = TableReg::default();
+        let tables = validate_names(&ast, &reg).expect("route обязан проходить проверку имён");
         assert_eq!(tables.points.len(), 2);
         assert_eq!(tables.cycles.len(), 2);
     }
@@ -455,8 +770,223 @@ mod tests {
     /// чтобы таблицы жили `'static` рядом со своим AST.
     fn tables(src: &str) -> (&'static cyclorithm_parser::Schedule, NameTables<'static>) {
         let ast: &'static cyclorithm_parser::Schedule = Box::leak(Box::new(parsed(src)));
-        let t = validate_names(ast).expect("имена обязаны проходить");
+        let reg: &'static TableReg = Box::leak(Box::new(TableReg::default()));
+        let t = validate_names(ast, reg).expect("имена обязаны проходить");
         (ast, t)
+    }
+
+    /// Полный разбор программы с объявлениями: таблицы — через `resolve_units`.
+    fn full(src: &str) -> (&'static cyclorithm_parser::Schedule, NameTables<'static>) {
+        let file: &'static cyclorithm_parser::SourceFile = Box::leak(Box::new(
+            cyclorithm_parser::parse(src).expect("фикстура обязана разбираться"),
+        ));
+        let (_, reg) = crate::cond::resolve_units(std::slice::from_ref(&file.decls))
+            .expect("объявления обязаны проверяться");
+        let reg: &'static TableReg = Box::leak(Box::new(reg));
+        let t = validate_names(&file.schedule, reg).expect("имена обязаны проходить");
+        (&file.schedule, t)
+    }
+
+    /// Первая ошибка программы с объявлениями (объявления или имена).
+    fn full_err(src: &str) -> Error {
+        let file = cyclorithm_parser::parse(src).expect("фикстура обязана разбираться");
+        match crate::cond::resolve_units(std::slice::from_ref(&file.decls)) {
+            Ok((_, reg)) => validate_names(&file.schedule, &reg).expect_err("ожидалась ошибка"),
+            Err(e) => e,
+        }
+    }
+
+    const DAY: &str = "time_const DAY duration = 24h { 1st: 9h; }";
+
+    #[test]
+    fn rejects_unknown_table() {
+        // Таблицы с таким именем нет — E16 (таблицы живут отдельно от циклов).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(SHORT); } }";
+        let e = err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E16", "unknown table 'SHORT'")
+        );
+    }
+
+    #[test]
+    fn rejects_non_name_table_arg() {
+        // Первый аргумент рутины — таблица, не выражение.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(1 + 1); } }";
+        let e = err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E16", "invalid table argument for 'M'")
+        );
+    }
+
+    #[test]
+    fn rejects_routine_arity_mismatch() {
+        // Арность — сразу за существованием (E12, как у циклов).
+        for row in ["0h: M();", "0h: M(D, 1, 2);"] {
+            let src = format!(
+                "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
+                routine M(TC, subj) {{ 0m: A.x(); }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
+            );
+            let e = full_err(&src);
+            assert_eq!(e.code, "E12", "для {row}");
+            assert_eq!(e.message, "wrong arguments for 'M'", "для {row}");
+        }
+    }
+
+    #[test]
+    fn rejects_routine_name_clashes() {
+        // Общее пространство имён: точка/рутина/цикл не делят имя.
+        for (src, code, message) in [
+            (
+                "routine M(TC) { 0m: A.x(); } routine M(TC) { 0m: A.x(); }",
+                "E04",
+                "duplicate routine 'M'",
+            ),
+            (
+                "point M { actions = [x]; } routine M(TC) { 0m: M.x(); }",
+                "E09",
+                "point 'M' is not a routine",
+            ),
+            (
+                "routine M(TC) { 0m: A.x(); } cycle M duration = 1h { 0m: A.x(); }",
+                "E09",
+                "routine 'M' is not a cycle",
+            ),
+            (
+                "routine M(TC) { 0m: A.x(); } cycle C duration = 1h { 0m: M.x(); }",
+                "E09",
+                "routine 'M' is not a point",
+            ),
+        ] {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} {src} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0h: A.x(); }} }}"
+            );
+            let e = err(&src);
+            assert_eq!((e.code, e.message.as_str()), (code, message), "для {src}");
+        }
+    }
+
+    #[test]
+    fn rejects_paramless_routine() {
+        // Без табличного параметра рутину вызывать нечем.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine M { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: A.x(); } }";
+        let e = err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "routine 'M' has no table parameter")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_routine_params() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC, TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: A.x(); } }";
+        let e = err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E04", "duplicate param 'TC'")
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_slot() {
+        // Дубли меток таблицы — E04.
+        let src = "time_const D duration = 2h { 1st: 0m; 1st: 1h; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: A.x(); } }";
+        let e = full_err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E04", "duplicate slot '1st'")
+        );
+    }
+
+    #[test]
+    fn accepts_routine_call_and_passthrough() {
+        // Литеральная таблица и проброс параметра — валидные имена.
+        let src = format!(
+            "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
+            routine M(TC) {{ 0m: A.x(); }} \
+            routine W(TC) {{ 0m: M(TC); }} \
+            cycle C duration = 1h {{ 0m: M(DAY); }} \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            {{ 0h: M(DAY); 1h: W(DAY); 2h: C(); }} }}"
+        );
+        let (ast, t) = full(&src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        let pairs = instantiation_pairs(ast, &t);
+        assert_eq!(pairs, vec![("M", "DAY"), ("W", "DAY")]);
+    }
+
+    #[test]
+    fn rejects_routine_cycle_recursion() {
+        // Цикл через рутину и обратно — E06; сообщается повторно вошедший узел.
+        let src = format!(
+            "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
+            routine M(TC) {{ 0m: C(); }} \
+            cycle C duration = 1h {{ 0m: M(DAY); }} \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0h: C(); }} }}"
+        );
+        let (ast, t) = full(&src);
+        let e = check_recursion(ast, &t).expect_err("цикл через рутину");
+        // Обход от циклов: C → M → C, повторно вошёл C.
+        assert_eq!((e.code, e.message.as_str()), ("E06", "recursive cycle 'C'"));
+    }
+
+    #[test]
+    fn rejects_self_recursive_routine() {
+        let src = format!(
+            "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
+            routine M(TC) {{ 0m: M(DAY); }} \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0h: M(DAY); }} }}"
+        );
+        let (ast, t) = full(&src);
+        let e = check_recursion(ast, &t).expect_err("самовызов рутины");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E06", "recursive routine 'M'")
+        );
+    }
+
+    #[test]
+    fn rejects_table_self_fire_recursion() {
+        // Пожар `->`, инстанцирующий рутину с той же таблицей, — E06 таблицы.
+        let src = "time_const D duration = 2h { tick: 0m -> M(D); } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
+        let (ast, t) = full(src);
+        let e = check_recursion(ast, &t).expect_err("пожар по кругу");
+        assert_eq!((e.code, e.message.as_str()), ("E06", "recursive table 'D'"));
+    }
+
+    #[test]
+    fn passthrough_inherits_tables() {
+        // `W(TC) { M(TC); }`, вызванная с двумя таблицами, даёт обе пары для M.
+        let src = "time_const D1 duration = 2h { 1st: 0m; } \
+            time_const D2 duration = 3h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            routine W(TC) { 0m: M(TC); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 0h: W(D1); 1h: W(D2); } }";
+        let (ast, t) = full(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        let pairs = instantiation_pairs(ast, &t);
+        assert_eq!(
+            pairs,
+            vec![("W", "D1"), ("W", "D2"), ("M", "D1"), ("M", "D2")]
+        );
     }
 
     #[test]

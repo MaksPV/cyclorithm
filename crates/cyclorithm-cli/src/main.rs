@@ -55,17 +55,17 @@ fn run() -> i32 {
         }
     };
     groups.push(src.decls.clone());
-    let (defs, _tables) = match resolve_units(&groups) {
+    let (defs, reg) = match resolve_units(&groups) {
         Ok(defs) => defs,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let tables = match validate_names(ast)
+    let tables = match validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
-        .and_then(|t| check_conditions(ast, &defs).map(|()| t))
+        .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
     {
         Ok(t) => t,
         Err(e) => {

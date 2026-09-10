@@ -268,7 +268,7 @@ fn unfold(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{check_conditions, resolve_units, Defs};
+    use crate::cond::{check_conditions, resolve_units, Defs, TableReg};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, validate_names};
     use std::collections::HashMap;
@@ -284,9 +284,6 @@ mod tests {
         let file: &'static cyclorithm_parser::SourceFile =
             Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
         let ast: &'static cyclorithm_parser::Schedule = &file.schedule;
-        let t = validate_names(ast).unwrap();
-        check_recursion(ast, &t).unwrap();
-        check_bounds(ast, &t).unwrap();
         // Импорты — из памяти: route_lib.cyclo лежит в libs/ рядом с route.cyclo.
         // Без `use` чтение не вызывается, остальные фикстуры не меняются.
         let libs: HashMap<PathBuf, String> = HashMap::from([(
@@ -300,8 +297,13 @@ mod tests {
         })
         .expect("импорты тестов обязаны разрешаться");
         groups.push(file.decls.clone());
-        let d: &'static Defs = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
-        check_conditions(ast, d).unwrap();
+        let (defs, reg) = resolve_units(&groups).unwrap();
+        let d: &'static Defs = Box::leak(Box::new(defs));
+        let reg: &'static TableReg = Box::leak(Box::new(reg));
+        let t = validate_names(ast, reg).unwrap();
+        check_recursion(ast, &t).unwrap();
+        check_bounds(ast, &t).unwrap();
+        check_conditions(ast, d, &t).unwrap();
         (ast, t, d)
     }
 
@@ -469,12 +471,14 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
         let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
         let ast = &file.schedule;
-        let t = validate_names(ast).unwrap();
+        let groups = vec![file.decls.clone()];
+        let (defs, reg) = resolve_units(&groups).unwrap();
+        let d = Box::leak(Box::new(defs));
+        let reg = Box::leak(Box::new(reg));
+        let t = validate_names(ast, reg).unwrap();
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();
-        let groups = vec![file.decls.clone()];
-        let d = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
-        check_conditions(ast, d).expect("статика видит имя параметра");
+        check_conditions(ast, d, &t).expect("статика видит имя параметра");
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         let err = expand(ast, &t, d, s, e).expect_err("несвязанный параметр — ошибка");
         assert_eq!(
@@ -542,12 +546,14 @@ mod tests {
             let file = Box::leak(src.into_boxed_str());
             let parsed = Box::leak(Box::new(cyclorithm_parser::parse(file).unwrap()));
             let ast = &parsed.schedule;
-            let t = validate_names(ast).unwrap();
+            let groups = vec![parsed.decls.clone()];
+            let (defs, reg) = resolve_units(&groups).unwrap();
+            let d = Box::leak(Box::new(defs));
+            let reg = Box::leak(Box::new(reg));
+            let t = validate_names(ast, reg).unwrap();
             check_recursion(ast, &t).unwrap();
             check_bounds(ast, &t).unwrap();
-            let groups = vec![parsed.decls.clone()];
-            let d = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
-            check_conditions(ast, d).unwrap();
+            check_conditions(ast, d, &t).unwrap();
             let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
             let err = expand(ast, &t, d, s, e).expect_err("атрибуты обязаны браковаться");
             assert_eq!(err.code, code, "для {point}");

@@ -108,11 +108,11 @@ fn pipeline(
     })
     .map_err(Diag::import)?;
     groups.push(file.decls.clone());
-    let (defs, _tables) = resolve_units(&groups).map_err(Diag::valid)?;
-    let tables = validate_names(ast)
+    let (defs, reg) = resolve_units(&groups).map_err(Diag::valid)?;
+    let tables = validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
-        .and_then(|t| check_conditions(ast, &defs).map(|()| t))
+        .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
         .map_err(Diag::valid)?;
     let start_ms = parse_datetime(start_raw).map_err(Diag::valid)?;
     let end_ms = parse_datetime(end_raw).map_err(Diag::valid)?;

@@ -9,9 +9,10 @@
 use std::collections::{HashMap, HashSet};
 
 use cyclorithm_parser::{
-    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow, Stmt,
+    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
 };
 
+use crate::validate::NameTables;
 use crate::Error;
 
 /// Значение выражения: число, строка или JSON-значение.
@@ -81,6 +82,16 @@ pub struct TimeTable {
 #[derive(Debug, Default, Clone)]
 pub struct TableReg {
     pub tables: HashMap<String, TimeTable>,
+    /// Порядок первого объявления (импорты, затем программа) —
+    /// для детерминированного обхода в проверках.
+    pub order: Vec<String>,
+}
+
+impl TableReg {
+    /// Таблица по имени (таблицы живут в своём пространстве имён).
+    pub fn get(&self, name: &str) -> Option<&TimeTable> {
+        self.tables.get(name)
+    }
 }
 
 /// Собрать определения одного файла поверх системных.
@@ -118,6 +129,9 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
             {
                 if !seen_tables.insert(name.clone()) {
                     return Err(Error::e04("table", name));
+                }
+                if !tables.tables.contains_key(name) {
+                    tables.order.push(name.clone());
                 }
                 tables.tables.insert(
                     name.clone(),
@@ -254,31 +268,71 @@ fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error
     }
 }
 
-/// Проверить все условия файла в порядке объявления: циклы, затем корень.
-/// Заодно — аргументы вызовов циклов и блоки действий (та же фаза E11/E12:
+/// Проверить все условия файла в порядке объявления: циклы, рутины, корень,
+/// затем пожары `->` таблиц.
+/// Заодно — аргументы вызовов и блоки действий (та же фаза E11/E12:
 /// сначала условие строки, затем вызов — как в момент развёртки).
-pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
-    // Динамический скоуп: строка видит параметры любого цикла
-    // (связываются в момент вызова); статика знает только имена.
+/// У вызова рутины первый аргумент — таблица (не выражение): пропускается.
+/// Табличный параметр рутины в условиях невидим (E11): при развёртке он
+/// затирается из окружения; в скоупе только данные (`params[1..]`).
+pub fn check_conditions(
+    schedule: &Schedule,
+    defs: &Defs,
+    tables: &NameTables<'_>,
+) -> Result<(), Error> {
+    // Динамический скоуп: строка видит параметры любого цикла и данные
+    // любой рутины (связываются в момент вызова); статика знает только имена.
     let mut params: HashMap<String, Ty> = HashMap::new();
     for c in &schedule.cycles {
         for p in &c.params {
             params.insert(p.clone(), Ty::Dyn);
         }
     }
+    for r in &schedule.routines {
+        for p in r.params.iter().skip(1) {
+            params.insert(p.clone(), Ty::Dyn);
+        }
+    }
     for c in &schedule.cycles {
         for st in &c.stmts {
-            check_row(st, defs, &params)?;
+            check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+        }
+    }
+    for r in &schedule.routines {
+        let mut scope = params.clone();
+        scope.remove(&r.params[0]);
+        for st in &r.stmts {
+            check_row(st.condition.as_ref(), &st.invocation, defs, &scope, tables)?;
         }
     }
     for st in &schedule.root.stmts {
-        check_row(st, defs, &params)?;
+        check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+    }
+    // Пожары таблиц — без параметров (данные рутин им недоступны статически;
+    // при развёртке пожар выполняется в пустом окружении).
+    let empty: HashMap<String, Ty> = HashMap::new();
+    for tname in &tables.tables.order {
+        let t = tables
+            .tables
+            .get(tname.as_str())
+            .expect("порядок — по реестру");
+        for row in &t.rows {
+            if let Some(firing) = &row.firing {
+                check_row(row.condition.as_ref(), firing, defs, &empty, tables)?;
+            }
+        }
     }
     Ok(())
 }
 
 /// Проверить одну строку: условие, затем вызов (аргументы/блок).
-fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(), Error> {
+fn check_row(
+    condition: Option<&Cond>,
+    invocation: &Invocation,
+    defs: &Defs,
+    params: &HashMap<String, Ty>,
+    tables: &NameTables<'_>,
+) -> Result<(), Error> {
     let mut cx = CxTy {
         defs,
         stack: Vec::new(),
@@ -286,13 +340,13 @@ fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(),
         vars: params.clone(),
         data: false,
     };
-    if let Some(cond) = &st.condition {
+    if let Some(cond) = condition {
         cx.infer_cond(cond)?;
     }
     // Аргументы и значения блока — позиция данных (мапы!): типы любые,
     // видны и голые имена констант-данных.
     cx.data = true;
-    match &st.invocation {
+    match invocation {
         Invocation::PointAction { block, .. } => {
             // Дубли ключей блока — E15 (порядок объявления).
             let mut seen = HashSet::new();
@@ -305,9 +359,16 @@ fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(),
                 cx.infer(v)?;
             }
         }
-        Invocation::CycleCall { args, .. } => {
-            for a in args {
-                cx.infer(a)?;
+        Invocation::CycleCall { name, args } => {
+            // Первый аргумент рутины — таблица, не выражение.
+            if tables.routines.contains_key(name.as_str()) {
+                for a in args.iter().skip(1) {
+                    cx.infer(a)?;
+                }
+            } else {
+                for a in args {
+                    cx.infer(a)?;
+                }
             }
         }
     }
@@ -1270,6 +1331,7 @@ fn eval_def_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validate::validate_names;
     use cyclorithm_parser as p;
 
     fn cond_of(row: &str) -> Cond {
@@ -1960,9 +2022,10 @@ mod tests {
 
     fn check_rows(src: &str) -> Result<(), Error> {
         let f = p::parse(src).expect("фикстура обязана разбираться");
-        let (d, _) =
+        let (d, reg) =
             resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
-        check_conditions(&f.schedule, &d)
+        let t = validate_names(&f.schedule, &reg)?;
+        check_conditions(&f.schedule, &d, &t)
     }
 
     #[test]
@@ -2080,6 +2143,33 @@ mod tests {
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 2, &d).unwrap());
         assert!(!eval_cond(&c, 1, &d).unwrap());
+    }
+
+    #[test]
+    fn routine_table_param_invisible_in_conds() {
+        // Табличный параметр в условиях — E11, данные (`params[1..]`) — видны.
+        let ok = "time_const D duration = 2h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC, subj) { [subj == 1] 1st: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D, 1); } }";
+        check_rows(ok).expect("данные рутины видны в условиях");
+        let bad = ok.replace("[subj == 1]", "[TC == 1]");
+        let e = check_rows(&bad).expect_err("таблица в условиях невидима");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'TC'"));
+    }
+
+    #[test]
+    fn table_firing_conditions_checked() {
+        // Условия пожаров проверяются без параметров (E11), вызов — как строка.
+        let src = "time_const D duration = 2h { [banana == 1] tick: 0m -> A.x(); } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
+        let e = check_rows(src).expect_err("имя в пожаре обязано проверяться");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E11", "unknown name 'banana'")
+        );
     }
 
     #[test]
