@@ -50,6 +50,10 @@ const sun = 6;
 pred weekend(at) = dow(at) == (sat or sun);
 pred workday(at) = dow(at) < 5;
 
+// День недели 1..7 (Mon=1 … Sun=7) — для выбора рутины в корне;
+// `dow` (0..6) не трогаем.
+fun day_of_week(t) = floormod(days(t) + 3, 7) + 1;
+
 pred night(at) = hour(at) >= 22 or hour(at) < 6;
 pred morning(at) = hour(at) >= 6 and hour(at) < 12;
 pred afternoon(at) = hour(at) >= 12 and hour(at) < 18;

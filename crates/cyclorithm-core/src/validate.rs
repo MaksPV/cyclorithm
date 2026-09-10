@@ -446,21 +446,29 @@ fn firing_stmt(row: &SlotRow, firing: &Invocation) -> Stmt {
     }
 }
 
+/// Инстанцирование рутины с таблицей: тело со смещениями и пожары отдельно
+/// (пожары выполняются в пустом окружении — данные рутины им недоступны).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instance {
+    pub body: Vec<Stmt>,
+    pub firings: Vec<Stmt>,
+}
+
 /// Инстанцировать рутину с таблицей: метки → смещения слотов, проброс
-/// табличного параметра — в литеральное имя, пожары таблицы — в конец.
-/// Порядок: строки рутины, затем пожары. Неизвестная метка — E16.
+/// табличного параметра — в литеральное имя, пожары таблицы — отдельно.
+/// Неизвестная метка — E16.
 /// Вызывать после `validate_names` (форма вызовов уже проверена).
 pub fn instantiate(
     routine: &Routine,
     table_name: &str,
     tables: &NameTables<'_>,
-) -> Result<Vec<Stmt>, Error> {
+) -> Result<Instance, Error> {
     let table = tables
         .tables
         .get(table_name)
         .expect("таблица уже проверена");
     let table_param = routine.params.first().expect("параметры уже проверены");
-    let mut out = Vec::with_capacity(routine.stmts.len() + table.rows.len());
+    let mut body = Vec::with_capacity(routine.stmts.len());
     for st in &routine.stmts {
         let offset = match &st.offset {
             RoutineOffset::Duration(d) => d.clone(),
@@ -484,7 +492,7 @@ pub fn instantiate(
             }
             other => other.clone(),
         };
-        out.push(Stmt {
+        body.push(Stmt {
             offset,
             negative: st.negative,
             repeat: st.repeat.clone(),
@@ -492,12 +500,13 @@ pub fn instantiate(
             invocation,
         });
     }
+    let mut firings = Vec::new();
     for row in &table.rows {
         if let Some(firing) = &row.firing {
-            out.push(firing_stmt(row, firing));
+            firings.push(firing_stmt(row, firing));
         }
     }
-    Ok(out)
+    Ok(Instance { body, firings })
 }
 
 /// Проверить таблицы и инстанцирования рутин: длительности таблиц (E05),
@@ -533,7 +542,8 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
             .tables
             .get(tname)
             .expect("пары — по проверенным именам");
-        let body = instantiate(routine, tname, tables)?;
+        let inst = instantiate(routine, tname, tables)?;
+        let body: Vec<Stmt> = inst.body.into_iter().chain(inst.firings).collect();
         let limit = duration_ms(&table.duration)?;
         let (end, argmax) = stmts_end(&body, limit, &table.duration.raw, tables)?;
         if end > limit {
@@ -1223,10 +1233,13 @@ mod tests {
         let (ast, t) = full(src);
         check_recursion(ast, &t).expect("рекурсии нет");
         let routine = t.routines.get("M").expect("рутина есть");
-        let body = instantiate(routine, "DAY", &t).expect("метки покрыты");
-        assert_eq!(body.len(), 5);
+        let inst = instantiate(routine, "DAY", &t).expect("метки покрыты");
+        let body = &inst.body;
+        let firings = &inst.firings;
+        assert_eq!(body.len(), 4);
+        assert_eq!(firings.len(), 1);
         let raws: Vec<&str> = body.iter().map(|st| st.offset.raw.as_str()).collect();
-        assert_eq!(raws, vec!["9h", "45m", "0m", "0m", "12h"]);
+        assert_eq!(raws, vec!["9h", "45m", "0m", "0m"]);
         // Проброс подставлен, литералы и циклы не тронуты.
         let table_of = |st: &Stmt| match &st.invocation {
             Invocation::CycleCall { name, args } => (name.clone(), args.clone()),
@@ -1237,12 +1250,14 @@ mod tests {
             ("W".to_owned(), vec![Expr::Name("DAY".to_owned())])
         );
         assert_eq!(table_of(&body[3]).0, "C");
-        // Пожар — последний, с условием таблицы.
-        assert!(body[4].condition.is_some());
+        // Пожар — отдельно, с условием таблицы.
+        assert_eq!(firings.len(), 1);
+        assert!(firings[0].condition.is_some());
         assert!(matches!(
-            body[4].invocation,
+            firings[0].invocation,
             Invocation::CycleCall { ref name, .. } if name == "LUNCH"
         ));
+        assert_eq!(firings[0].offset.raw.as_str(), "12h");
     }
 
     #[test]
