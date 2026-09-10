@@ -8,7 +8,7 @@ use cyclorithm_core::cond::{check_conditions, resolve_units, Value};
 use cyclorithm_core::datetime::{format_datetime, parse_datetime};
 use cyclorithm_core::expand::expand;
 use cyclorithm_core::imports::collect_units;
-use cyclorithm_core::validate::{check_bounds, check_recursion, validate_names};
+use cyclorithm_core::validate::{check_bounds, check_recursion, check_tables, validate_names};
 
 fn main() {
     std::process::exit(run());
@@ -64,6 +64,7 @@ fn run() -> i32 {
     };
     let tables = match validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
     {

@@ -3,7 +3,8 @@
 //!
 //! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по §5):
 //! разбор → импорты (`E13`/`E14`) → объявления → имена (`E04`/`E09`,
-//! затем `E01`/`E02`/`E03`) → рекурсия (`E06`) → границы (`E05`/`E10`/`E07`)
+//! затем `E01`/`E02`/`E03`) → рекурсия (`E06`) → таблицы (`E16`, границы
+//! таблиц и тел) → границы (`E05`/`E10`/`E07`)
 //! → условия (`E11`/`E12`) → даты окна (`E08`) → развёртка.
 //! Тексты ошибок совпадают со stderr CLI дословно.
 
@@ -14,7 +15,7 @@ use crate::cond::{check_conditions, resolve_units, Value};
 use crate::datetime::{format_datetime, parse_datetime};
 use crate::expand::expand;
 use crate::imports::{collect_units, ImportError};
-use crate::validate::{check_bounds, check_recursion, validate_names};
+use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
 use crate::Error;
 
 /// Диагностика для редактора: что сломалось и где (если позиция известна).
@@ -111,6 +112,7 @@ fn pipeline(
     let (defs, reg) = resolve_units(&groups).map_err(Diag::valid)?;
     let tables = validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
         .map_err(Diag::valid)?;

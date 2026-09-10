@@ -15,7 +15,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cyclorithm_parser::{Expr, Invocation, Repeat, Routine, Schedule, Stmt};
+use cyclorithm_parser::{
+    Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt,
+};
 
 use crate::cond::TableReg;
 use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
@@ -426,12 +428,129 @@ pub fn instantiation_pairs<'a>(
     pairs
 }
 
+// ---------------------------------------------------------------------------
+// Таблицы и границы инстанцирований (E16/E05/E07/E10).
+// Вызывать после `check_recursion` и до `check_bounds`: покрытие меток идёт
+// по парам инстанцирования, границы тел — в длительности их таблиц.
+// ---------------------------------------------------------------------------
+
+/// Строка таблицы как `Stmt` для переиспользования `stmts_end`:
+/// пожар без повторов в смещении слота.
+fn firing_stmt(row: &SlotRow, firing: &Invocation) -> Stmt {
+    Stmt {
+        offset: row.offset.clone(),
+        negative: false,
+        repeat: Repeat::Once,
+        condition: row.condition.clone(),
+        invocation: firing.clone(),
+    }
+}
+
+/// Инстанцировать рутину с таблицей: метки → смещения слотов, проброс
+/// табличного параметра — в литеральное имя, пожары таблицы — в конец.
+/// Порядок: строки рутины, затем пожары. Неизвестная метка — E16.
+/// Вызывать после `validate_names` (форма вызовов уже проверена).
+pub fn instantiate(
+    routine: &Routine,
+    table_name: &str,
+    tables: &NameTables<'_>,
+) -> Result<Vec<Stmt>, Error> {
+    let table = tables
+        .tables
+        .get(table_name)
+        .expect("таблица уже проверена");
+    let table_param = routine.params.first().expect("параметры уже проверены");
+    let mut out = Vec::with_capacity(routine.stmts.len() + table.rows.len());
+    for st in &routine.stmts {
+        let offset = match &st.offset {
+            RoutineOffset::Duration(d) => d.clone(),
+            RoutineOffset::Label(label) => match table.rows.iter().find(|r| &r.label == label) {
+                Some(slot) => slot.offset.clone(),
+                None => return Err(Error::e16_slot(label)),
+            },
+        };
+        let invocation = match &st.invocation {
+            Invocation::CycleCall { name, args } if tables.routines.contains_key(name.as_str()) => {
+                let mut resolved = args.clone();
+                if let Some(Expr::Name(t)) = resolved.first() {
+                    if t == table_param {
+                        resolved[0] = Expr::Name(table_name.to_owned());
+                    }
+                }
+                Invocation::CycleCall {
+                    name: name.clone(),
+                    args: resolved,
+                }
+            }
+            other => other.clone(),
+        };
+        out.push(Stmt {
+            offset,
+            negative: st.negative,
+            repeat: st.repeat.clone(),
+            condition: st.condition.clone(),
+            invocation,
+        });
+    }
+    for row in &table.rows {
+        if let Some(firing) = &row.firing {
+            out.push(firing_stmt(row, firing));
+        }
+    }
+    Ok(out)
+}
+
+/// Проверить таблицы и инстанцирования рутин: длительности таблиц (E05),
+/// строки таблиц в границах (E07/E10, вина — на таблице), покрытие меток
+/// каждой пары (E16) и границы тел (E07/E10, вина — на рутине).
+/// Каждая пара `(рутина, таблица)` проверяется один раз, в порядке первого
+/// использования. Невызываемые рутины — только статика имён и условий
+/// (покрытие без таблицы проверить нечем).
+pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), Error> {
+    for tname in &tables.tables.order {
+        let table = tables
+            .tables
+            .get(tname.as_str())
+            .expect("порядок — по реестру");
+        let limit = duration_ms(&table.duration)?;
+        let rows: Vec<Stmt> = table
+            .rows
+            .iter()
+            .filter_map(|row| row.firing.as_ref().map(|f| firing_stmt(row, f)))
+            .collect();
+        let (end, argmax) = stmts_end(&rows, limit, &table.duration.raw, tables)?;
+        if end > limit {
+            let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
+            return Err(blame(&rows[row], &table.name, end, limit));
+        }
+    }
+    for (rname, tname) in instantiation_pairs(schedule, tables) {
+        let routine = tables
+            .routines
+            .get(rname)
+            .expect("пары — по проверенным именам");
+        let table = tables
+            .tables
+            .get(tname)
+            .expect("пары — по проверенным именам");
+        let body = instantiate(routine, tname, tables)?;
+        let limit = duration_ms(&table.duration)?;
+        let (end, argmax) = stmts_end(&body, limit, &table.duration.raw, tables)?;
+        if end > limit {
+            let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
+            return Err(blame(&body[row], rname, end, limit));
+        }
+    }
+    Ok(())
+}
 /// Граница циклов (E07, правило 8): `actual(C) ≤ duration(C)` для каждого
 /// цикла и `root_cycle`. Отрицательные смещения разрешены заранее
 /// (`duration(C) − X`); вылет ниже нуля — тоже E07
 /// (`offset '-2h' out of bounds (duration 1h20m)`), проверяется в порядке
 /// объявления и побеждает сразу. В сообщении о переполнении — вызов
 /// со строки, давшей максимум (при равных концах — первая в порядке объявления).
+/// Строки вызова рутин — через длительность их таблиц (`cycle_or_table_ms`);
+/// тела рутин — в `check_tables` (длительности таблиц).
 /// Вызывать после `validate_names` и `check_recursion`.
 pub fn check_bounds(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), Error> {
     for c in &schedule.cycles {
@@ -987,6 +1106,143 @@ mod tests {
             pairs,
             vec![("W", "D1"), ("W", "D2"), ("M", "D1"), ("M", "D2")]
         );
+    }
+
+    /// Полная проверка до таблиц: имена, рекурсия, затем `check_tables`.
+    fn tables_err(src: &str) -> Error {
+        let (ast, t) = full(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_tables(ast, &t).expect_err("ожидалась ошибка таблиц")
+    }
+
+    /// Полная проверка до границ (включая таблицы).
+    fn bounds_full_err(src: &str) -> Error {
+        let (ast, t) = full(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_tables(ast, &t).expect("таблицы в порядке");
+        check_bounds(ast, &t).expect_err("ожидалась ошибка границ")
+    }
+
+    #[test]
+    fn rejects_unknown_slot() {
+        // Метки нет в таблице вызова — E16 (строгость: не молчаливый пропуск).
+        let src = "time_const DAY duration = 24h { 1st: 9h; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 8th: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
+        let e = tables_err(src);
+        assert_eq!((e.code, e.message.as_str()), ("E16", "unknown slot '8th'"));
+    }
+
+    #[test]
+    fn rejects_table_row_overrun() {
+        // Пожар за длительностью таблицы — E07 с виной на таблице.
+        let src = "time_const DAY duration = 1h { 1st: 0m; late: 2h -> A.x(); } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 1st: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
+        let e = tables_err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E07", "action 'x' overruns 'DAY' by 60m (120m > 60m)")
+        );
+    }
+
+    #[test]
+    fn rejects_routine_body_overrun() {
+        // Тело вылезает из таблицы — E07 с виной на рутине (светится её имя).
+        let src = "time_const DAY duration = 1h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 1st: C(); } \
+            cycle C duration = 2h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
+        let e = tables_err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E07", "cycle 'C' overruns 'M' by 60m (120m > 60m)")
+        );
+    }
+
+    #[test]
+    fn rejects_routine_chain_overrun() {
+        // Шаг цепочки вызова рутины — длительность таблицы.
+        let src = "time_const DAY duration = 24h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 1st: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 0h: repeat 2 M(DAY); } }";
+        let e = bounds_full_err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "E07",
+                "cycle 'M' overruns 'root_cycle' by 1440m (2880m > 1440m)"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_repeat_zero_in_routine() {
+        // Повторы тела проверяются в длительности таблицы (E10).
+        let src = "time_const DAY duration = 24h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 1st: repeat 0 C(); } \
+            cycle C duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
+        let e = tables_err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E10", "invalid repeat count '0'")
+        );
+    }
+
+    #[test]
+    fn uncalled_routine_skipped() {
+        // Невызываемую рутину покрыть нечем: только статика имён и условий.
+        let src = "time_const DAY duration = 24h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 8th: A.x(); } \
+            routine N(TC) { -10m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: A.x(); } }";
+        let (ast, t) = full(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_tables(ast, &t).expect("невызываемые рутины не проверяются");
+    }
+
+    #[test]
+    fn instantiate_resolves_labels_and_passthrough() {
+        // Метки → смещения, проброс → литерал, пожары — в конец.
+        let src =
+            "time_const DAY duration = 24h { 1st: 9h; [workday(at)] lunch: 12h -> LUNCH(); } \
+            schedule \"T\" { point A { actions = [x]; } point B { actions = [y]; } \
+            routine W(TC) { 0m: A.x(); } \
+            routine M(TC) { 1st: A.x(); 45m: B.y(); 0m: W(TC); 0m: C(); } \
+            cycle LUNCH duration = 1h { 0m: B.y(); } \
+            cycle C duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
+        let (ast, t) = full(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        let routine = t.routines.get("M").expect("рутина есть");
+        let body = instantiate(routine, "DAY", &t).expect("метки покрыты");
+        assert_eq!(body.len(), 5);
+        let raws: Vec<&str> = body.iter().map(|st| st.offset.raw.as_str()).collect();
+        assert_eq!(raws, vec!["9h", "45m", "0m", "0m", "12h"]);
+        // Проброс подставлен, литералы и циклы не тронуты.
+        let table_of = |st: &Stmt| match &st.invocation {
+            Invocation::CycleCall { name, args } => (name.clone(), args.clone()),
+            inv => panic!("ожидался вызов цикла, получено {inv:?}"),
+        };
+        assert_eq!(
+            table_of(&body[2]),
+            ("W".to_owned(), vec![Expr::Name("DAY".to_owned())])
+        );
+        assert_eq!(table_of(&body[3]).0, "C");
+        // Пожар — последний, с условием таблицы.
+        assert!(body[4].condition.is_some());
+        assert!(matches!(
+            body[4].invocation,
+            Invocation::CycleCall { ref name, .. } if name == "LUNCH"
+        ));
     }
 
     #[test]
