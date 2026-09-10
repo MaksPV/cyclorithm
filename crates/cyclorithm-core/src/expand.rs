@@ -45,6 +45,176 @@ pub struct Event {
     pub span: Span,
 }
 
+/// Развернуть один экземпляр корня (`base = T0 + k·P`): строки корня
+/// в свои события. Общий кусок `expand` и `next_events`: порядок обхода
+/// (`seq` сквозной) и ошибки строк совпадают 1:1.
+#[allow(clippy::too_many_arguments)]
+fn unfold_root_instance(
+    schedule: &Schedule,
+    tables: &NameTables<'_>,
+    defs: &Defs,
+    point_attrs: &HashMap<String, Vec<(String, Value)>>,
+    k: i128,
+    base: i128,
+    period_ms: i64,
+    out: &mut Vec<RawEvent>,
+    seq: &mut usize,
+) -> Result<(), Error> {
+    let root_span = Span {
+        cycle: "root_cycle".to_owned(),
+        start: clamp_i64(base),
+        end: clamp_i64(base + period_ms as i128),
+    };
+    // Корень параметров не имеет: окружение строк — пустое.
+    let root_env: HashMap<String, Value> = HashMap::new();
+    let mut ctx = Ctx {
+        tables,
+        defs,
+        point_attrs,
+        out,
+        seq,
+    };
+    for st in &schedule.root.stmts {
+        let offset = effective_offset_ms(st, period_ms, &schedule.root.duration.raw)?;
+        unfold_stmt(
+            st,
+            Frame {
+                base,
+                offset,
+                limit: period_ms,
+                limit_raw: &schedule.root.duration.raw,
+                k,
+            },
+            &root_span,
+            &mut ctx,
+            &root_env,
+        )?;
+    }
+    Ok(())
+}
+
+/// Сырое событие в событие вывода (время из окна i64-дат — точно).
+fn finalize_event(e: RawEvent) -> Event {
+    Event {
+        time: e.time as i64,
+        point: e.point,
+        action: e.action,
+        point_attrs: e.point_attrs,
+        action_attrs: e.action_attrs,
+        span: e.span,
+    }
+}
+
+/// Удерживаемый кандидат `next_events`: худший сверху max-кучи.
+struct Top {
+    time: i128,
+    k: i128,
+    seq: usize,
+    ev: RawEvent,
+}
+
+impl PartialEq for Top {
+    fn eq(&self, other: &Self) -> bool {
+        (self.time, self.k, self.seq) == (other.time, other.k, other.seq)
+    }
+}
+
+impl Eq for Top {}
+
+impl PartialOrd for Top {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Top {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.time, self.k, self.seq).cmp(&(other.time, other.k, other.seq))
+    }
+}
+
+/// Первые `n` событий от `from_ms` (включительно) в пределах
+/// `[from_ms, from_ms + within_ms)` — однопроходно по экземплярам корня
+/// от того же `k_min`, что у `expand`. Каждый экземпляр разворачивается
+/// ровно один раз; стоп — когда `base` превзошёл худшее удерживаемое
+/// (позже стартующие события только позже) или кап. Связки одного момента
+/// не склеиваются: `n` считает события. Порядок — как у `expand`.
+/// Пусто (нет событий, `within < 0`, `n == 0`) — пустой вектор без ошибки.
+/// Ленивость: ошибки строк за пределами ответа не срабатывают.
+pub fn next_events(
+    schedule: &Schedule,
+    tables: &NameTables<'_>,
+    defs: &Defs,
+    from_ms: i64,
+    within_ms: i64,
+    n: usize,
+) -> Result<Vec<Event>, Error> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    let t0 = parse_datetime(&schedule.root.start_time)? as i128;
+    let period = root_period_ms(&schedule.root)? as i128;
+    let horizon = root_actual_ms(schedule, tables)? as i128;
+    let point_attrs = resolve_point_attrs(schedule, defs)?;
+    // Период влезает в i64: пришёл из root_period_ms.
+    let period_ms = period as i64;
+
+    let from = from_ms as i128;
+    let cap = from + within_ms as i128;
+    let mut k = 0.max(ceil_div(from - horizon - t0, period));
+    let mut seq: usize = 0;
+    let mut heap: std::collections::BinaryHeap<Top> = std::collections::BinaryHeap::new();
+    let mut buf: Vec<RawEvent> = Vec::new();
+    loop {
+        let base = t0 + k * period;
+        if base >= cap {
+            break;
+        }
+        if heap.len() >= n {
+            let worst = heap.peek().expect("куча полна").time;
+            if base > worst {
+                break;
+            }
+        }
+        buf.clear();
+        unfold_root_instance(
+            schedule,
+            tables,
+            defs,
+            &point_attrs,
+            k,
+            base,
+            period_ms,
+            &mut buf,
+            &mut seq,
+        )?;
+        for ev in buf.drain(..) {
+            if ev.time < from || ev.time >= cap {
+                continue;
+            }
+            let top = Top {
+                time: ev.time,
+                k: ev.k,
+                seq: ev.seq,
+                ev,
+            };
+            if heap.len() < n {
+                heap.push(top);
+            } else if let Some(worst) = heap.peek() {
+                if top < *worst {
+                    heap.pop();
+                    heap.push(top);
+                }
+            }
+        }
+        k += 1;
+    }
+    Ok(heap
+        .into_sorted_vec()
+        .into_iter()
+        .map(|t| finalize_event(t.ev))
+        .collect())
+}
 /// Развернуть расписание на окне `[start_ms, end_ms)`.
 /// `end <= start` — не ошибка: пустой вектор.
 pub fn expand(
@@ -73,54 +243,25 @@ pub fn expand(
     let mut seq: usize = 0;
     // Период влезает в i64: пришёл из root_period_ms.
     let period_ms = period as i64;
-    // Корень параметров не имеет: окружение строк — пустое.
-    let root_env: HashMap<String, Value> = HashMap::new();
+    // Корень разворачивается поэкземплярно общим хелпером.
     while t0 + k * period < end {
         let base = t0 + k * period;
-        let root_span = Span {
-            cycle: "root_cycle".to_owned(),
-            start: clamp_i64(base),
-            end: clamp_i64(base + period),
-        };
-        let mut ctx = Ctx {
+        unfold_root_instance(
+            schedule,
             tables,
             defs,
-            point_attrs: &point_attrs,
-            out: &mut raw,
-            seq: &mut seq,
-        };
-        for st in &schedule.root.stmts {
-            let offset = effective_offset_ms(st, period_ms, &schedule.root.duration.raw)?;
-            unfold_stmt(
-                st,
-                Frame {
-                    base,
-                    offset,
-                    limit: period_ms,
-                    limit_raw: &schedule.root.duration.raw,
-                    k,
-                },
-                &root_span,
-                &mut ctx,
-                &root_env,
-            )?;
-        }
+            &point_attrs,
+            k,
+            base,
+            period_ms,
+            &mut raw,
+            &mut seq,
+        )?;
         k += 1;
     }
     raw.retain(|e| e.time >= start && e.time < end);
     raw.sort_by_key(|a| (a.time, a.k, a.seq));
-    Ok(raw
-        .into_iter()
-        .map(|e| Event {
-            // Время внутри окна из i64-дат — преобразование точно.
-            time: e.time as i64,
-            point: e.point,
-            action: e.action,
-            point_attrs: e.point_attrs,
-            action_attrs: e.action_attrs,
-            span: e.span,
-        })
-        .collect())
+    Ok(raw.into_iter().map(finalize_event).collect())
 }
 
 /// Потолок деления при положительном делителе.
@@ -440,6 +581,62 @@ mod tests {
                 day("19:20:00", "arrive", "DEPOT"),
             ]
         );
+    }
+
+    #[test]
+    fn next_matches_expand_prefix() {
+        // next_events(from, within, n) == первые n развёртки [from, from+within).
+        let src = include_str!("../../../examples/valid/route.cyclo");
+        let (ast, t, d) = setup(src);
+        let day = 86_400_000i64;
+        for (from_raw, within, n) in [
+            ("2026-01-09T00:00:00", 2 * day, 5),
+            ("2026-01-09T06:00:00", day, 1),
+            ("2026-01-09T06:00:01", day, 3),
+            ("2026-01-09T10:20:00", day, 4),
+            ("2026-01-09T00:00:00", 2 * day, 100),
+            ("2026-01-09T00:00:00", 0, 10),
+            ("2026-01-09T00:00:00", day, 0),
+        ] {
+            let from = parse_datetime(from_raw).unwrap();
+            let full = expand(ast, &t, d, from, from + within).unwrap();
+            let want: Vec<Event> = full.into_iter().take(n).collect();
+            let got = next_events(ast, &t, d, from, within, n).unwrap();
+            assert_eq!(got, want, "для {from_raw} +{within} n={n}");
+        }
+    }
+
+    #[test]
+    fn next_finds_sparse_event_within_cap() {
+        // Одно событие в году: поиск дотягивается через пустые месяцы.
+        let src = r#"
+schedule "Редкое" {
+  point BELL { actions = [ring]; }
+  cycle DAY duration = 24h {
+    [datestr(at) == "2026-12-31"] 12h: BELL.ring();
+  }
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    0h: DAY();
+  }
+}"#;
+        let (ast, t, d) = setup(src);
+        let from = parse_datetime("2026-01-05T00:00:00").unwrap();
+        let got = next_events(ast, &t, d, from, 366 * 86_400_000, 3).unwrap();
+        assert_eq!(times(&got), vec!["2026-12-31T12:00:00"]);
+        // Капа не хватает — пусто без ошибки.
+        let got = next_events(ast, &t, d, from, 30 * 86_400_000, 3).unwrap();
+        assert_eq!(got, vec![]);
+    }
+
+    #[test]
+    fn next_counts_events_not_instants() {
+        // n считает события: связка 10:20 (arrive+depart) режется пополам.
+        let src = include_str!("../../../examples/valid/route.cyclo");
+        let (ast, t, d) = setup(src);
+        let from = parse_datetime("2026-01-09T10:20:00").unwrap();
+        let got = next_events(ast, &t, d, from, 86_400_000, 1).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(format_datetime(got[0].time), "2026-01-09T10:20:00");
     }
 
     #[test]
