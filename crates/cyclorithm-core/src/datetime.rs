@@ -71,7 +71,8 @@ pub fn parse_cli_datetime(s: &str, anchor_ms: i64) -> Result<i64, Error> {
 }
 
 /// Длительность CLI: число + юнит (`w/d/h/m/s/ms`), компоненты суммируются.
-fn parse_cli_duration(s: &str) -> Option<i64> {
+/// Пусто, мусор и переполнение `i64` — `None`.
+pub fn parse_cli_duration(s: &str) -> Option<i64> {
     if s.is_empty() {
         return None;
     }
@@ -83,10 +84,15 @@ fn parse_cli_duration(s: &str) -> Option<i64> {
         while i < b.len() && b[i].is_ascii_digit() {
             i += 1;
         }
-        if from == i || i >= b.len() {
+        if from == i {
             return None;
         }
         let n: i128 = s[from..i].parse().ok()?;
+        // Голое число без юнита — миллисекунды (`--within 0`).
+        if i >= b.len() {
+            total += n;
+            break;
+        }
         let (mult, adv) = if s[i..].starts_with("ms") {
             (1, 2)
         } else {
@@ -304,12 +310,15 @@ mod tests {
         assert_eq!(cli("+2h30m"), base + 9_000_000);
         assert_eq!(cli("+1w2d3h4m5s6ms"), base + 788_645_006);
         assert_eq!(cli("+0d"), base);
+        assert_eq!(cli("+0"), base);
+        assert_eq!(cli("+1500"), base + 1500);
+        assert_eq!(cli("+1d2"), base + 86_400_002);
         // Битые — E08 с исходным текстом.
         for s in [
             "2026-09-07T09",
             "+1x",
             "+",
-            "+1d2",
+            "+1d2x",
             "2026-13-40",
             "+999999999999999999999d",
         ] {
