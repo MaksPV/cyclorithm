@@ -430,14 +430,19 @@ impl CxTy<'_> {
                         }
                     }
                     CondRhs::Alt(alts) => {
+                        // Каждая ветка — того же типа, что левая часть
+                        // (динамика — мимо: разберётся строка). Строковые
+                        // ветки — только под строку слева
+                        // (`datestr(at) == ("2026-11-04" or ...)`).
                         for a in alts {
-                            match self.infer(a)? {
-                                Ty::Num | Ty::Dyn => {}
+                            match (lt, self.infer(a)?) {
+                                (Ty::Dyn, _) | (_, Ty::Dyn) => {}
+                                (Ty::Num, Ty::Num) | (Ty::Str, Ty::Str) => {}
                                 _ => return Err(Error::e12_mismatch()),
                             }
                         }
                         match lt {
-                            Ty::Num | Ty::Dyn => Ok(()),
+                            Ty::Num | Ty::Dyn | Ty::Str => Ok(()),
                             _ => Err(Error::e12_mismatch()),
                         }
                     }
@@ -1825,6 +1830,27 @@ mod tests {
         // Правая часть при at=1 и at=2 — деление на ноль; ленивость её не трогает.
         assert!(yes("at == 1 or 1 / (at - 1) == 0", 1));
         assert!(no("at == 1 and 1 / (at - 2) == 0", 2));
+    }
+
+    #[test]
+    fn string_alternation_matches_date_lists() {
+        // Строковые ветки — под строку слева (`datestr`), смешение — E12.
+        let nov4 = crate::datetime::parse_datetime("2026-11-04T12:00:00").unwrap();
+        let nov5 = crate::datetime::parse_datetime("2026-11-05T12:00:00").unwrap();
+        let row = "datestr(at) == (\"2026-11-04\" or \"2026-12-31\")";
+        assert!(yes(row, nov4));
+        assert!(no(row, nov5));
+        for bad in [
+            "datestr(at) == (\"2026-11-04\" or 1)",
+            "5 == (\"a\" or \"b\")",
+        ] {
+            let e = static_err(bad);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("E12", "type mismatch: cannot mix number and string"),
+                "для {bad}"
+            );
+        }
     }
 
     #[test]
