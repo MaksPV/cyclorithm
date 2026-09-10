@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use cyclorithm_parser::{Invocation, Schedule};
 
-use crate::cond::{eval_cond_with_env, eval_expr_with_env, Defs, Value};
+use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
 use crate::datetime::parse_datetime;
 use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
 use crate::validate::{chain, root_actual_ms, NameTables};
@@ -57,6 +57,8 @@ pub fn expand(
     let t0 = parse_datetime(&schedule.root.start_time)?;
     let period = root_period_ms(&schedule.root)?;
     let horizon = root_actual_ms(schedule, tables)?;
+    // Атрибуты точек — после всех проверок §5, до первой строки.
+    let point_attrs = resolve_point_attrs(schedule, defs)?;
 
     // i128: около лимита i64 разности платежа не должны паниковать.
     let start = start_ms as i128;
@@ -83,6 +85,7 @@ pub fn expand(
         let mut ctx = Ctx {
             tables,
             defs,
+            point_attrs: &point_attrs,
             out: &mut raw,
             seq: &mut seq,
         };
@@ -154,10 +157,11 @@ struct Frame<'a> {
     k: i128,
 }
 
-/// Общее состояние обхода: таблицы, определения и аккумуляторы.
-struct Ctx<'a, 'n, 'o> {
+/// Общее состояние обхода: таблицы, определения, атрибуты точек и аккумуляторы.
+struct Ctx<'a, 'n, 'o, 'm> {
     tables: &'a NameTables<'n>,
     defs: &'a Defs,
+    point_attrs: &'m HashMap<String, Vec<(String, Value)>>,
     out: &'o mut Vec<RawEvent>,
     seq: &'o mut usize,
 }
@@ -168,7 +172,7 @@ fn unfold_stmt(
     stmt: &cyclorithm_parser::Stmt,
     frame: Frame<'_>,
     parent: &Span,
-    ctx: &mut Ctx<'_, '_, '_>,
+    ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
 ) -> Result<(), Error> {
     let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, ctx.tables)?;
@@ -195,7 +199,7 @@ fn unfold(
     base: i128,
     k: i128,
     parent: &Span,
-    ctx: &mut Ctx<'_, '_, '_>,
+    ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
 ) -> Result<(), Error> {
     let at = i64::try_from(base).unwrap_or(i64::MAX);
@@ -215,8 +219,8 @@ fn unfold(
                 seq: *ctx.seq,
                 point: point.clone(),
                 action: action.clone(),
-                // Атрибуты точки — следующим коммитом (разрешение по таблицам).
-                point_attrs: Vec::new(),
+                // Копия атрибутов своей точки (порядок — порядок объявления).
+                point_attrs: ctx.point_attrs.get(point).cloned().unwrap_or_default(),
                 action_attrs,
                 span: parent.clone(),
             });
@@ -477,6 +481,78 @@ mod tests {
             (err.code, err.message.as_str()),
             ("E11", "unknown name 'subj'")
         );
+    }
+
+    #[test]
+    fn point_attrs_copy_to_events() {
+        // Литерал, ссылка на константу, отсутствие — три точки, три словаря.
+        let src = "const CORPUS = {\"building\": \"Л\"}; \
+            schedule \"T\" { point A { actions = [x]; attrs = {\"gps\": \"1,2\"}; } \
+            point B { actions = [x]; attrs = CORPUS; } \
+            point C { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); 10m: B.x(); 20m: C.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(times(&events).len(), 3);
+        let str_ = |s: &str| crate::cond::Value::Str(s.to_owned());
+        assert_eq!(events[0].point_attrs, vec![("gps".to_owned(), str_("1,2"))]);
+        assert_eq!(
+            events[1].point_attrs,
+            vec![("building".to_owned(), str_("Л"))]
+        );
+        assert!(events[2].point_attrs.is_empty());
+        assert!(events.iter().all(|ev| ev.action_attrs.is_empty()));
+    }
+
+    #[test]
+    fn bad_point_attrs_fail_expand() {
+        // Ошибки атрибутов — в начале развёртки (после всех проверок §5).
+        for (decls, point, code, message) in [
+            (
+                "",
+                "point A { actions = [x]; attrs = {\"a\": 1, \"a\": 2}; }",
+                "E15",
+                "duplicate attribute 'a'",
+            ),
+            (
+                "",
+                "point A { actions = [x]; attrs = NOPE; }",
+                "E11",
+                "unknown name 'NOPE'",
+            ),
+            (
+                "const N = 5;",
+                "point A { actions = [x]; attrs = N; }",
+                "E12",
+                "type mismatch: cannot mix number and string",
+            ),
+            (
+                "fun f(t) = t;",
+                "point A { actions = [x]; attrs = f; }",
+                "E12",
+                "type mismatch: cannot mix number and string",
+            ),
+        ] {
+            let src = format!(
+                "{decls} schedule \"T\" {{ {point} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 6h: A.x(); }} }}"
+            );
+            let file = Box::leak(src.into_boxed_str());
+            let parsed = Box::leak(Box::new(cyclorithm_parser::parse(file).unwrap()));
+            let ast = &parsed.schedule;
+            let t = validate_names(ast).unwrap();
+            check_recursion(ast, &t).unwrap();
+            check_bounds(ast, &t).unwrap();
+            let groups = vec![parsed.decls.clone()];
+            let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
+            check_conditions(ast, d).unwrap();
+            let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+            let err = expand(ast, &t, d, s, e).expect_err("атрибуты обязаны браковаться");
+            assert_eq!(err.code, code, "для {point}");
+            assert_eq!(err.message.as_str(), message, "для {point}");
+        }
     }
 
     #[test]

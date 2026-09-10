@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::cond::{check_conditions, resolve_units};
+use crate::cond::{check_conditions, resolve_units, Value};
 use crate::datetime::{format_datetime, parse_datetime};
 use crate::expand::expand;
 use crate::imports::{collect_units, ImportError};
@@ -121,8 +121,8 @@ fn pipeline(
 }
 
 /// Развернуть расписание из строки в JSON §6 (компактный, ключи
-/// `schedule,start,end,events`, у событий — `time,action,point`;
-/// без завершающего `\n`, в отличие от stdout CLI).
+/// `schedule,start,end,events`, у событий — `time,action,point`,
+/// `point_attrs`,`action_attrs`; без завершающего `\n`, в отличие от stdout CLI).
 /// `libs` — содержимое библиотек для `use`: `(путь, текст)`, путь пишется
 /// как в `use`, относительно корня (`libs/holidays.cyclo`).
 pub fn run_schedule(
@@ -149,6 +149,10 @@ pub fn run_schedule(
         out.push_str(&esc(&e.action));
         out.push_str(",\"point\":");
         out.push_str(&esc(&e.point));
+        out.push_str(",\"point_attrs\":");
+        out.push_str(&attrs_text(&e.point_attrs));
+        out.push_str(",\"action_attrs\":");
+        out.push_str(&attrs_text(&e.action_attrs));
         out.push('}');
     }
     out.push_str("]}");
@@ -183,6 +187,10 @@ pub fn run_timeline(
         out.push_str(&esc(&e.action));
         out.push_str(",\"point\":");
         out.push_str(&esc(&e.point));
+        out.push_str(",\"point_attrs\":");
+        out.push_str(&attrs_text(&e.point_attrs));
+        out.push_str(",\"action_attrs\":");
+        out.push_str(&attrs_text(&e.action_attrs));
         out.push_str(",\"span\":");
         out.push_str(&span_json(&e.span));
         out.push('}');
@@ -208,6 +216,41 @@ fn span_json(s: &crate::expand::Span) -> String {
         esc(&format_datetime(s.start)),
         esc(&format_datetime(s.end)),
     )
+}
+
+/// Словарь атрибутов в JSON-объект (порядок ключей — порядок объявления).
+fn attrs_text(pairs: &[(String, Value)]) -> String {
+    let mut o = String::from("{");
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if i > 0 {
+            o.push(',');
+        }
+        o.push_str(&esc(k));
+        o.push(':');
+        o.push_str(&value_text(v));
+    }
+    o.push('}');
+    o
+}
+
+fn value_text(v: &Value) -> String {
+    match v {
+        Value::Num(n) => n.to_string(),
+        Value::Str(s) => esc(s),
+        Value::Bool(b) => b.to_string(),
+        Value::Map(pairs) => attrs_text(pairs),
+        Value::Array(xs) => {
+            let mut o = String::from("[");
+            for (i, x) in xs.iter().enumerate() {
+                if i > 0 {
+                    o.push(',');
+                }
+                o.push_str(&value_text(x));
+            }
+            o.push(']');
+            o
+        }
+    }
 }
 
 /// JSON-строка с экранированием (без внешних зависимостей — важно для WASM).
@@ -262,8 +305,10 @@ mod tests {
              \"start\":\"2026-01-09T00:00:00\",\
              \"end\":\"2026-01-10T00:00:00\",\
              \"events\":[\
-             {\"time\":\"2026-01-09T06:00:00\",\"action\":\"depart\",\"point\":\"DEPOT\"},\
-             {\"time\":\"2026-01-09T06:20:00\",\"action\":\"arrive\",\"point\":\"DEPOT\"}]}"
+             {\"time\":\"2026-01-09T06:00:00\",\"action\":\"depart\",\"point\":\"DEPOT\",\
+              \"point_attrs\":{},\"action_attrs\":{}},\
+             {\"time\":\"2026-01-09T06:20:00\",\"action\":\"arrive\",\"point\":\"DEPOT\",\
+              \"point_attrs\":{},\"action_attrs\":{}}]}"
         );
     }
 
@@ -298,7 +343,7 @@ mod tests {
             { 6h: HOP(); 8h: A.x(); } }";
         let got = run_timeline(src, "2026-01-01T00:00:00", "2026-01-02T00:00:00", &[]).unwrap();
         assert!(got.contains(
-            "\"point\":\"A\",\"span\":\
+            "\"point\":\"A\",\"point_attrs\":{},\"action_attrs\":{},\"span\":\
              {\"cycle\":\"HOP\",\"start\":\"2026-01-01T06:00:00\",\"end\":\"2026-01-01T06:20:00\"}"
         ));
         assert!(got.contains(

@@ -597,6 +597,55 @@ fn check_map_dupes(pairs: &[(String, cyclorithm_parser::Expr)]) -> Result<(), Er
     Ok(())
 }
 
+/// Разрешить атрибуты точек: `attrs` каждой точки в готовый словарь.
+/// Без `attrs` — пустой. Литерал — как есть (дубли — E15); ссылка —
+/// тело константы-мапы (неизвестное имя — E11, не мапа — E12).
+/// Значения — литералы по грамматике, вычисляются с `at = 0` без окружения.
+/// Вызывать после всех проверок §5, в начале развёртки.
+pub fn resolve_point_attrs(
+    schedule: &Schedule,
+    defs: &Defs,
+) -> Result<HashMap<String, Vec<(String, Value)>>, Error> {
+    let empty: HashMap<String, Value> = HashMap::new();
+    let mut out = HashMap::new();
+    for p in &schedule.points {
+        let attrs = match &p.attrs {
+            None => Vec::new(),
+            Some(Expr::Map(pairs)) => {
+                check_map_dupes(pairs)?;
+                eval_attr_pairs(pairs, defs, &empty)?
+            }
+            Some(Expr::Name(name)) => {
+                let def = resolve(defs, name, defs.main)?;
+                match def.kind {
+                    DefKind::Const => {}
+                    _ => return Err(Error::e12_mismatch()),
+                }
+                match eval_expr_with_env(def.expr.as_ref().expect("const: тело"), 0, defs, &empty)?
+                {
+                    Value::Map(pairs) => pairs,
+                    _ => return Err(Error::e12_mismatch()),
+                }
+            }
+            Some(_) => return Err(Error::e12_mismatch()),
+        };
+        out.insert(p.name.clone(), attrs);
+    }
+    Ok(out)
+}
+
+/// Вычислить пары литерала атрибутов (значения — литералы, `at` нет).
+fn eval_attr_pairs(
+    pairs: &[(String, Expr)],
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+) -> Result<Vec<(String, Value)>, Error> {
+    pairs
+        .iter()
+        .map(|(k, v)| eval_expr_with_env(v, 0, defs, env).map(|ev| (k.clone(), ev)))
+        .collect()
+}
+
 /// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
 /// Остальное смешение — ложь, вызыватель даст `E12`.
 fn date_cmp_ok(left: &Expr, right: &Expr) -> Result<bool, Error> {
@@ -1869,7 +1918,8 @@ mod tests {
 
     fn check_rows(src: &str) -> Result<(), Error> {
         let f = p::parse(src).expect("фикстура обязана разбираться");
-        let d = resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
+        let d =
+            resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
         check_conditions(&f.schedule, &d)
     }
 
