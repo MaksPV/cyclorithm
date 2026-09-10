@@ -9,9 +9,10 @@
 use std::collections::{HashMap, HashSet};
 
 use cyclorithm_parser::{
-    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Invocation, Schedule, Stmt,
+    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
 };
 
+use crate::validate::NameTables;
 use crate::Error;
 
 /// Значение выражения: число, строка или JSON-значение.
@@ -67,15 +68,43 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Таблица слотов `time_const`: длительность, строки и юнит исходника
+/// (для `__`-видимости условий `->`-строк — как у `Def.unit`).
+#[derive(Debug, Clone)]
+pub struct TimeTable {
+    pub name: String,
+    pub duration: Duration,
+    pub rows: Vec<SlotRow>,
+    pub unit: usize,
+}
+
+/// Реестр таблиц рядом с `Defs`: последнее объявление побеждает.
+#[derive(Debug, Default, Clone)]
+pub struct TableReg {
+    pub tables: HashMap<String, TimeTable>,
+    /// Порядок первого объявления (импорты, затем программа) —
+    /// для детерминированного обхода в проверках.
+    pub order: Vec<String>,
+}
+
+impl TableReg {
+    /// Таблица по имени (таблицы живут в своём пространстве имён).
+    pub fn get(&self, name: &str) -> Option<&TimeTable> {
+        self.tables.get(name)
+    }
+}
+
 /// Собрать определения одного файла поверх системных.
-pub fn resolve_defs(decls: &[Decl]) -> Result<Defs, Error> {
+pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
     resolve_units(&[decls.to_vec()])
 }
 
 /// Собрать определения: оверлей групп в порядке наложения
 // (последняя группа — тело программы), затем проверить все тела.
 // Дубли — только внутри одной группы (`E04`); между файлами побеждает последнее.
-pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
+// Таблицы (`time_const`) — отдельным реестром: своё пространство имён
+// (позиции ссылок не пересекаются с выражениями), дубли — `duplicate table`.
+pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
     let system = cyclorithm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
     let mut map = HashMap::new();
     let mut all: Vec<String> = Vec::new();
@@ -86,14 +115,40 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
         }
         map.insert(name, def);
     }
+    let mut tables = TableReg::default();
     for (i, group) in units.iter().enumerate() {
         let unit = i + 1;
         let mut seen = HashSet::new();
+        let mut seen_tables = HashSet::new();
         for d in group {
+            if let Decl::TimeConst {
+                name,
+                duration,
+                rows,
+            } = d
+            {
+                if !seen_tables.insert(name.clone()) {
+                    return Err(Error::e04("table", name));
+                }
+                if !tables.tables.contains_key(name) {
+                    tables.order.push(name.clone());
+                }
+                tables.tables.insert(
+                    name.clone(),
+                    TimeTable {
+                        name: name.clone(),
+                        duration: duration.clone(),
+                        rows: rows.clone(),
+                        unit,
+                    },
+                );
+                continue;
+            }
             let (name, kind) = match d {
                 Decl::Const { name, .. } => (name, "const"),
                 Decl::Fun { name, .. } => (name, "fun"),
                 Decl::Pred { name, .. } => (name, "pred"),
+                Decl::TimeConst { .. } => unreachable!("таблицы разобраны выше"),
             };
             if !seen.insert(name.clone()) {
                 return Err(Error::e04(kind, name));
@@ -110,11 +165,12 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
     for name in &all {
         check_def(&defs, name)?;
     }
-    Ok(defs)
+    Ok((defs, tables))
 }
 
 fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
     match decl {
+        Decl::TimeConst { .. } => unreachable!("таблицы в Defs не попадают"),
         Decl::Const { name, body } => (
             name.clone(),
             Def {
@@ -212,31 +268,71 @@ fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error
     }
 }
 
-/// Проверить все условия файла в порядке объявления: циклы, затем корень.
-/// Заодно — аргументы вызовов циклов и блоки действий (та же фаза E11/E12:
+/// Проверить все условия файла в порядке объявления: циклы, рутины, корень,
+/// затем пожары `->` таблиц.
+/// Заодно — аргументы вызовов и блоки действий (та же фаза E11/E12:
 /// сначала условие строки, затем вызов — как в момент развёртки).
-pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
-    // Динамический скоуп: строка видит параметры любого цикла
-    // (связываются в момент вызова); статика знает только имена.
+/// У вызова рутины первый аргумент — таблица (не выражение): пропускается.
+/// Табличный параметр рутины в условиях невидим (E11): при развёртке он
+/// затирается из окружения; в скоупе только данные (`params[1..]`).
+pub fn check_conditions(
+    schedule: &Schedule,
+    defs: &Defs,
+    tables: &NameTables<'_>,
+) -> Result<(), Error> {
+    // Динамический скоуп: строка видит параметры любого цикла и данные
+    // любой рутины (связываются в момент вызова); статика знает только имена.
     let mut params: HashMap<String, Ty> = HashMap::new();
     for c in &schedule.cycles {
         for p in &c.params {
             params.insert(p.clone(), Ty::Dyn);
         }
     }
+    for r in &schedule.routines {
+        for p in r.params.iter().skip(1) {
+            params.insert(p.clone(), Ty::Dyn);
+        }
+    }
     for c in &schedule.cycles {
         for st in &c.stmts {
-            check_row(st, defs, &params)?;
+            check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+        }
+    }
+    for r in &schedule.routines {
+        let mut scope = params.clone();
+        scope.remove(&r.params[0]);
+        for st in &r.stmts {
+            check_row(st.condition.as_ref(), &st.invocation, defs, &scope, tables)?;
         }
     }
     for st in &schedule.root.stmts {
-        check_row(st, defs, &params)?;
+        check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+    }
+    // Пожары таблиц — без параметров (данные рутин им недоступны статически;
+    // при развёртке пожар выполняется в пустом окружении).
+    let empty: HashMap<String, Ty> = HashMap::new();
+    for tname in &tables.tables.order {
+        let t = tables
+            .tables
+            .get(tname.as_str())
+            .expect("порядок — по реестру");
+        for row in &t.rows {
+            if let Some(firing) = &row.firing {
+                check_row(row.condition.as_ref(), firing, defs, &empty, tables)?;
+            }
+        }
     }
     Ok(())
 }
 
 /// Проверить одну строку: условие, затем вызов (аргументы/блок).
-fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(), Error> {
+fn check_row(
+    condition: Option<&Cond>,
+    invocation: &Invocation,
+    defs: &Defs,
+    params: &HashMap<String, Ty>,
+    tables: &NameTables<'_>,
+) -> Result<(), Error> {
     let mut cx = CxTy {
         defs,
         stack: Vec::new(),
@@ -244,13 +340,13 @@ fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(),
         vars: params.clone(),
         data: false,
     };
-    if let Some(cond) = &st.condition {
+    if let Some(cond) = condition {
         cx.infer_cond(cond)?;
     }
     // Аргументы и значения блока — позиция данных (мапы!): типы любые,
     // видны и голые имена констант-данных.
     cx.data = true;
-    match &st.invocation {
+    match invocation {
         Invocation::PointAction { block, .. } => {
             // Дубли ключей блока — E15 (порядок объявления).
             let mut seen = HashSet::new();
@@ -263,9 +359,16 @@ fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(),
                 cx.infer(v)?;
             }
         }
-        Invocation::CycleCall { args, .. } => {
-            for a in args {
-                cx.infer(a)?;
+        Invocation::CycleCall { name, args } => {
+            // Первый аргумент рутины — таблица, не выражение.
+            if tables.routines.contains_key(name.as_str()) {
+                for a in args.iter().skip(1) {
+                    cx.infer(a)?;
+                }
+            } else {
+                for a in args {
+                    cx.infer(a)?;
+                }
             }
         }
     }
@@ -327,14 +430,19 @@ impl CxTy<'_> {
                         }
                     }
                     CondRhs::Alt(alts) => {
+                        // Каждая ветка — того же типа, что левая часть
+                        // (динамика — мимо: разберётся строка). Строковые
+                        // ветки — только под строку слева
+                        // (`datestr(at) == ("2026-11-04" or ...)`).
                         for a in alts {
-                            match self.infer(a)? {
-                                Ty::Num | Ty::Dyn => {}
+                            match (lt, self.infer(a)?) {
+                                (Ty::Dyn, _) | (_, Ty::Dyn) => {}
+                                (Ty::Num, Ty::Num) | (Ty::Str, Ty::Str) => {}
                                 _ => return Err(Error::e12_mismatch()),
                             }
                         }
                         match lt {
-                            Ty::Num | Ty::Dyn => Ok(()),
+                            Ty::Num | Ty::Dyn | Ty::Str => Ok(()),
                             _ => Err(Error::e12_mismatch()),
                         }
                     }
@@ -1228,6 +1336,7 @@ fn eval_def_call(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::validate::validate_names;
     use cyclorithm_parser as p;
 
     fn cond_of(row: &str) -> Cond {
@@ -1248,7 +1357,7 @@ mod tests {
     }
 
     fn test_defs() -> Defs {
-        resolve_defs(&[]).expect("прелюдия обязана проверяться")
+        resolve_defs(&[]).expect("прелюдия обязана проверяться").0
     }
 
     fn yes(row: &str, at: i64) -> bool {
@@ -1281,7 +1390,7 @@ mod tests {
     fn defs_of(body: &str) -> Result<Defs, Error> {
         let src = format!("{body} schedule \"T\" {{ point A {{ actions = [x]; }} root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0m: A.x(); }} }}");
         let s = p::parse(&src).expect("фикстура обязана разбираться");
-        resolve_defs(&s.decls)
+        resolve_defs(&s.decls).map(|(d, _)| d)
     }
 
     fn eval_with(body: &str, row: &str, at: i64) -> Result<bool, Error> {
@@ -1724,6 +1833,27 @@ mod tests {
     }
 
     #[test]
+    fn string_alternation_matches_date_lists() {
+        // Строковые ветки — под строку слева (`datestr`), смешение — E12.
+        let nov4 = crate::datetime::parse_datetime("2026-11-04T12:00:00").unwrap();
+        let nov5 = crate::datetime::parse_datetime("2026-11-05T12:00:00").unwrap();
+        let row = "datestr(at) == (\"2026-11-04\" or \"2026-12-31\")";
+        assert!(yes(row, nov4));
+        assert!(no(row, nov5));
+        for bad in [
+            "datestr(at) == (\"2026-11-04\" or 1)",
+            "5 == (\"a\" or \"b\")",
+        ] {
+            let e = static_err(bad);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("E12", "type mismatch: cannot mix number and string"),
+                "для {bad}"
+            );
+        }
+    }
+
+    #[test]
     fn alternation_beyond_eq_ne_is_runtime_error() {
         // Статика пропускает (числа, арность в норме), падает вычисление.
         let c = cond_of("at < (1 or 2)");
@@ -1918,9 +2048,10 @@ mod tests {
 
     fn check_rows(src: &str) -> Result<(), Error> {
         let f = p::parse(src).expect("фикстура обязана разбираться");
-        let d =
+        let (d, reg) =
             resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
-        check_conditions(&f.schedule, &d)
+        let t = validate_names(&f.schedule, &reg)?;
+        check_conditions(&f.schedule, &d, &t)
     }
 
     #[test]
@@ -2006,7 +2137,7 @@ mod tests {
     fn cross_file_shadow_wins_silently() {
         // Импорт переопределяет системное имя без E04; программа — поверх.
         let imp = p::parse_decls("const sat = 3;").unwrap();
-        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("weekend(at)");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 0, &d).unwrap());
@@ -2016,13 +2147,13 @@ mod tests {
     fn private_names_do_not_cross_files() {
         // `__` импорта не видно из программы — E11.
         let imp = p::parse_decls("fun __h(t) = t;").unwrap();
-        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("__h(at) == 1");
         let e = check_single(&c, &d).expect_err("чужое __ — ошибка");
         assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__h'"));
         // Своё `__` внутри своего файла работает.
         let prog = p::parse_decls("fun __p(t) = t + 1;").unwrap();
-        let d = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
         let c = cond_of("__p(at) == 3");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 2, &d).unwrap());
@@ -2033,10 +2164,58 @@ mod tests {
         // Дубль — только внутри одного файла.
         let a = p::parse_decls("const K = 1;").unwrap();
         let b = p::parse_decls("const K = 2;").unwrap();
-        let d = resolve_units(&[a, b]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
         let c = cond_of("at >= K");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 2, &d).unwrap());
         assert!(!eval_cond(&c, 1, &d).unwrap());
+    }
+
+    #[test]
+    fn routine_table_param_invisible_in_conds() {
+        // Табличный параметр в условиях — E11, данные (`params[1..]`) — видны.
+        let ok = "time_const D duration = 2h { 1st: 0m; } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC, subj) { [subj == 1] 1st: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D, 1); } }";
+        check_rows(ok).expect("данные рутины видны в условиях");
+        let bad = ok.replace("[subj == 1]", "[TC == 1]");
+        let e = check_rows(&bad).expect_err("таблица в условиях невидима");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'TC'"));
+    }
+
+    #[test]
+    fn table_firing_conditions_checked() {
+        // Условия пожаров проверяются без параметров (E11), вызов — как строка.
+        let src = "time_const D duration = 2h { [banana == 1] tick: 0m -> A.x(); } \
+            schedule \"T\" { point A { actions = [x]; } \
+            routine M(TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
+        let e = check_rows(src).expect_err("имя в пожаре обязано проверяться");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E11", "unknown name 'banana'")
+        );
+    }
+
+    #[test]
+    fn time_const_registry_dup_and_overlay() {
+        // Дубль таблицы внутри файла — E04 `duplicate table`.
+        let d = p::parse_decls(
+            "time_const D duration = 1h { 1st: 0m; } time_const D duration = 2h { 1st: 0m; }",
+        )
+        .unwrap();
+        let e = resolve_units(&[d]).expect_err("дубль таблицы");
+        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate table 'D'"));
+        // Между файлами побеждает последнее; в выражениях таблиц не видно (E11).
+        let a = p::parse_decls("time_const D duration = 1h { 1st: 0m; }").unwrap();
+        let b = p::parse_decls("time_const D duration = 2h { 1st: 0m; }").unwrap();
+        let (d, reg) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
+        assert_eq!(reg.tables["D"].duration.raw, "2h");
+        assert_eq!(reg.tables["D"].unit, 2);
+        assert_eq!(reg.tables["D"].rows.len(), 1);
+        let c = cond_of("at >= D");
+        let e = check_single(&c, &d).expect_err("таблица — не имя условия");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'D'"));
     }
 }

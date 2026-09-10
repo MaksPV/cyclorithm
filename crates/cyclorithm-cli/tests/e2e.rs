@@ -175,6 +175,25 @@ fn attrs_matches_expected_json() {
 }
 
 #[test]
+fn routines_matches_expected_json() {
+    // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
+    // суббота — тишина (пустая рутина, обед только по будням).
+    let out = run(&[
+        "run",
+        "../../examples/valid/routines.cyclo",
+        "--start",
+        "2026-09-07T00:00:00",
+        "--end",
+        "2026-09-14T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/routines.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn imports_matches_expected_json() {
     // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
     let out = run(&[
@@ -248,6 +267,8 @@ fn validation_errors_go_to_stderr() {
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
         ("bad_e15", "duplicate attribute 'a'"),
+        ("bad_e16", "unknown table 'SHORT'"),
+        ("bad_e16_slot", "unknown slot '8th'"),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[

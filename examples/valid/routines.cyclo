@@ -1,0 +1,23 @@
+time_const DAY duration = 24h {
+  1st: 9h;
+  [workday(at)] lunch: 12h -> LUNCH();
+}
+
+schedule "Рутины" {
+  point A { actions = [x]; }
+  point B { actions = [y]; }
+
+  routine M(TC, subj) {
+    [subj == 1] 1st: A.x() { n = subj };
+  }
+  routine REST(TC) {}
+
+  cycle LUNCH duration = 30m {
+    0m: B.y();
+  }
+
+  root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
+    [day_of_week(at) == 1] 0h: M(DAY, 1);
+    [day_of_week(at) == 6] 0h: REST(DAY);
+  }
+}

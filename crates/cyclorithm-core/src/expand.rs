@@ -13,12 +13,12 @@
 
 use std::collections::HashMap;
 
-use cyclorithm_parser::{Invocation, Schedule};
+use cyclorithm_parser::{Expr, Invocation, Schedule};
 
 use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
 use crate::datetime::parse_datetime;
 use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
-use crate::validate::{chain, root_actual_ms, NameTables};
+use crate::validate::{chain, instantiate, root_actual_ms, NameTables};
 use crate::Error;
 
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
@@ -228,49 +228,131 @@ fn unfold(
             Ok(())
         }
         Invocation::CycleCall { name, args } => {
-            let cycle = ctx
-                .tables
-                .cycles
-                .get(name.as_str())
-                .expect("имена уже проверены");
-            // Арность уже проверена (E12): длины совпадают.
-            debug_assert_eq!(cycle.params.len(), args.len());
-            let mut child = env.clone();
-            for (param, arg) in cycle.params.iter().zip(args.iter()) {
-                child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
+            if ctx.tables.routines.contains_key(name.as_str()) {
+                unfold_routine(name, args, base, k, ctx, env)
+            } else {
+                let cycle = ctx
+                    .tables
+                    .cycles
+                    .get(name.as_str())
+                    .expect("имена уже проверены");
+                // Арность уже проверена (E12): длины совпадают.
+                debug_assert_eq!(cycle.params.len(), args.len());
+                let mut child = env.clone();
+                for (param, arg) in cycle.params.iter().zip(args.iter()) {
+                    child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
+                }
+                let limit = duration_ms(&cycle.duration)?;
+                let child_span = Span {
+                    cycle: name.clone(),
+                    start: clamp_i64(base),
+                    end: clamp_i64(base + limit as i128),
+                };
+                for st in &cycle.stmts {
+                    let offset = effective_offset_ms(st, limit, &cycle.duration.raw)?;
+                    unfold_stmt(
+                        st,
+                        Frame {
+                            base,
+                            offset,
+                            limit,
+                            limit_raw: &cycle.duration.raw,
+                            k,
+                        },
+                        &child_span,
+                        ctx,
+                        &child,
+                    )?;
+                }
+                Ok(())
             }
-            let limit = duration_ms(&cycle.duration)?;
-            let child_span = Span {
-                cycle: name.clone(),
-                start: clamp_i64(base),
-                end: clamp_i64(base + limit as i128),
-            };
-            for st in &cycle.stmts {
-                let offset = effective_offset_ms(st, limit, &cycle.duration.raw)?;
-                unfold_stmt(
-                    st,
-                    Frame {
-                        base,
-                        offset,
-                        limit,
-                        limit_raw: &cycle.duration.raw,
-                        k,
-                    },
-                    &child_span,
-                    ctx,
-                    &child,
-                )?;
-            }
-            Ok(())
         }
     }
+}
+
+/// Развёртка вызова рутины: инстанцирование с таблицей; тело — в окружении
+/// вызывающего плюс данные, пожары — в пустом окружении (данные рутины им
+/// недоступны статически, а чужое окружение затирало бы глобальные имена:
+/// резолв идёт `env` раньше `defs`).
+/// Табличный параметр из окружения затирается (в условиях он невидим — E11).
+/// Спан именуется рутиной (§6: в спанах светится её имя).
+fn unfold_routine(
+    name: &str,
+    args: &[Expr],
+    base: i128,
+    k: i128,
+    ctx: &mut Ctx<'_, '_, '_, '_>,
+    env: &HashMap<String, Value>,
+) -> Result<(), Error> {
+    let at = i64::try_from(base).unwrap_or(i64::MAX);
+    let routine = ctx.tables.routines.get(name).expect("имена уже проверены");
+    // Таблица — литеральная: пробросы подставлены при инстанцировании
+    // родительской рутины, в циклах/корне — только литералы по валидации.
+    // Арность уже проверена (E12): длины совпадают.
+    debug_assert_eq!(routine.params.len(), args.len());
+    let table_name = match args.first() {
+        Some(Expr::Name(t)) => t.as_str(),
+        _ => unreachable!("форма вызова проверена в validate_names"),
+    };
+    let table_param = routine.params.first().expect("параметры проверены");
+    let mut child = env.clone();
+    child.remove(table_param);
+    for (param, arg) in routine.params.iter().skip(1).zip(args.iter().skip(1)) {
+        child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
+    }
+    let table = ctx
+        .tables
+        .tables
+        .get(table_name)
+        .expect("таблица проверена");
+    let limit = duration_ms(&table.duration)?;
+    let child_span = Span {
+        cycle: name.to_owned(),
+        start: clamp_i64(base),
+        end: clamp_i64(base + limit as i128),
+    };
+    let inst = instantiate(routine, table_name, ctx.tables)?;
+    for st in &inst.body {
+        let offset = effective_offset_ms(st, limit, &table.duration.raw)?;
+        unfold_stmt(
+            st,
+            Frame {
+                base,
+                offset,
+                limit,
+                limit_raw: &table.duration.raw,
+                k,
+            },
+            &child_span,
+            ctx,
+            &child,
+        )?;
+    }
+    let fresh: HashMap<String, Value> = HashMap::new();
+    for st in &inst.firings {
+        let offset = effective_offset_ms(st, limit, &table.duration.raw)?;
+        unfold_stmt(
+            st,
+            Frame {
+                base,
+                offset,
+                limit,
+                limit_raw: &table.duration.raw,
+                k,
+            },
+            &child_span,
+            ctx,
+            &fresh,
+        )?;
+    }
+    Ok(())
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{check_conditions, resolve_units, Defs};
+    use crate::cond::{check_conditions, resolve_units, Defs, TableReg};
     use crate::datetime::{format_datetime, parse_datetime};
-    use crate::validate::{check_bounds, check_recursion, validate_names};
+    use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
@@ -284,9 +366,6 @@ mod tests {
         let file: &'static cyclorithm_parser::SourceFile =
             Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
         let ast: &'static cyclorithm_parser::Schedule = &file.schedule;
-        let t = validate_names(ast).unwrap();
-        check_recursion(ast, &t).unwrap();
-        check_bounds(ast, &t).unwrap();
         // Импорты — из памяти: route_lib.cyclo лежит в libs/ рядом с route.cyclo.
         // Без `use` чтение не вызывается, остальные фикстуры не меняются.
         let libs: HashMap<PathBuf, String> = HashMap::from([(
@@ -300,8 +379,14 @@ mod tests {
         })
         .expect("импорты тестов обязаны разрешаться");
         groups.push(file.decls.clone());
-        let d: &'static Defs = Box::leak(Box::new(resolve_units(&groups).unwrap()));
-        check_conditions(ast, d).unwrap();
+        let (defs, reg) = resolve_units(&groups).unwrap();
+        let d: &'static Defs = Box::leak(Box::new(defs));
+        let reg: &'static TableReg = Box::leak(Box::new(reg));
+        let t = validate_names(ast, reg).unwrap();
+        check_recursion(ast, &t).unwrap();
+        check_tables(ast, &t).unwrap();
+        check_bounds(ast, &t).unwrap();
+        check_conditions(ast, d, &t).unwrap();
         (ast, t, d)
     }
 
@@ -469,12 +554,15 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
         let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
         let ast = &file.schedule;
-        let t = validate_names(ast).unwrap();
-        check_recursion(ast, &t).unwrap();
-        check_bounds(ast, &t).unwrap();
         let groups = vec![file.decls.clone()];
-        let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
-        check_conditions(ast, d).expect("статика видит имя параметра");
+        let (defs, reg) = resolve_units(&groups).unwrap();
+        let d = Box::leak(Box::new(defs));
+        let reg = Box::leak(Box::new(reg));
+        let t = validate_names(ast, reg).unwrap();
+        check_recursion(ast, &t).unwrap();
+        check_tables(ast, &t).unwrap();
+        check_bounds(ast, &t).unwrap();
+        check_conditions(ast, d, &t).expect("статика видит имя параметра");
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         let err = expand(ast, &t, d, s, e).expect_err("несвязанный параметр — ошибка");
         assert_eq!(
@@ -542,12 +630,15 @@ mod tests {
             let file = Box::leak(src.into_boxed_str());
             let parsed = Box::leak(Box::new(cyclorithm_parser::parse(file).unwrap()));
             let ast = &parsed.schedule;
-            let t = validate_names(ast).unwrap();
-            check_recursion(ast, &t).unwrap();
-            check_bounds(ast, &t).unwrap();
             let groups = vec![parsed.decls.clone()];
-            let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
-            check_conditions(ast, d).unwrap();
+            let (defs, reg) = resolve_units(&groups).unwrap();
+            let d = Box::leak(Box::new(defs));
+            let reg = Box::leak(Box::new(reg));
+            let t = validate_names(ast, reg).unwrap();
+            check_recursion(ast, &t).unwrap();
+            check_tables(ast, &t).unwrap();
+            check_bounds(ast, &t).unwrap();
+            check_conditions(ast, d, &t).unwrap();
             let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
             let err = expand(ast, &t, d, s, e).expect_err("атрибуты обязаны браковаться");
             assert_eq!(err.code, code, "для {point}");
@@ -784,5 +875,102 @@ mod tests {
             times(&events),
             vec!["2026-01-02T06:40:00", "2026-01-02T06:50:00"]
         );
+    }
+
+    /// Сквозная рутина: метки из таблицы, обед-пожар только по будням,
+    /// данные текут в условия и блоки, спаны именованы рутиной.
+    /// 2026-09-07 — понедельник, 2026-09-12 — суббота.
+    fn routine_src() -> &'static str {
+        "time_const DAY duration = 24h { \
+            1st: 9h; \
+            [workday(at)] lunch: 12h -> LUNCH(); \
+        } \
+        schedule \"T\" { point A { actions = [x]; } point B { actions = [y]; } \
+        routine M(TC, subj) { [subj == 1] 1st: A.x() { n = subj }; } \
+        cycle LUNCH duration = 30m { 0m: B.y(); } \
+        root_cycle start_time = \"2026-09-07T00:00:00\", duration = 24h { \
+        [day_of_week(at) == 1] 0h: M(DAY, 1); \
+        [day_of_week(at) == 6] 0h: M(DAY, 1); } }"
+    }
+
+    #[test]
+    fn expands_routine_with_labels_and_firing() {
+        let (ast, t, d) = setup(routine_src());
+        let (s, e) = window("2026-09-07T00:00:00", "2026-09-13T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        let got: Vec<(String, String, String)> = events
+            .iter()
+            .map(|ev| {
+                (
+                    format_datetime(ev.time),
+                    ev.action.clone(),
+                    ev.point.clone(),
+                )
+            })
+            .collect();
+        // Понедельник: пара в 9:00 и обед в 12:00; суббота: только пара.
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "2026-09-07T09:00:00".to_owned(),
+                    "x".to_owned(),
+                    "A".to_owned()
+                ),
+                (
+                    "2026-09-07T12:00:00".to_owned(),
+                    "y".to_owned(),
+                    "B".to_owned()
+                ),
+                (
+                    "2026-09-12T09:00:00".to_owned(),
+                    "x".to_owned(),
+                    "A".to_owned()
+                ),
+            ]
+        );
+        // Спаны: строки рутины — её именем, пожар — внутренним циклом
+        // (ближайший экземпляр, как у вложенных циклов).
+        let spans: Vec<&str> = events.iter().map(|ev| ev.span.cycle.as_str()).collect();
+        assert_eq!(spans, vec!["M", "LUNCH", "M"]);
+        // Данные — в action_attrs пары.
+        assert_eq!(
+            events[0].action_attrs,
+            vec![("n".to_owned(), Value::Num(1))]
+        );
+        assert!(events[1].action_attrs.is_empty());
+    }
+
+    #[test]
+    fn routine_data_filters_rows() {
+        // `subj == 1` режет строки: с subj=2 пара не выходит, обед — да.
+        let src = routine_src().replace("M(DAY, 1)", "M(DAY, 2)");
+        let (ast, t, d) = setup(&src);
+        let (s, e) = window("2026-09-07T00:00:00", "2026-09-08T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(times(&events), vec!["2026-09-07T12:00:00"]);
+    }
+
+    #[test]
+    fn day_of_week_matches_calendar() {
+        // 2026-09-07 — понедельник (=1), 2026-09-13 — воскресенье (=7).
+        let (ast, t, d) = setup(routine_src());
+        let (s, e) = window("2026-09-07T00:00:00", "2026-09-08T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(events.len(), 2);
+        for case in [("2026-09-07T00:00:00", 1), ("2026-09-13T00:00:00", 7)] {
+            let at = parse_datetime(case.0).unwrap();
+            let v = eval_expr_with_env(
+                &cyclorithm_parser::Expr::Call {
+                    name: "day_of_week".to_owned(),
+                    args: vec![cyclorithm_parser::Expr::At],
+                },
+                at,
+                d,
+                &HashMap::new(),
+            )
+            .unwrap();
+            assert_eq!(v, Value::Num(case.1), "для {}", case.0);
+        }
     }
 }

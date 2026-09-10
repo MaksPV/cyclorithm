@@ -1,0 +1,9 @@
+{
+  "schedule": "Рутины",
+  "start": "2026-09-07T00:00:00",
+  "end": "2026-09-14T00:00:00",
+  "events": [
+    {"time": "2026-09-07T09:00:00", "action": "x", "point": "A", "point_attrs": {}, "action_attrs": {"n": 1}},
+    {"time": "2026-09-07T12:00:00", "action": "y", "point": "B", "point_attrs": {}, "action_attrs": {}}
+  ]
+}

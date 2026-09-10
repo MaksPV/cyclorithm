@@ -18,7 +18,7 @@
 
 ## Карта модулей (Cargo workspace, edition 2021)
 - `crates/cyclorithm-parser` — грамматика (`grammar.pest`) + AST (`lib.rs`: `SourceFile`, `Decl`, `Cond`/`Expr`, фикстура `route_ast`). Решено: парсер на `pest` (EBNF из §3 спеки ложится почти 1:1).
-- `crates/cyclorithm-core` — `validate.rs` (коды `E01–E14` из §5), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::eNN_*`).
+- `crates/cyclorithm-core` — `validate.rs` (коды `E01–E16` из §5), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::eNN_*`).
 - `crates/cyclorithm-cli` — бинарь `cyclo` (`run`): читает файл + `use` через `dir_fs` от директории файла; контракт CLI в §1 спеки. Exit-коды: `0` — успех, `1` — ввод/парсинг/валидация (текст в stderr, в stdout ничего), `2` — неверные аргументы (usage в stderr).
 - Время внутри — `i64` миллисекунды от unix epoch, наивное (без таймзон); длительности фиксированные (`w=7d`, `d=24h`).
 
