@@ -1,0 +1,95 @@
+// БВТ231, осень 2026 — живое расписание на рутинах (см. features/routines.md).
+// Неделя семестра от 2026-09-01: semester_day 0..6 — 1-я (нечётная).
+fun semester_day(at) = floordiv(at - mkdate(2026, 9, 1, 0, 0, 0, 0), DAY);
+fun my_week_number(at) = floordiv(semester_day(at), 7) + 1;
+pred odd_week(at) = my_week_number(at) % 2 == 1;
+pred even_week(at) = my_week_number(at) % 2 == 0;
+
+const BJD_LECTURE = {"name": "БЖД", "type": "лек", "teacher": "Беспалько Н.Е.", "room": "233/А"};
+const BJD_PRACTICE = {"name": "БЖД", "type": "прак", "teacher": "Семилетова В.А.", "room": "410/Д"};
+const BJD_LAB = {"name": "БЖД", "type": "лаб", "teacher": "Семилетова В.А.", "room": "404/Д"};
+const CAD_LECTURE = {"name": "САПР", "type": "лек", "teacher": "Конкина В.В.", "room": "160/Л"};
+const CAD_LAB = {"name": "САПР", "type": "лаб", "teacher": "Конкина В.В.", "room": "155/Л"};
+const MODEL_ANALYSIS_LAB = {"name": "Модели и методы анализа пр. реш.", "type": "лаб", "teacher": "Литовка Ю.В.", "room": "156/Л"};
+const MODEL_ANALYSIS_LECTURE = {"name": "Модели и методы анализа пр. реш.", "type": "лек", "teacher": "Литовка Ю.В.", "room": "158/Л"};
+const MOUNT_VC_LAB = {"name": "Монтаж и эксплуатация ВК", "type": "лаб", "teacher": "Волков А.А.", "room": "153/Л"};
+const MOUNT_VC_LECTURE = {"name": "Монтаж и эксплуатация ВК", "type": "лек", "teacher": "Волков А.А.", "room": "153/Л"};
+const MULTIMEDIA_LAB = {"name": "Мультимедийные технологии", "type": "лаб", "teacher": "Вехтева Н.А.", "room": "154/Л"};
+const MULTIMEDIA_LECTURE = {"name": "Мультимедийные технологии", "type": "лек", "teacher": "Вехтева Н.А.", "room": "156/Л"};
+const PROJECT_WORK_PRACTICE = {"name": "Проектная работа в профессиональной деят", "type": "прак", "teacher": "Пуха А.П.", "room": "153/Л"};
+const PROJECT_ACTIVITY = {"name": "Проектная деятельность", "type": "", "teacher": "", "room": ""};
+
+time_const UNIVERSITY_DAY duration = 21h35m {
+  1st: 9h;
+  2nd: 10h45m;
+  [workday(at)] lunch_start: 12h20m -> LUNCH();
+  3rd: 13h;
+  4th: 14h45m;
+  5th: 16h30m;
+  6th: 18h15m;
+  7th: 20h;
+}
+
+schedule "БВТ231 осень 2026" {
+  point BELL {
+    actions = [ring];
+  }
+
+  routine MONDAY(TC) {
+    [odd_week(at)]  1st: LESSON(BJD_LECTURE);
+    [odd_week(at)]  3rd: LESSON(CAD_LECTURE);
+    [even_week(at)] 1st: LESSON(BJD_LECTURE);
+    [even_week(at)] 2nd: LESSON(BJD_PRACTICE);
+    [even_week(at)] 3rd: LESSON(CAD_LECTURE);
+  }
+  routine TUESDAY(TC) {}
+  routine WEDNESDAY(TC) {
+    3rd: LESSON(PROJECT_WORK_PRACTICE);
+    4th: LESSON(PROJECT_ACTIVITY);
+  }
+  routine THURSDAY(TC) {
+    [odd_week(at)]  1st: LESSON(MOUNT_VC_LAB);
+    [odd_week(at)]  2nd: LESSON(MULTIMEDIA_LAB);
+    [odd_week(at)]  3rd: LESSON(MULTIMEDIA_LECTURE);
+    [odd_week(at)]  4th: LESSON(MULTIMEDIA_LECTURE);
+    [even_week(at)] 1st: LESSON(MOUNT_VC_LECTURE);
+    [even_week(at)] 2nd: LESSON(MULTIMEDIA_LAB);
+    [even_week(at)] 3rd: LESSON(BJD_LAB);
+  }
+  routine FRIDAY(TC) {
+    [odd_week(at)]  1st: LESSON(CAD_LAB);
+    [odd_week(at)]  2nd: LESSON(MODEL_ANALYSIS_LAB);
+    [odd_week(at)]  3rd: LESSON(MODEL_ANALYSIS_LECTURE);
+    [even_week(at)] 1st: LESSON(CAD_LAB);
+    [even_week(at)] 2nd: LESSON(MODEL_ANALYSIS_LAB);
+    [even_week(at)] 3rd: LESSON(MOUNT_VC_LAB);
+  }
+  routine SATURDAY(TC) {}
+
+  cycle LESSON(subj) duration = 1h35m {
+    0m: BELL.ring() {
+      subject = subj.name,
+      type = subj.type,
+      teacher = subj.teacher,
+      room = subj.room,
+      event = "start"
+    };
+    45m: BELL.ring() { subject = subj.name, event = "break" };
+    50m: BELL.ring() { subject = subj.name, event = "continue" };
+    1h35m: BELL.ring() { subject = subj.name, event = "end" };
+  }
+
+  cycle LUNCH duration = 40m {
+    0m: BELL.ring() { type = "lunch_start" };
+    40m: BELL.ring() { type = "lunch_end" };
+  }
+
+  root_cycle start_time = "2026-09-01T00:00:00", duration = 24h {
+    [day_of_week(at) == 1] 0h: MONDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 2] 0h: TUESDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 3] 0h: WEDNESDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 4] 0h: THURSDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 5] 0h: FRIDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 6] 0h: SATURDAY(UNIVERSITY_DAY);
+  }
+}
