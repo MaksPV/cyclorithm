@@ -49,6 +49,62 @@ pub fn parse_datetime(s: &str) -> Result<i64, Error> {
         + milli)
 }
 
+/// Разбор даты из аргументов CLI: короткие формы и относительные дельты.
+/// - `YYYY-MM-DD` → полночь, `YYYY-MM-DDTHH:MM` → нулевые секунды;
+/// - `+DURATION` (`1d`, `2h30m`, `1w2d3h4m5s6ms` — сумма компонент) →
+///   `anchor_ms` + длительность;
+/// - иначе — строгий `parse_datetime`.
+///
+/// Ошибка — E08 с исходным текстом.
+pub fn parse_cli_datetime(s: &str, anchor_ms: i64) -> Result<i64, Error> {
+    if let Some(rest) = s.strip_prefix('+') {
+        let delta = parse_cli_duration(rest).ok_or_else(|| Error::e08(s))?;
+        return anchor_ms.checked_add(delta).ok_or_else(|| Error::e08(s));
+    }
+    if s.len() == 10 {
+        return parse_datetime(&format!("{s}T00:00:00")).map_err(|_| Error::e08(s));
+    }
+    if s.len() == 16 {
+        return parse_datetime(&format!("{s}:00")).map_err(|_| Error::e08(s));
+    }
+    parse_datetime(s)
+}
+
+/// Длительность CLI: число + юнит (`w/d/h/m/s/ms`), компоненты суммируются.
+fn parse_cli_duration(s: &str) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut total: i128 = 0;
+    while i < b.len() {
+        let from = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if from == i || i >= b.len() {
+            return None;
+        }
+        let n: i128 = s[from..i].parse().ok()?;
+        let (mult, adv) = if s[i..].starts_with("ms") {
+            (1, 2)
+        } else {
+            match b[i] {
+                b'w' => (7 * 86_400_000, 1),
+                b'd' => (86_400_000, 1),
+                b'h' => (3_600_000, 1),
+                b'm' => (60_000, 1),
+                b's' => (1_000, 1),
+                _ => return None,
+            }
+        };
+        total += n * mult;
+        i += adv;
+    }
+    i64::try_from(total).ok()
+}
+
 /// Миллисекунды epoch обратно в наивную ISO-строку (см. §6 вывода).
 /// `.mmm` — только при ненулевых миллисекундах.
 pub fn format_datetime(ms: i64) -> String {
@@ -230,6 +286,34 @@ mod tests {
             "",
         ] {
             let err = bad(s);
+            assert_eq!(err.code, "E08", "для {s:?}");
+            assert_eq!(err.message, format!("invalid datetime '{s}'"), "для {s:?}");
+        }
+    }
+
+    #[test]
+    fn cli_shorthands_and_deltas() {
+        let base = ok("2026-09-07T10:00:00");
+        let cli = |s: &str| parse_cli_datetime(s, base).expect("дата обязана разбираться");
+        // Короткие формы.
+        assert_eq!(cli("2026-09-07"), ok("2026-09-07T00:00:00"));
+        assert_eq!(cli("2026-09-07T09:30"), ok("2026-09-07T09:30:00"));
+        assert_eq!(cli("2026-09-07T09:30:00"), base - 30 * 60_000);
+        // Дельты от якоря.
+        assert_eq!(cli("+1d"), base + 86_400_000);
+        assert_eq!(cli("+2h30m"), base + 9_000_000);
+        assert_eq!(cli("+1w2d3h4m5s6ms"), base + 788_645_006);
+        assert_eq!(cli("+0d"), base);
+        // Битые — E08 с исходным текстом.
+        for s in [
+            "2026-09-07T09",
+            "+1x",
+            "+",
+            "+1d2",
+            "2026-13-40",
+            "+999999999999999999999d",
+        ] {
+            let err = parse_cli_datetime(s, base).expect_err("ожидалась E08");
             assert_eq!(err.code, "E08", "для {s:?}");
             assert_eq!(err.message, format!("invalid datetime '{s}'"), "для {s:?}");
         }
