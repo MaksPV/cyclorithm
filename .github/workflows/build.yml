@@ -42,11 +42,21 @@ jobs:
       - name: smoke test
         shell: bash
         run: ./target/${{ matrix.target }}/release/${{ matrix.bin }} run examples/valid/route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00 > /dev/null
+      - name: package
+        # Архив с триплетом в имени: голые `cyclo`/`cyclo.exe` с разных
+        # архитектур затирали друг друга в релизе (basename-коллизия).
+        shell: bash
+        run: |
+          VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          NAME="cyclo-$VER-${{ matrix.target }}"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/$NAME/"
+          tar -czf "dist/$NAME.tar.gz" -C dist "$NAME"
       - name: upload
         uses: actions/upload-artifact@v5
         with:
           name: cyclo-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/${{ matrix.bin }}
+          path: dist/cyclo-*.tar.gz
           if-no-files-found: error
 
   # Только на тегах v*: прикладывает 4 бинарника к GitHub Release.
@@ -65,5 +75,5 @@ jobs:
         run: ls -R dist
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/cyclo-*/*
+          files: dist/cyclo-*/*.tar.gz
           generate_release_notes: true

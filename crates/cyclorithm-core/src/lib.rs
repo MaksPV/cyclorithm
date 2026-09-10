@@ -1,4 +1,4 @@
-//! Core logic for Cyclorithm: validation (E01–E09), lattice expansion,
+//! Core logic for Cyclorithm: validation (E01–E16), lattice expansion,
 //! ordering `(time, k, declaration order)`.
 
 use std::fmt;
@@ -8,17 +8,18 @@ pub mod datetime;
 pub mod duration;
 pub mod expand;
 pub mod imports;
+pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
-// Ошибка валидации: коды E01–E09 из §5 спеки.
+// Ошибка валидации: коды E01–E16 из §5 спеки.
 // Печатается только `message` (примеры из таблицы спеки — без префикса кода).
 // ---------------------------------------------------------------------------
 
 /// Ошибка валидации уже разобранного AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    /// Код из §5 (`"E01"`–`"E09"`).
+    /// Код из §5 (`"E01"`–`"E16"`).
     pub code: &'static str,
     /// Текст для stderr, дословно по таблице §5.
     pub message: String,
@@ -73,9 +74,35 @@ impl Error {
         Self::coded("E09", format!("cycle '{name}' is not a point"))
     }
 
+    /// E09: `point 'X' is not a routine` (точку вызвали с таблицей).
+    pub fn e09_not_routine(name: &str) -> Self {
+        Self::coded("E09", format!("point '{name}' is not a routine"))
+    }
+
+    /// E09: `routine 'X' is not a point` (рутину вызвали как точку).
+    pub fn e09_routine_not_point(name: &str) -> Self {
+        Self::coded("E09", format!("routine '{name}' is not a point"))
+    }
+
+    /// E09: `routine 'X' is not a cycle` (имя занято и рутиной, и циклом).
+    pub fn e09_routine_not_cycle(name: &str) -> Self {
+        Self::coded("E09", format!("routine '{name}' is not a cycle"))
+    }
+
     /// E06: `recursive cycle 'A'`.
     pub fn e06(name: &str) -> Self {
         Self::coded("E06", format!("recursive cycle '{name}'"))
+    }
+
+    /// E06: рекурсия через рутину — `recursive routine 'M'`.
+    pub fn e06_routine(name: &str) -> Self {
+        Self::coded("E06", format!("recursive routine '{name}'"))
+    }
+
+    /// E06: рекурсия через таблицу — `recursive table 'T'`
+    /// (пожар `->` инстанцирует рутину с той же таблицей).
+    pub fn e06_table(name: &str) -> Self {
+        Self::coded("E06", format!("recursive table '{name}'"))
     }
 
     /// E07: `cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)`.
@@ -151,6 +178,11 @@ impl Error {
         Self::coded("E12", format!("wrong arguments for '{name}'"))
     }
 
+    /// E12: у рутины нет табличного параметра (`params[0]` — таблица).
+    pub fn e12_no_table_param(name: &str) -> Self {
+        Self::coded("E12", format!("routine '{name}' has no table parameter"))
+    }
+
     /// E12: деление на ноль в условии.
     pub fn e12_divzero() -> Self {
         Self::coded("E12", "division by zero".to_owned())
@@ -176,6 +208,28 @@ impl Error {
         Self::coded("E12", format!("invalid date '{raw}'"))
     }
 
+    /// E15: `duplicate attribute 'a'` (дубль ключа в литерале мапы
+    /// или в блоке действий).
+    pub fn e15(name: &str) -> Self {
+        Self::coded("E15", format!("duplicate attribute '{name}'"))
+    }
+
+    /// E12: доступ к отсутствующему полю (`subj.name`), к полю не-мапы
+    /// и индекс не-массива — всё `unknown field 'name'`.
+    pub fn e12_field(name: &str) -> Self {
+        Self::coded("E12", format!("unknown field '{name}'"))
+    }
+
+    /// E12: индекс за границами массива (`tags[5]`, отрицательный `tags[-1]`).
+    pub fn e12_index(raw: &str) -> Self {
+        Self::coded("E12", format!("index out of bounds '{raw}'"))
+    }
+
+    /// E12: сравнение мап/массивов (`==`/`!=` между ними — «пока», см. черновик).
+    pub fn e12_map_cmp() -> Self {
+        Self::coded("E12", "cannot compare maps or arrays".to_owned())
+    }
+
     /// E13: импорт не читается.
     pub fn e13_read(path: &str) -> Self {
         Self::coded("E13", format!("cannot read import '{path}'"))
@@ -189,6 +243,21 @@ impl Error {
     /// E14: расписание внутри импорта.
     pub fn e14_schedule(path: &str) -> Self {
         Self::coded("E14", format!("schedule not allowed in import '{path}'"))
+    }
+
+    /// E16: `unknown table 'SHORT'` — таблицы с таким именем нет.
+    pub fn e16_table(name: &str) -> Self {
+        Self::coded("E16", format!("unknown table '{name}'"))
+    }
+
+    /// E16: `unknown slot '8th'` — метки нет в таблице вызова.
+    pub fn e16_slot(label: &str) -> Self {
+        Self::coded("E16", format!("unknown slot '{label}'"))
+    }
+
+    /// E16: первый аргумент вызова рутины — не имя таблицы.
+    pub fn e16_table_arg(name: &str) -> Self {
+        Self::coded("E16", format!("invalid table argument for '{name}'"))
     }
 }
 

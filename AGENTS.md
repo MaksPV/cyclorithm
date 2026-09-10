@@ -18,7 +18,7 @@
 
 ## Карта модулей (Cargo workspace, edition 2021)
 - `crates/cyclorithm-parser` — грамматика (`grammar.pest`) + AST (`lib.rs`: `SourceFile`, `Decl`, `Cond`/`Expr`, фикстура `route_ast`). Решено: парсер на `pest` (EBNF из §3 спеки ложится почти 1:1).
-- `crates/cyclorithm-core` — `validate.rs` (коды `E01–E14` из §5), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::eNN_*`).
+- `crates/cyclorithm-core` — `validate.rs` (коды `E01–E16` из §5), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::eNN_*`).
 - `crates/cyclorithm-cli` — бинарь `cyclo` (`run`): читает файл + `use` через `dir_fs` от директории файла; контракт CLI в §1 спеки. Exit-коды: `0` — успех, `1` — ввод/парсинг/валидация (текст в stderr, в stdout ничего), `2` — неверные аргументы (usage в stderr).
 - Время внутри — `i64` миллисекунды от unix epoch, наивное (без таймзон); длительности фиксированные (`w=7d`, `d=24h`).
 
@@ -35,9 +35,10 @@
 - Термины §2 — обновлять вместе с фичей (условие, `at`, объявление, `use`, повтор — уже там).
 
 ## Git и CI
-- Рабочая ветка — `dev` (`main` — стабильная, строгий предок; вливание — fast-forward или merge-PR). PR создавать с `base=dev`.
-- Коммиты и пуши делает **только владелец** — не коммитить/пушить без прямой просьбы.
+- Рабочая ветка — `dev` (`main` — стабильная, строгий предок; вливание — fast-forward или merge-PR). PR создавать с `base=dev` через `gh` (авторизация владельца уже настроена).
+- Коммиты — по ходу работы, мелкими (владелец любит много коммитов на ветку); пуш и PR (`gh pr create`) — по просьбе («делай», «погнал», «коммит, пуш» и т.п.); мерж PR (`gh pr merge --merge`) — только по явному «чтобы в dev всё было» (дождаться зелёного CI: `gh pr checks`), удаление веток после мержа — не трогать без просьбы.
 - Сообщения коммитов — на русском, по содержимому (примеры в `git log`), с суффиксом `, Muse Spark`.
+- Терминал неинтерактивный: `git rebase --continue` и подобные — только с `GIT_EDITOR=true` (иначе открывается vim и всё виснет); правку среднего коммита — через `commit --fixup` + `rebase -i --autosquash` с `GIT_SEQUENCE_EDITOR=true`.
 - Заглушки — генеральные (`placeholder()`), не проектировать методы/типы вперёд спеки. Проверено на опыте: преждевременные `Event`/`parse()` пришлось откатывать.
 - Проверки после правок: `cargo test --workspace` (зелёный), `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets` (без предупреждений). То же гоняет CI (`.github/workflows/ci.yml`: fmt → clippy `-D warnings` → test, на push/PR в `main`/`dev`).
 

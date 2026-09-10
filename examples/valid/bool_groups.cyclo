@@ -1,0 +1,14 @@
+schedule "bool_groups" {
+  point P {
+    actions = [g_or, g_and_or, g_not, g_bridge, g_nested];
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    [(hour(at) == 6 or hour(at) == 18)] 6h: P.g_or();
+    [((hour(at) == 6))] 6h: P.g_nested();
+    [(hour(at) == 6 or hour(at) == 7) and hour(at) == 7] 7h: P.g_and_or();
+    [not (hour(at) == 6 or hour(at) == 18)] 9h: P.g_not();
+    [(hour(at) == 6 or hour(at) == 18)] 18h: P.g_or();
+    [2 * (hour(at) == 6 or hour(at) == 18) == 2] 18h: P.g_bridge();
+  }
+}

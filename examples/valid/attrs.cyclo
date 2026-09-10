@@ -1,0 +1,27 @@
+const LEC = {"subject": "БЖД", "type": "лек", "room": "233/А", "tags": ["поток"]};
+const PR = {"subject": "БЖД", "type": "прак", "room": "410/Д", "tags": []};
+const CORPUS = {"building": "Л", "floors": 5};
+
+schedule "Атрибуты" {
+  point BELL {
+    actions = [ring];
+    attrs = CORPUS;
+  }
+
+  point PLAIN {
+    actions = [tick];
+  }
+
+  cycle LESSON(subj) duration = 1h35m {
+    0m: BELL.ring() { subject = subj.subject, type = subj.type, room = subj.room, event = "start" };
+    45m: BELL.ring() { subject = subj.subject, event = "break" };
+    50m: BELL.ring() { subject = subj.subject, event = "continue" };
+    [subj.type == "лек"] 55m: PLAIN.tick() { subject = subj.subject };
+    1h35m: BELL.ring() { subject = subj.subject, event = "end" };
+  }
+
+  root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
+    9h: LESSON(LEC);
+    13h: LESSON(PR);
+  }
+}

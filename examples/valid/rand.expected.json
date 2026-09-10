@@ -1,0 +1,21 @@
+{
+  "schedule": "rand",
+  "start": "2026-01-01T00:00:00",
+  "end": "2026-01-01T01:00:00",
+  "events": [
+    {"time": "2026-01-01T00:00:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:05:00", "action": "heads", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:05:00", "action": "rare", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:10:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:15:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:20:00", "action": "heads", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:25:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:30:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:35:00", "action": "heads", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:35:00", "action": "rare", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:40:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:45:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:50:00", "action": "tails", "point": "P", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T00:55:00", "action": "grouped", "point": "P", "point_attrs": {}, "action_attrs": {}}
+  ]
+}

@@ -4,11 +4,11 @@
 //! - любая ошибка ввода/валидации → текст в stderr, в stdout ничего, код 1;
 //! - неверные аргументы → usage в stderr, код 2.
 
-use cyclorithm_core::cond::{check_conditions, resolve_units};
+use cyclorithm_core::cond::{check_conditions, resolve_units, Value};
 use cyclorithm_core::datetime::{format_datetime, parse_datetime};
 use cyclorithm_core::expand::expand;
 use cyclorithm_core::imports::collect_units;
-use cyclorithm_core::validate::{check_bounds, check_recursion, validate_names};
+use cyclorithm_core::validate::{check_bounds, check_recursion, check_tables, validate_names};
 
 fn main() {
     std::process::exit(run());
@@ -55,17 +55,18 @@ fn run() -> i32 {
         }
     };
     groups.push(src.decls.clone());
-    let defs = match resolve_units(&groups) {
+    let (defs, reg) = match resolve_units(&groups) {
         Ok(defs) => defs,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let tables = match validate_names(ast)
+    let tables = match validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
-        .and_then(|t| check_conditions(ast, &defs).map(|()| t))
+        .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
     {
         Ok(t) => t,
         Err(e) => {
@@ -105,11 +106,33 @@ fn run() -> i32 {
                 "time": format_datetime(e.time),
                 "action": e.action,
                 "point": e.point,
+                "point_attrs": attrs_json(&e.point_attrs),
+                "action_attrs": attrs_json(&e.action_attrs),
             }))
             .collect::<Vec<_>>(),
     });
     println!("{out}");
     0
+}
+
+/// Словарь атрибутов в JSON-объект (порядок ключей — порядок объявления:
+/// `preserve_order` в `Cargo.toml` сохраняет порядок вставки).
+fn attrs_json(pairs: &[(String, Value)]) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    for (k, v) in pairs {
+        m.insert(k.clone(), value_json(v));
+    }
+    serde_json::Value::Object(m)
+}
+
+fn value_json(v: &Value) -> serde_json::Value {
+    match v {
+        Value::Num(n) => (*n).into(),
+        Value::Str(s) => s.clone().into(),
+        Value::Bool(b) => (*b).into(),
+        Value::Map(pairs) => attrs_json(pairs),
+        Value::Array(xs) => xs.iter().map(value_json).collect(),
+    }
 }
 
 /// `cyclo run FILE --start T --end T`; `--start`/`--end` в любом порядке.

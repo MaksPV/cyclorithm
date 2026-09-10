@@ -55,6 +55,74 @@ fn neg_offsets_matches_expected_json() {
 }
 
 #[test]
+fn bitwise_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/bitwise.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-01T01:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/bitwise.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn bool_groups_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/bool_groups.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/bool_groups.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn rand_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/rand.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-01T01:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/rand.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn mkdate_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/mkdate.cyclo",
+        "--start",
+        "2026-09-01T00:00:00",
+        "--end",
+        "2026-10-01T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/mkdate.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn repeat_matches_expected_json() {
     let out = run(&[
         "run",
@@ -83,6 +151,43 @@ fn conditions_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/conditions.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn attrs_matches_expected_json() {
+    // Словари точек и блоков: 9 событий, tick только у лекции.
+    let out = run(&[
+        "run",
+        "../../examples/valid/attrs.cyclo",
+        "--start",
+        "2026-09-07T00:00:00",
+        "--end",
+        "2026-09-08T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/attrs.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn routines_matches_expected_json() {
+    // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
+    // суббота — тишина (пустая рутина, обед только по будням).
+    let out = run(&[
+        "run",
+        "../../examples/valid/routines.cyclo",
+        "--start",
+        "2026-09-07T00:00:00",
+        "--end",
+        "2026-09-14T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/routines.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -161,6 +266,9 @@ fn validation_errors_go_to_stderr() {
         ("bad_e12_div", "division by zero"),
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
+        ("bad_e15", "duplicate attribute 'a'"),
+        ("bad_e16", "unknown table 'SHORT'"),
+        ("bad_e16_slot", "unknown slot '8th'"),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[

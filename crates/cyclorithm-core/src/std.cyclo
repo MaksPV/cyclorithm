@@ -24,6 +24,14 @@ fun __mp(t) = (5 * __doy(t) + 2) / 153;
 fun day(t) = __doy(t) - (153 * __mp(t) + 2) / 5 + 1;
 fun month(t) = __mp(t) + 3 - 12 * (__mp(t) >= 10);
 fun year(t) = __y(t) + (month(t) <= 2);
+fun quarter(t) = floordiv(month(t) - 1, 3) + 1;
+fun start_of_day(t) = t - day_millis(t);
+fun start_of_month(t) = t - (day(t) - 1) * DAY - day_millis(t);
+
+// Високосность — мостиком truth (1/0): первое боевое `and`/`or` в прелюдии.
+fun is_leap(t) = (year(t) % 4 == 0 and (year(t) % 100 != 0 or year(t) % 400 == 0));
+fun days_in_month(t) = 31 - (month(t) == 4 or month(t) == 6 or month(t) == 9 or month(t) == 11)
+  - (month(t) == 2) * (3 - is_leap(t));
 
 // Строковые формы (для сравнений дат, см. §7).
 fun datestr(t) = pad(year(t), 4) ++ "-" ++ pad(month(t), 2) ++ "-" ++ pad(day(t), 2);
@@ -40,6 +48,11 @@ const sat = 5;
 const sun = 6;
 
 pred weekend(at) = dow(at) == (sat or sun);
+pred workday(at) = dow(at) < 5;
+
+// День недели 1..7 (Mon=1 … Sun=7) — для выбора рутины в корне;
+// `dow` (0..6) не трогаем.
+fun day_of_week(t) = floormod(days(t) + 3, 7) + 1;
 
 pred night(at) = hour(at) >= 22 or hour(at) < 6;
 pred morning(at) = hour(at) >= 6 and hour(at) < 12;
@@ -50,3 +63,13 @@ pred spring(at) = month(at) == (3 or 4 or 5);
 pred summer(at) = month(at) == (6 or 7 or 8);
 pred autumn(at) = month(at) == (9 or 10 or 11);
 pred winter(at) = month(at) == (12 or 1 or 2);
+
+// Детерминированный ГСЧ: xorshift32 (13/17/5) от младших 32 бит времени.
+// Только wrap-операции (`&`, `^`, `<<`, логический `>>`): `E12` невозможен
+// по построению. Нулевой сид (t кратно 2^32 мс) даёт 0 — как у xorshift.
+fun __rands(t) = t & 4294967295;
+fun __rand1(t) = __rands(t) ^ ((__rands(t) << 13) & 4294967295);
+fun __rand2(t) = __rand1(t) ^ (__rand1(t) >> 17);
+fun __rand3(t) = __rand2(t) ^ ((__rand2(t) << 5) & 4294967295);
+// 0..9999: смещение от деления 2^32 на 10000 пренебрежимо (~2e-7).
+fun rand(t) = floormod(__rand3(t), 10000);

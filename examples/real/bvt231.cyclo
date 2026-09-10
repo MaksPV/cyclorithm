@@ -1,0 +1,191 @@
+// БВТ231, осень 2026 — живое расписание на рутинах (см. features/routines.md).
+// Неделя семестра от 2026-09-01: semester_day 0..6 — 1-я (нечётная).
+// Учёба — только в семестре (2026-09-01 — 2026-12-22 включительно),
+// госпраздники — выходные.
+fun semester_day(at) = floordiv(at - mkdate(2026, 9, 1, 0, 0, 0, 0), DAY);
+fun my_week_number(at) = floordiv(semester_day(at), 7) + 1;
+pred odd_week(at) = my_week_number(at) % 2 == 1;
+pred even_week(at) = my_week_number(at) % 2 == 0;
+
+pred semester(at) = at >= "2026-09-01" and at < "2026-12-23";
+// Нерабочие праздничные дни 2026 (ст. 112 ТК РФ + переносы: 9 марта, 11 мая).
+pred holiday(at) = datestr(at) == ("2026-01-01" or "2026-01-02" or "2026-01-03"
+  or "2026-01-04" or "2026-01-05" or "2026-01-06" or "2026-01-07" or "2026-01-08"
+  or "2026-02-23" or "2026-03-08" or "2026-03-09" or "2026-05-01"
+  or "2026-05-09" or "2026-05-11" or "2026-06-12" or "2026-11-04");
+pred study_day(at) = semester(at) and not holiday(at);
+
+time_const UNIVERSITY_DAY duration = 21h35m {
+  1st: 9h;
+  2nd: 10h45m;
+  [workday(at)] lunch_start: 12h20m -> LUNCH();
+  3rd: 13h;
+  4th: 14h45m;
+  5th: 16h30m;
+  6th: 18h15m;
+  7th: 20h;
+}
+
+schedule "БВТ231 осень 2026" {
+  point BELL {
+    actions = [ring];
+  }
+
+  routine MONDAY(TC) {
+    [odd_week(at)]  1st: LESSON({
+      "name": "БЖД",
+      "type": "лек",
+      "teacher": "Беспалько Н.Е.",
+      "room": "233/А"
+    });
+    [odd_week(at)]  3rd: LESSON({
+      "name": "САПР",
+      "type": "лек",
+      "teacher": "Конкина В.В.",
+      "room": "160/Л"
+    });
+    [even_week(at)] 1st: LESSON({
+      "name": "БЖД",
+      "type": "лек",
+      "teacher": "Беспалько Н.Е.",
+      "room": "233/А"
+    });
+    [even_week(at)] 2nd: LESSON({
+      "name": "БЖД",
+      "type": "прак",
+      "teacher": "Семилетова В.А.",
+      "room": "410/Д"
+    });
+    [even_week(at)] 3rd: LESSON({
+      "name": "САПР",
+      "type": "лек",
+      "teacher": "Конкина В.В.",
+      "room": "160/Л"
+    });
+  }
+  routine TUESDAY(TC) {}
+  routine WEDNESDAY(TC) {
+    3rd: LESSON({
+      "name": "Проектная работа в профессиональной деят",
+      "type": "прак",
+      "teacher": "Пуха А.П.",
+      "room": "153/Л"
+    });
+    4th: LESSON({
+      "name": "Проектная деятельность",
+      "type": "",
+      "teacher": "",
+      "room": ""
+    });
+  }
+  routine THURSDAY(TC) {
+    [odd_week(at)]  1st: LESSON({
+      "name": "Монтаж и эксплуатация ВК",
+      "type": "лаб",
+      "teacher": "Волков А.А.",
+      "room": "153/Л"
+    });
+    [odd_week(at)]  2nd: LESSON({
+      "name": "Мультимедийные технологии",
+      "type": "лаб",
+      "teacher": "Вехтева Н.А.",
+      "room": "154/Л"
+    });
+    [odd_week(at)]  3rd: LESSON({
+      "name": "Мультимедийные технологии",
+      "type": "лек",
+      "teacher": "Вехтева Н.А.",
+      "room": "156/Л"
+    });
+    [odd_week(at)]  4th: LESSON({
+      "name": "Мультимедийные технологии",
+      "type": "лек",
+      "teacher": "Вехтева Н.А.",
+      "room": "156/Л"
+    });
+    [even_week(at)] 1st: LESSON({
+      "name": "Монтаж и эксплуатация ВК",
+      "type": "лек",
+      "teacher": "Волков А.А.",
+      "room": "153/Л"
+    });
+    [even_week(at)] 2nd: LESSON({
+      "name": "Мультимедийные технологии",
+      "type": "лаб",
+      "teacher": "Вехтева Н.А.",
+      "room": "154/Л"
+    });
+    [even_week(at)] 3rd: LESSON({
+      "name": "БЖД",
+      "type": "лаб",
+      "teacher": "Семилетова В.А.",
+      "room": "404/Д"
+    });
+  }
+  routine FRIDAY(TC) {
+    [odd_week(at)]  1st: LESSON({
+      "name": "САПР",
+      "type": "лаб",
+      "teacher": "Конкина В.В.",
+      "room": "155/Л"
+    });
+    [odd_week(at)]  2nd: LESSON({
+      "name": "Модели и методы анализа пр. реш.",
+      "type": "лаб",
+      "teacher": "Литовка Ю.В.",
+      "room": "156/Л"
+    });
+    [odd_week(at)]  3rd: LESSON({
+      "name": "Модели и методы анализа пр. реш.",
+      "type": "лек",
+      "teacher": "Литовка Ю.В.",
+      "room": "158/Л"
+    });
+    [even_week(at)] 1st: LESSON({
+      "name": "САПР",
+      "type": "лаб",
+      "teacher": "Конкина В.В.",
+      "room": "155/Л"
+    });
+    [even_week(at)] 2nd: LESSON({
+      "name": "Модели и методы анализа пр. реш.",
+      "type": "лаб",
+      "teacher": "Литовка Ю.В.",
+      "room": "156/Л"
+    });
+    [even_week(at)] 3rd: LESSON({
+      "name": "Монтаж и эксплуатация ВК",
+      "type": "лаб",
+      "teacher": "Волков А.А.",
+      "room": "153/Л"
+    });
+  }
+  routine SATURDAY(TC) {}
+
+  cycle LESSON(subj) duration = 1h35m {
+    0m: BELL.ring() {
+      subject = subj.name,
+      type = subj.type,
+      teacher = subj.teacher,
+      room = subj.room,
+      event = "start"
+    };
+    45m: BELL.ring() { subject = subj.name, event = "break" };
+    50m: BELL.ring() { subject = subj.name, event = "continue" };
+    1h35m: BELL.ring() { subject = subj.name, event = "end" };
+  }
+
+  cycle LUNCH duration = 40m {
+    0m: BELL.ring() { type = "lunch_start" };
+    40m: BELL.ring() { type = "lunch_end" };
+  }
+
+  root_cycle start_time = "2026-09-01T00:00:00", duration = 24h {
+    [day_of_week(at) == 1 and study_day(at)] 0h: MONDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 2 and study_day(at)] 0h: TUESDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 3 and study_day(at)] 0h: WEDNESDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 4 and study_day(at)] 0h: THURSDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 5 and study_day(at)] 0h: FRIDAY(UNIVERSITY_DAY);
+    [day_of_week(at) == 6 and study_day(at)] 0h: SATURDAY(UNIVERSITY_DAY);
+  }
+}

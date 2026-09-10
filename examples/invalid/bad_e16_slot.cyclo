@@ -1,0 +1,15 @@
+time_const DAY duration = 24h {
+  1st: 9h;
+}
+
+schedule "T" {
+  point A { actions = [x]; }
+
+  routine M(TC) {
+    8th: A.x();
+  }
+
+  root_cycle start_time = "2026-01-10T00:00:00", duration = 24h {
+    0h: M(DAY);
+  }
+}
