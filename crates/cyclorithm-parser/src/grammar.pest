@@ -23,9 +23,15 @@ pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
 // Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
 // Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
 decl_value  = { concat | bitor }
-point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ "}" }
+point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
-cycle       = { "cycle" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Атрибуты точки (§3 спеки): только литерал или ссылка на константу-мапу,
+// строк `k = v;` нет. Дубли ключей ловит валидация (E15), не синтаксис.
+point_attrs = { "attrs" ~ "=" ~ attrs_src ~ ";" }
+attrs_src   = { map_lit | IDENT }
+cycle       = { "cycle" ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (E04).
+cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
 // Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
@@ -62,12 +68,38 @@ arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { neg_sign? ~ (number | string | call | IDENT | truth | "(" ~ bitor ~ ")") }
+factor      = { neg_sign? ~ (postfix | "(" ~ bitor ~ ")") }
 // Мостик булева в арифметику (как в C: истина — 1, ложь — 0):
 // внутри скобок полное условие, а не одно сравнение.
 truth       = { "(" ~ or_expr ~ ")" }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
-concat_term = { number | string | call | IDENT | "(" ~ concat ~ ")" }
+concat_term = { postfix | "(" ~ concat ~ ")" }
+// Постфикс (§3): доступ к полю мапы (`.name`, цепочки) и индекс массива
+// (`[0]`). `BELL.ring()` остаётся вызовом: различие по скобке —
+// `IDENT.IDENT(` разбирает `point_action` на уровне строк, а не выражение.
+// Вычисляемых ключей нет: в скобках только целочисленный литерал
+// (минус пишется слитно, как у смещений; `-1` даст E12 в момент строки).
+postfix     = { postfix_base ~ postfix_suffix* }
+// Порядок как у операндов: `call` раньше `bool_lit`, иначе `true(x)`
+// режется на литерал + мусор; `bool_lit` раньше `IDENT`, иначе `true`
+// читается именем. `truth` раньше скобок — как было в `factor`.
+postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | truth | "(" ~ bitor ~ ")" }
+postfix_suffix = { field_access | index_access }
+field_access = { "." ~ IDENT }
+// Атомарное: пробелы внутри скобок запрещены (`m[0]` ок, `m[ 0]` — ошибка),
+// минус пишется слитно (`m[-1]`).
+index_access = @{ "[" ~ "-"? ~ ASCII_DIGIT+ ~ "]" }
+// JSON-литералы (§3): содержимое — только литералы (чистые данные,
+// без вычислений). Висячих запятых нет (строго, как везде).
+map_lit     = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ "}" }
+// Ключ — отдельное правило (не `string`): атомарное строковое правило
+// пары не даёт, а ключ нужен сборке отдельно от значения.
+map_pair    = { map_key ~ ":" ~ literal_value }
+map_key     = ${ "\"" ~ string_char* ~ "\"" }
+array_lit   = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
+literal_value = { number | string | bool_lit | map_lit | array_lit }
+// Атомарное с границей слова: `truex` — имя, а не литерал + мусор.
+bool_lit    = @{ ("true" | "false") ~ !word_tail }
 call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 cond_arg    = { concat | bitor }
 // Тело строки: сначала пробуем модификатор + вызов, иначе голый вызов.
@@ -82,8 +114,12 @@ fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
 invocation  = { point_action | cycle_call }
-point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" }
-cycle_call   = { IDENT ~ "(" ~ ")" }
+// Блок действий (§3): только у вызова точки; у цикла после `)` блока нет
+// (иначе синтаксис). Ключи — IDENT, значения — выражения уровня условий.
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ action_block? }
+action_block = { "{" ~ (block_pair ~ ("," ~ block_pair)*)? ~ "}" }
+block_pair   = { IDENT ~ "=" ~ cond_arg }
+cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 duration     = { duration_item+ }
 // Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),
 // между компонентами разрешены (`1h 20m` ок).

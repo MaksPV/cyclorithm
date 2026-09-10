@@ -185,16 +185,47 @@ fn build_point(pair: Pair<Rule>) -> Point {
         .into_inner()
         .map(|a| a.as_str().to_owned())
         .collect();
-    Point { name, actions }
+    let attrs = inner.next().map(|p| {
+        debug_assert_eq!(p.as_rule(), Rule::point_attrs);
+        let src = p
+            .into_inner()
+            .next()
+            .expect("point_attrs: источник")
+            .into_inner()
+            .next()
+            .expect("attrs_src: содержимое");
+        match src.as_rule() {
+            Rule::map_lit => build_map_lit(src),
+            Rule::IDENT => Expr::Name(src.as_str().to_owned()),
+            r => unreachable!("attrs_src: неожиданное правило {r:?}"),
+        }
+    });
+    Point {
+        name,
+        actions,
+        attrs,
+    }
 }
 
 fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
-    let duration = build_duration(inner.next().expect("cycle: duration"));
+    let mut next = inner.next().expect("cycle: параметры или duration");
+    let params = if next.as_rule() == Rule::cycle_params {
+        let ps = next
+            .into_inner()
+            .map(|p| p.as_str().to_owned())
+            .collect();
+        next = inner.next().expect("cycle: duration");
+        ps
+    } else {
+        Vec::new()
+    };
+    let duration = build_duration(next);
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
     Ok(Cycle {
         name,
+        params,
         duration,
         stmts,
     })
@@ -260,19 +291,39 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     let invocation = match call.as_rule() {
         Rule::point_action => {
             let mut parts = call.into_inner();
+            let point = parts.next().expect("вызов: точка").as_str().to_owned();
+            let action = parts.next().expect("вызов: действие").as_str().to_owned();
+            let block = parts
+                .next()
+                .map(|b| {
+                    debug_assert_eq!(b.as_rule(), Rule::action_block);
+                    b.into_inner().map(|p| {
+                        debug_assert_eq!(p.as_rule(), Rule::block_pair);
+                        let mut kv = p.into_inner();
+                        let key = kv.next().expect("block_pair: ключ").as_str().to_owned();
+                        let value =
+                            build_call_arg(kv.next().expect("block_pair: значение"));
+                        (key, value)
+                    })
+                })
+                .map(|it| it.collect::<Vec<_>>())
+                .unwrap_or_default();
             Invocation::PointAction {
-                point: parts.next().expect("вызов: точка").as_str().to_owned(),
-                action: parts.next().expect("вызов: действие").as_str().to_owned(),
+                point,
+                action,
+                block,
             }
         }
-        Rule::cycle_call => Invocation::CycleCall {
-            name: call
-                .into_inner()
+        Rule::cycle_call => {
+            let mut parts = call.into_inner();
+            let name = parts
                 .next()
                 .expect("вызов: цикл")
                 .as_str()
-                .to_owned(),
-        },
+                .to_owned();
+            let args = parts.map(build_call_arg).collect();
+            Invocation::CycleCall { name, args }
+        }
         r => unreachable!("stmt: неожиданный вызов {r:?}"),
     };
     Ok(Stmt {
@@ -400,7 +451,12 @@ fn build_operand(pair: Pair<Rule>) -> Expr {
 
 fn build_concat_term(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::concat_term);
-    build_value(pair.into_inner().next().expect("concat_term: значение"))
+    let inner = pair.into_inner().next().expect("concat_term: значение");
+    match inner.as_rule() {
+        Rule::postfix => build_postfix(inner),
+        Rule::concat => Expr::Concat(inner.into_inner().map(build_concat_term).collect()),
+        r => unreachable!("concat_term: неожиданное правило {r:?}"),
+    }
 }
 
 fn build_arith(pair: Pair<Rule>) -> Expr {
@@ -519,7 +575,11 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     } else {
         (false, first)
     };
-    let expr = build_value(value);
+    let expr = match value.as_rule() {
+        Rule::postfix => build_postfix(value),
+        Rule::bitor => build_bitor(value),
+        r => unreachable!("factor: неожиданное правило {r:?}"),
+    };
     if negated {
         Expr::Neg(Box::new(expr))
     } else {
@@ -527,15 +587,57 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     }
 }
 
-/// Лист выражения: число, строка, вызов, имя (`at` — значение, остальное
-/// проверит ядро) или скобки.
-fn build_value(pair: Pair<Rule>) -> Expr {
+/// Постфикс (§3 спеки): база и цепочка `.поле` / `[n]`, свёртка слева.
+fn build_postfix(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::postfix);
+    let mut inner = pair.into_inner();
+    let mut acc = build_postfix_base(inner.next().expect("postfix: база"));
+    for wrapper in inner {
+        debug_assert_eq!(wrapper.as_rule(), Rule::postfix_suffix);
+        let suffix = wrapper
+            .into_inner()
+            .next()
+            .expect("postfix_suffix: содержимое");
+        match suffix.as_rule() {
+            Rule::field_access => {
+                let field = suffix
+                    .into_inner()
+                    .next()
+                    .expect("field_access: имя")
+                    .as_str()
+                    .to_owned();
+                acc = Expr::Field {
+                    base: Box::new(acc),
+                    field,
+                };
+            }
+            Rule::index_access => {
+                let text = suffix.as_str();
+                let index = text[1..text.len() - 1].to_owned();
+                acc = Expr::Index {
+                    base: Box::new(acc),
+                    index,
+                };
+            }
+            r => unreachable!("postfix: неожиданный суффикс {r:?}"),
+        }
+    }
+    acc
+}
+
+/// База постфикса: прежние листья `factor` плюс JSON-литералы и `true`/`false`.
+fn build_postfix_base(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::postfix_base);
+    let pair = pair.into_inner().next().expect("postfix_base: содержимое");
     match pair.as_rule() {
         Rule::number => Expr::Num(pair.as_str().to_owned()),
         Rule::string => {
             let s = pair.as_str();
             Expr::Str(s[1..s.len() - 1].to_owned())
         }
+        Rule::bool_lit => Expr::Bool(pair.as_str() == "true"),
+        Rule::map_lit => build_map_lit(pair),
+        Rule::array_lit => build_array_lit(pair),
         Rule::call => {
             let (name, args) = build_call_parts(pair);
             Expr::Call { name, args }
@@ -547,14 +649,50 @@ fn build_value(pair: Pair<Rule>) -> Expr {
                 Expr::Name(pair.as_str().to_owned())
             }
         }
-        Rule::arith => build_arith(pair),
-        Rule::bitor => build_bitor(pair),
-        Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
         Rule::truth => {
             let expr = pair.into_inner().next().expect("truth: условие");
             Expr::Truth(Box::new(build_or(expr)))
         }
-        r => unreachable!("значение: неожиданное правило {r:?}"),
+        Rule::bitor => build_bitor(pair),
+        r => unreachable!("postfix_base: неожиданное правило {r:?}"),
+    }
+}
+
+/// Мапа `{"k": v, ...}`: ключи — строки без кавычек, значения — литералы.
+/// Пары хранятся вектором как есть (дубли — E15 в ядре, не синтаксис).
+fn build_map_lit(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::map_lit);
+    let pairs = pair
+        .into_inner()
+        .map(|p| {
+            debug_assert_eq!(p.as_rule(), Rule::map_pair);
+            let mut kv = p.into_inner();
+            let key = unquote(kv.next().expect("map_pair: ключ"));
+            let value = build_literal_value(kv.next().expect("map_pair: значение"));
+            (key, value)
+        })
+        .collect();
+    Expr::Map(pairs)
+}
+
+fn build_array_lit(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::array_lit);
+    Expr::Array(pair.into_inner().map(build_literal_value).collect())
+}
+
+fn build_literal_value(pair: Pair<Rule>) -> Expr {
+    debug_assert_eq!(pair.as_rule(), Rule::literal_value);
+    let inner = pair.into_inner().next().expect("literal_value: литерал");
+    match inner.as_rule() {
+        Rule::number => Expr::Num(inner.as_str().to_owned()),
+        Rule::string => {
+            let s = inner.as_str();
+            Expr::Str(s[1..s.len() - 1].to_owned())
+        }
+        Rule::bool_lit => Expr::Bool(inner.as_str() == "true"),
+        Rule::map_lit => build_map_lit(inner),
+        Rule::array_lit => build_array_lit(inner),
+        r => unreachable!("literal_value: неожиданное правило {r:?}"),
     }
 }
 
@@ -703,17 +841,21 @@ pub struct Schedule {
     pub root: RootCycle,
 }
 
-/// `point DEPOT { actions = [depart, arrive]; }`.
+/// `point DEPOT { actions = [depart, arrive]; }`
+/// (`attrs = ...;` — опционально: литерал мапы или ссылка на константу-мапу).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Point {
     pub name: String,
     pub actions: Vec<String>,
+    pub attrs: Option<Expr>,
 }
 
-/// `cycle CITY_ROUTE duration = 1h20m { ... }`.
+/// `cycle CITY_ROUTE duration = 1h20m { ... }`
+/// (`LESSON(subj)` — параметры для данных строк, см. черновик `attrs.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cycle {
     pub name: String,
+    pub params: Vec<String>,
     pub duration: Duration,
     pub stmts: Vec<Stmt>,
 }
@@ -762,10 +904,17 @@ pub enum CondRhs {
 }
 
 /// Выражение условия: числа — сырым текстом, `at` — время строки.
+/// `Bool`/`Map`/`Array` — JSON-значения (черновик `attrs.md`): литералы
+/// и доступ `.поле` / `[n]`; вычисляются в момент строки.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Num(String),
     Str(String),
+    Bool(bool),
+    Map(Vec<(String, Expr)>),
+    Array(Vec<Expr>),
+    Field { base: Box<Expr>, field: String },
+    Index { base: Box<Expr>, index: String },
     At,
     Name(String),
     Neg(Box<Expr>),
@@ -859,11 +1008,17 @@ impl Until {
         }
     }
 }
-/// Вызов: `DEPOT.depart()` — действие точки, `CITY_ROUTE()` — вызов цикла.
+/// Вызов: `DEPOT.depart()` — действие точки (с опциональным блоком
+/// `{k = v, ...}` — данные события), `CITY_ROUTE()` — вызов цикла
+/// (с опциональными аргументами — значениями параметров).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
-    PointAction { point: String, action: String },
-    CycleCall { name: String },
+    PointAction {
+        point: String,
+        action: String,
+        block: Vec<(String, Expr)>,
+    },
+    CycleCall { name: String, args: Vec<Expr> },
 }
 
 /// Длительность сырым списком компонентов (`1h20m` → `[1h, 20m]`).
@@ -1116,6 +1271,239 @@ mod tests {
     }
 
     #[test]
+    fn parses_json_literals_in_const() {
+        // Мапы/массивы/bool — литералы; содержимое — только литералы.
+        let src = "const M = {\"name\": \"БЖД\", \"n\": 1, \"ok\": true, \
+            \"tags\": [\"a\", 2], \"meta\": {\"k\": false}, \"empty\": {}, \"arr\": []}; \
+            schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let f = parse(src).expect("мапы обязаны разбираться");
+        let body = match &f.decls[..] {
+            [Decl::Const { name, body }] => {
+                assert_eq!(name, "M");
+                body.clone()
+            }
+            d => panic!("ожидалась одна const, получено {d:?}"),
+        };
+        let str_ = |s: &str| Expr::Str(s.to_owned());
+        let num = |s: &str| Expr::Num(s.to_owned());
+        assert_eq!(
+            body,
+            Expr::Map(vec![
+                ("name".to_owned(), str_("БЖД")),
+                ("n".to_owned(), num("1")),
+                ("ok".to_owned(), Expr::Bool(true)),
+                (
+                    "tags".to_owned(),
+                    Expr::Array(vec![str_("a"), num("2")])
+                ),
+                (
+                    "meta".to_owned(),
+                    Expr::Map(vec![("k".to_owned(), Expr::Bool(false))])
+                ),
+                ("empty".to_owned(), Expr::Map(vec![])),
+                ("arr".to_owned(), Expr::Array(vec![])),
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_field_and_index_chains() {
+        // `.поле` и `[n]` — постфиксы, свёртка слева.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { [subj.meta.n == 1 and subj.tags[0] == \"a\"] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("доступ обязан разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        let subj = |f: &str| Expr::Field {
+            base: Box::new(Expr::Name("subj".to_owned())),
+            field: f.to_owned(),
+        };
+        assert_eq!(
+            cond,
+            Cond::And(vec![
+                Cond::Cmp {
+                    op: CmpOp::Eq,
+                    left: Expr::Field {
+                        base: Box::new(subj("meta")),
+                        field: "n".to_owned(),
+                    },
+                    right: CondRhs::One(Expr::Num("1".to_owned())),
+                },
+                Cond::Cmp {
+                    op: CmpOp::Eq,
+                    left: Expr::Index {
+                        base: Box::new(subj("tags")),
+                        index: "0".to_owned(),
+                    },
+                    right: CondRhs::One(Expr::Str("a".to_owned())),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_point_attrs_forms() {
+        // Без attrs — None; литерал — Map; ссылка — Name.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            point B { actions = [x]; attrs = {\"building\": \"Л\", \"floors\": 5}; } \
+            point C { actions = [x]; attrs = CORPUS; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let points = parse(src)
+            .expect("точки с attrs обязаны разбираться")
+            .schedule
+            .points;
+        assert_eq!(points[0].attrs, None);
+        assert_eq!(
+            points[1].attrs,
+            Some(Expr::Map(vec![
+                ("building".to_owned(), Expr::Str("Л".to_owned())),
+                ("floors".to_owned(), Expr::Num("5".to_owned())),
+            ]))
+        );
+        assert_eq!(points[2].attrs, Some(Expr::Name("CORPUS".to_owned())));
+    }
+
+    #[test]
+    fn parses_cycle_params_args_and_blocks() {
+        // Параметры, аргументы (мапа и имя), блоки (полный и пустой).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle L(subj) duration = 1h { \
+            0m: A.x() { subject = subj.name, event = \"start\" }; 45m: A.x() {}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 9h: L({\"name\": \"БЖД\"}); 13h: L(M); } }";
+        let s = parse(src).expect("параметры обязаны разбираться").schedule;
+        assert_eq!(s.cycles[0].params, vec!["subj".to_owned()]);
+        let block = match &s.cycles[0].stmts[0].invocation {
+            Invocation::PointAction { block, .. } => block.clone(),
+            r => panic!("ожидалось действие точки, получено {r:?}"),
+        };
+        assert_eq!(
+            block,
+            vec![
+                (
+                    "subject".to_owned(),
+                    Expr::Field {
+                        base: Box::new(Expr::Name("subj".to_owned())),
+                        field: "name".to_owned(),
+                    }
+                ),
+                ("event".to_owned(), Expr::Str("start".to_owned())),
+            ]
+        );
+        match &s.cycles[0].stmts[1].invocation {
+            Invocation::PointAction { block, .. } => assert!(block.is_empty()),
+            r => panic!("ожидалось действие точки, получено {r:?}"),
+        }
+        let args: Vec<Vec<Expr>> = s
+            .root
+            .stmts
+            .iter()
+            .map(|st| match &st.invocation {
+                Invocation::CycleCall { args, .. } => args.clone(),
+                r => panic!("ожидался вызов цикла, получено {r:?}"),
+            })
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                vec![Expr::Map(vec![(
+                    "name".to_owned(),
+                    Expr::Str("БЖД".to_owned())
+                )])],
+                vec![Expr::Name("M".to_owned())],
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_true_call_and_truex_name() {
+        // `true(x)` — вызов как раньше; `truex` — имя; `true` — литерал.
+        let call = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [true(at) == 1] 0m: A.x(); } }";
+        let cond = parse(call)
+            .expect("вызов true обязан разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        assert_eq!(
+            cond,
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::Call {
+                    name: "true".to_owned(),
+                    args: vec![Expr::At],
+                },
+                right: CondRhs::One(Expr::Num("1".to_owned())),
+            }
+        );
+        let src = "const T = true; const U = truex; schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let f = parse(src).expect("true/truex обязаны разбираться");
+        let bodies: Vec<Expr> = f
+            .decls
+            .iter()
+            .map(|d| match d {
+                Decl::Const { body, .. } => body.clone(),
+                d => panic!("ожидалась const, получено {d:?}"),
+            })
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![Expr::Bool(true), Expr::Name("truex".to_owned())]
+        );
+    }
+
+    #[test]
+    fn rejects_spaced_index() {
+        // Индекс атомарный: пробелы внутри — синтаксис.
+        for row in [
+            "subj.tags[ 0] == \"a\"",
+            "subj.tags[0 ] == \"a\"",
+            "subj.tags[- 1] == \"a\"",
+        ] {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ [{row}] 0m: A.x(); }} }}"
+            );
+            assert!(parse(&src).is_err(), "для {row:?}");
+        }
+        // Слитный минус разбирается (границы — E12 в ядре, не синтаксис).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [subj.tags[-1] == \"a\"] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("слитный минус обязан разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        match cond {
+            Cond::Cmp { left, .. } => match left {
+                Expr::Index { index, .. } => assert_eq!(index, "-1"),
+                e => panic!("ожидался индекс, получено {e:?}"),
+            },
+            c => panic!("ожидалось сравнение, получено {c:?}"),
+        }
+    }
+
+    #[test]
     fn parse_rejects_missing_root_cycle() {
         // bad_syntax.cyclo: нет root_cycle → ошибка парсера без E-кода.
         let src = include_str!("../../../examples/invalid/bad_syntax.cyclo");
@@ -1180,6 +1568,7 @@ mod tests {
             invocation: Invocation::PointAction {
                 point: point.to_owned(),
                 action: action.to_owned(),
+                block: Vec::new(),
             },
         };
         Schedule {
@@ -1188,15 +1577,18 @@ mod tests {
                 Point {
                     name: "DEPOT".to_owned(),
                     actions: vec!["depart".to_owned(), "arrive".to_owned()],
+                    attrs: None,
                 },
                 Point {
                     name: "AIRPORT".to_owned(),
                     actions: vec!["arrive".to_owned(), "depart".to_owned()],
+                    attrs: None,
                 },
             ],
             cycles: vec![
                 Cycle {
                     name: "CITY_ROUTE".to_owned(),
+                    params: Vec::new(),
                     duration: dur(
                         "1h20m",
                         vec![("1", DurationUnit::Hour), ("20", DurationUnit::Minute)],
@@ -1225,12 +1617,14 @@ mod tests {
                             invocation: Invocation::PointAction {
                                 point: "DEPOT".to_owned(),
                                 action: "arrive".to_owned(),
+                                block: Vec::new(),
                             },
                         },
                     ],
                 },
                 Cycle {
                     name: "SHUTTLE".to_owned(),
+                    params: Vec::new(),
                     duration: dur("20m", vec![("20", DurationUnit::Minute)]),
                     stmts: vec![
                         point_call(
@@ -1257,6 +1651,7 @@ mod tests {
                         condition: None,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
+                            args: Vec::new(),
                         },
                     },
                     Stmt {
@@ -1282,6 +1677,7 @@ mod tests {
                         ])),
                         invocation: Invocation::CycleCall {
                             name: "SHUTTLE".to_owned(),
+                            args: Vec::new(),
                         },
                     },
                     Stmt {
@@ -1299,6 +1695,7 @@ mod tests {
                         }))),
                         invocation: Invocation::CycleCall {
                             name: "SHUTTLE".to_owned(),
+                            args: Vec::new(),
                         },
                     },
                     Stmt {
@@ -1317,6 +1714,7 @@ mod tests {
                         ])),
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
+                            args: Vec::new(),
                         },
                     },
                     Stmt {
@@ -1329,6 +1727,7 @@ mod tests {
                         }),
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
+                            args: Vec::new(),
                         },
                     },
                 ],
