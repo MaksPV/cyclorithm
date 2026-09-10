@@ -212,10 +212,7 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
     let mut next = inner.next().expect("cycle: параметры или duration");
     let params = if next.as_rule() == Rule::cycle_params {
-        let ps = next
-            .into_inner()
-            .map(|p| p.as_str().to_owned())
-            .collect();
+        let ps = next.into_inner().map(|p| p.as_str().to_owned()).collect();
         next = inner.next().expect("cycle: duration");
         ps
     } else {
@@ -301,8 +298,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
                         debug_assert_eq!(p.as_rule(), Rule::block_pair);
                         let mut kv = p.into_inner();
                         let key = kv.next().expect("block_pair: ключ").as_str().to_owned();
-                        let value =
-                            build_call_arg(kv.next().expect("block_pair: значение"));
+                        let value = build_call_arg(kv.next().expect("block_pair: значение"));
                         (key, value)
                     })
                 })
@@ -316,11 +312,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         }
         Rule::cycle_call => {
             let mut parts = call.into_inner();
-            let name = parts
-                .next()
-                .expect("вызов: цикл")
-                .as_str()
-                .to_owned();
+            let name = parts.next().expect("вызов: цикл").as_str().to_owned();
             let args = parts.map(build_call_arg).collect();
             Invocation::CycleCall { name, args }
         }
@@ -913,8 +905,14 @@ pub enum Expr {
     Bool(bool),
     Map(Vec<(String, Expr)>),
     Array(Vec<Expr>),
-    Field { base: Box<Expr>, field: String },
-    Index { base: Box<Expr>, index: String },
+    Field {
+        base: Box<Expr>,
+        field: String,
+    },
+    Index {
+        base: Box<Expr>,
+        index: String,
+    },
     At,
     Name(String),
     Neg(Box<Expr>),
@@ -1018,7 +1016,10 @@ pub enum Invocation {
         action: String,
         block: Vec<(String, Expr)>,
     },
-    CycleCall { name: String, args: Vec<Expr> },
+    CycleCall {
+        name: String,
+        args: Vec<Expr>,
+    },
 }
 
 /// Длительность сырым списком компонентов (`1h20m` → `[1h, 20m]`).
@@ -1293,10 +1294,7 @@ mod tests {
                 ("name".to_owned(), str_("БЖД")),
                 ("n".to_owned(), num("1")),
                 ("ok".to_owned(), Expr::Bool(true)),
-                (
-                    "tags".to_owned(),
-                    Expr::Array(vec![str_("a"), num("2")])
-                ),
+                ("tags".to_owned(), Expr::Array(vec![str_("a"), num("2")])),
                 (
                     "meta".to_owned(),
                     Expr::Map(vec![("k".to_owned(), Expr::Bool(false))])
@@ -1542,6 +1540,7 @@ mod tests {
             include_str!("../../../examples/invalid/bad_e11.cyclo"),
             include_str!("../../../examples/invalid/bad_e12.cyclo"),
             include_str!("../../../examples/invalid/bad_e12_div.cyclo"),
+            include_str!("../../../examples/invalid/bad_e15.cyclo"),
         ] {
             parse(src).expect("bad_e*.cyclo обязан разбираться грамматикой");
         }
