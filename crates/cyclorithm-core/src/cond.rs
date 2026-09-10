@@ -12,17 +12,27 @@ use cyclorithm_parser::{ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedu
 
 use crate::Error;
 
-/// Значение выражения: число или строка.
+/// Значение выражения: число, строка или JSON-значение.
+/// Мапы хранятся вектором пар (порядок ключей — порядок объявления).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Num(i64),
     Str(String),
+    Bool(bool),
+    Map(Vec<(String, Value)>),
+    Array(Vec<Value>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ty {
     Num,
     Str,
+    /// Динамическое данное: параметр цикла или поле/индекс. Статика пропускает
+    /// любые операции, ошибки — в момент строки (E12). См. черновик `attrs.md`.
+    Dyn,
+    Map,
+    Array,
+    Bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,27 +157,32 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
         stack: vec![(name.to_owned(), def.unit)],
         unit: def.unit,
         vars: HashMap::new(),
+        // Тела объявлений — позиция данных: `const M = {...}`, `const A = M`.
+        data: true,
     };
     match def.kind {
+        // Константа — любое значение (число, строка, мапа, ...), не только Num:
+        // данные живут в константах (`BJD_LECTURE`), условия их не видят (E11).
         DefKind::Const => {
             let body = def.expr.as_ref().expect("const: тело");
-            if cx.infer(body)? != Ty::Num {
-                return Err(Error::e12_mismatch());
-            }
+            cx.infer(body)?;
+            Ok(())
         }
         DefKind::Fun => {
             let body = def.expr.as_ref().expect("fun: тело");
             cx.vars
                 .insert(def.param.clone().expect("fun: параметр"), Ty::Num);
             cx.infer(body)?;
+            Ok(())
         }
         DefKind::Pred => {
             let body = def.cond.as_ref().expect("pred: тело");
             cx.vars.insert("at".to_owned(), Ty::Num);
+            cx.data = false;
             cx.infer_cond(body)?;
+            Ok(())
         }
     }
-    Ok(())
 }
 
 struct CxTy<'a> {
@@ -175,6 +190,9 @@ struct CxTy<'a> {
     stack: Vec<(String, usize)>,
     unit: usize,
     vars: HashMap<String, Ty>,
+    /// Позиция данных (`true`): голые имена констант-мап/массивов/bool видны.
+    /// В условиях (`false`) они — E11 (в скоупе только числа, строки и `at`).
+    data: bool,
 }
 
 struct CxEv<'a> {
@@ -202,6 +220,7 @@ pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
                     stack: Vec::new(),
                     unit: defs.main,
                     vars: HashMap::new(),
+                    data: false,
                 }
                 .infer_cond(cond)?;
             }
@@ -214,6 +233,7 @@ pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
                 stack: Vec::new(),
                 unit: defs.main,
                 vars: HashMap::new(),
+                data: false,
             }
             .infer_cond(cond)?;
         }
@@ -231,8 +251,11 @@ impl CxTy<'_> {
                     [a] => a,
                     _ => return Err(Error::e12_arity(name)),
                 };
-                if self.infer(arg)? != Ty::Num {
-                    return Err(Error::e12_mismatch());
+                // Аргумент предиката — число; Dyn (параметр/поле) пропускаем,
+                // момент строки проверит (E12).
+                match self.infer(arg)? {
+                    Ty::Num | Ty::Dyn => {}
+                    _ => return Err(Error::e12_mismatch()),
                 }
                 let defs = self.defs;
                 let def = resolve(defs, name, self.unit)?;
@@ -251,22 +274,40 @@ impl CxTy<'_> {
                 match right {
                     CondRhs::One(r) => {
                         let rt = self.infer(r)?;
-                        if lt != rt && !date_cmp_ok(left, r)? {
+                        // Bool в условиях нет: любое участие — сразу E12.
+                        if lt == Ty::Bool || rt == Ty::Bool {
                             return Err(Error::e12_mismatch());
+                        }
+                        let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array);
+                        match (lt, rt) {
+                            // Динамика: статика пропускает, разберётся строка.
+                            (Ty::Dyn, _) | (_, Ty::Dyn) => Ok(()),
+                            // Мапа/массив с мапой/массивом — «пока»
+                            // (глубокое сравнение — будущее решение).
+                            (a, b) if collection(a) && collection(b) => Err(Error::e12_map_cmp()),
+                            (a, b) if a == b => Ok(()),
+                            _ => {
+                                if date_cmp_ok(left, r)? {
+                                    Ok(())
+                                } else {
+                                    Err(Error::e12_mismatch())
+                                }
+                            }
                         }
                     }
                     CondRhs::Alt(alts) => {
                         for a in alts {
-                            if self.infer(a)? != Ty::Num {
-                                return Err(Error::e12_mismatch());
+                            match self.infer(a)? {
+                                Ty::Num | Ty::Dyn => {}
+                                _ => return Err(Error::e12_mismatch()),
                             }
                         }
-                        if lt != Ty::Num {
-                            return Err(Error::e12_mismatch());
+                        match lt {
+                            Ty::Num | Ty::Dyn => Ok(()),
+                            _ => Err(Error::e12_mismatch()),
                         }
                     }
                 }
-                Ok(())
             }
         }
     }
@@ -278,6 +319,42 @@ impl CxTy<'_> {
                 Ok(Ty::Num)
             }
             Expr::Str(_) => Ok(Ty::Str),
+            Expr::Bool(_) => Ok(Ty::Bool),
+            Expr::Map(pairs) => {
+                check_map_dupes(pairs)?;
+                // Значения — литералы по грамматике; типы всё равно выводим
+                // (дубли и кривые числа ловятся здесь же).
+                for (_, v) in pairs {
+                    self.infer(v)?;
+                }
+                Ok(Ty::Map)
+            }
+            Expr::Array(xs) => {
+                for x in xs {
+                    self.infer(x)?;
+                }
+                Ok(Ty::Array)
+            }
+            // Поля данных динамические: статически не проверяются
+            // (даже когда мапа известна) — только момент строки.
+            // Исключение — голое имя под доступом (см. ниже).
+            Expr::Field { base, .. } | Expr::Index { base, .. } => {
+                // Базу выводим ради её проверок (вложенные доступы, E11 имён);
+                // сам доступ всегда Dyn (см. ниже).
+                self.infer(base)?;
+                if let Expr::Name(name) = base.as_ref() {
+                    // Параметр — динамика, пропускаем.
+                    if !self.vars.contains_key(name) {
+                        let defs = self.defs;
+                        let def = resolve(defs, name, self.unit)?;
+                        if def.kind == DefKind::Const {
+                            let ty = self.const_body_ty(name, def)?;
+                            self.hide_data(name, ty)?;
+                        }
+                    }
+                }
+                Ok(Ty::Dyn)
+            }
             Expr::At => Ok(Ty::Num),
             Expr::Name(name) => {
                 if let Some(ty) = self.vars.get(name) {
@@ -288,41 +365,45 @@ impl CxTy<'_> {
                 let def = resolve(defs, name, self.unit)?;
                 match def.kind {
                     DefKind::Const => {
-                        self.enter(name, def.unit)?;
-                        let body = def.expr.clone().expect("const: тело");
-                        let ty = self.infer(&body);
-                        self.leave();
-                        ty
+                        let ty = self.const_body_ty(name, def)?;
+                        // Данные напрямую в условии невидимы: только E11.
+                        self.hide_data(name, ty)
                     }
                     DefKind::Fun | DefKind::Pred => Err(Error::e12_mismatch()),
                 }
             }
-            Expr::Neg(x) => self.infer(x),
+            Expr::Neg(x) => match self.infer(x)? {
+                Ty::Num => Ok(Ty::Num),
+                Ty::Dyn => Ok(Ty::Dyn),
+                _ => Err(Error::e12_mismatch()),
+            },
             Expr::Truth(c) => {
                 self.infer_cond(c)?;
                 Ok(Ty::Num)
             }
             Expr::Bin { left, right, .. } => {
-                if self.infer(left)? != Ty::Num || self.infer(right)? != Ty::Num {
-                    return Err(Error::e12_mismatch());
-                }
+                let ty = match (self.infer(left)?, self.infer(right)?) {
+                    (Ty::Num, Ty::Num) => Ty::Num,
+                    (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ty::Dyn,
+                    _ => return Err(Error::e12_mismatch()),
+                };
                 if let Some(Err(e)) = self.const_div(right) {
                     return Err(e);
                 }
-                Ok(Ty::Num)
+                Ok(ty)
             }
             // Битовые — те же числовые операнды, но деления нет:
             // статической проверки делителя не требуется, сдвиг не ошибается.
-            Expr::Bit { left, right, .. } => {
-                if self.infer(left)? != Ty::Num || self.infer(right)? != Ty::Num {
-                    return Err(Error::e12_mismatch());
-                }
-                Ok(Ty::Num)
-            }
+            Expr::Bit { left, right, .. } => match (self.infer(left)?, self.infer(right)?) {
+                (Ty::Num, Ty::Num) => Ok(Ty::Num),
+                (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ok(Ty::Dyn),
+                _ => Err(Error::e12_mismatch()),
+            },
             Expr::Concat(xs) => {
                 for x in xs {
-                    if self.infer(x)? != Ty::Str {
-                        return Err(Error::e12_mismatch());
+                    match self.infer(x)? {
+                        Ty::Str | Ty::Dyn => {}
+                        _ => return Err(Error::e12_mismatch()),
                     }
                 }
                 Ok(Ty::Str)
@@ -339,8 +420,9 @@ impl CxTy<'_> {
                     return Err(Error::e12_arity(name));
                 }
                 for a in args {
-                    if self.infer(a)? != Ty::Num {
-                        return Err(Error::e12_mismatch());
+                    match self.infer(a)? {
+                        Ty::Num | Ty::Dyn => {}
+                        _ => return Err(Error::e12_mismatch()),
                     }
                 }
                 Ok(Ty::Str)
@@ -350,8 +432,10 @@ impl CxTy<'_> {
                 let [a, b] = args else {
                     return Err(Error::e12_arity(name));
                 };
-                if self.infer(a)? != Ty::Num || self.infer(b)? != Ty::Num {
-                    return Err(Error::e12_mismatch());
+                match (self.infer(a)?, self.infer(b)?) {
+                    (Ty::Num, Ty::Num) => {}
+                    (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => {}
+                    _ => return Err(Error::e12_mismatch()),
                 }
                 if let Some(Err(e)) = self.const_div(b) {
                     return Err(e);
@@ -366,8 +450,9 @@ impl CxTy<'_> {
                     return Err(Error::e12_arity(name));
                 }
                 for a in args {
-                    if self.infer(a)? != Ty::Num {
-                        return Err(Error::e12_mismatch());
+                    match self.infer(a)? {
+                        Ty::Num | Ty::Dyn => {}
+                        _ => return Err(Error::e12_mismatch()),
                     }
                 }
                 let mut vals = Vec::with_capacity(7);
@@ -390,11 +475,9 @@ impl CxTy<'_> {
                         if !args.is_empty() {
                             return Err(Error::e12_arity(name));
                         }
-                        self.enter(name, def.unit)?;
-                        let body = def.expr.clone().expect("const: тело");
-                        let ty = self.infer(&body);
-                        self.leave();
-                        ty
+                        let ty = self.const_body_ty(name, def)?;
+                        // Как голое имя: данные через вызов в условии невидимы.
+                        self.hide_data(name, ty)
                     }
                     DefKind::Fun => {
                         let arg = match args {
@@ -426,6 +509,26 @@ impl CxTy<'_> {
         }
     }
 
+    /// Тип тела константы. Тело — всегда позиция данных (`const A = M` —
+    /// алиас мапы); видимость решает место использования (`hide_data`).
+    fn const_body_ty(&mut self, name: &str, def: &Def) -> Result<Ty, Error> {
+        self.enter(name, def.unit)?;
+        let body = def.expr.clone().expect("const: тело");
+        let saved = std::mem::replace(&mut self.data, true);
+        let ty = self.infer(&body);
+        self.data = saved;
+        self.leave();
+        ty
+    }
+
+    /// Данные по голому имени в позиции условия невидимы: только E11.
+    fn hide_data(&self, name: &str, ty: Ty) -> Result<Ty, Error> {
+        if !self.data && matches!(ty, Ty::Map | Ty::Array | Ty::Bool) {
+            return Err(Error::e11(name));
+        }
+        Ok(ty)
+    }
+
     fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
         if self.stack.iter().any(|(n, _)| n == name) {
             return Err(Error::e12_recursive(name));
@@ -448,6 +551,19 @@ impl CxTy<'_> {
             Ok(_) => Some(Ok(())),
         }
     }
+}
+
+/// Дубли ключей в литерале мапы — E15 (первый повтор в порядке объявления).
+/// Вызывается из `infer`, поэтому покрывает все позиции литералов:
+/// тела объявлений, условия, аргументы, блоки.
+fn check_map_dupes(pairs: &[(String, cyclorithm_parser::Expr)]) -> Result<(), Error> {
+    let mut seen = HashSet::new();
+    for (k, _) in pairs {
+        if !seen.insert(k) {
+            return Err(Error::e15(k));
+        }
+    }
+    Ok(())
 }
 
 /// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
@@ -531,7 +647,10 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
 fn has_at(expr: &Expr) -> bool {
     match expr {
         Expr::At => true,
-        Expr::Num(_) | Expr::Str(_) | Expr::Name(_) => false,
+        Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_at(v)),
+        Expr::Array(xs) => xs.iter().any(has_at),
+        Expr::Field { base, .. } | Expr::Index { base, .. } => has_at(base),
         Expr::Neg(x) => has_at(x),
         Expr::Truth(c) => has_cond_at(c),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -560,7 +679,10 @@ fn has_cond_at(cond: &Cond) -> bool {
 fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
     match expr {
         Expr::Name(n) => cx.vars.contains_key(n),
-        Expr::At | Expr::Num(_) | Expr::Str(_) => false,
+        Expr::At | Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) => false,
+        Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_param(v, cx)),
+        Expr::Array(xs) => xs.iter().any(|x| has_param(x, cx)),
+        Expr::Field { base, .. } | Expr::Index { base, .. } => has_param(base, cx),
         Expr::Neg(x) => has_param(x, cx),
         Expr::Truth(c) => has_cond_param(c, cx),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -639,7 +761,7 @@ impl CxEv<'_> {
                 };
                 let at_arg = match arg {
                     Value::Num(n) => n,
-                    Value::Str(_) => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::e12_mismatch()),
                 };
                 let defs = self.defs;
                 let def = resolve(defs, name, self.unit)?;
@@ -715,6 +837,10 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
             CmpOp::Gt => a > b,
             CmpOp::Ge => a >= b,
         }),
+        // Мапы/массивы не сравниваются («пока», см. черновик) — даже между собой.
+        (Value::Map(_) | Value::Array(_), _) | (_, Value::Map(_) | Value::Array(_)) => {
+            Err(Error::e12_map_cmp())
+        }
         _ => Err(Error::e12_mismatch()),
     }
 }
@@ -724,6 +850,41 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     match expr {
         Expr::Num(raw) => Ok(Value::Num(raw.parse().map_err(|_| Error::e12_range(raw))?)),
         Expr::Str(s) => Ok(Value::Str(s.clone())),
+        Expr::Bool(b) => Ok(Value::Bool(*b)),
+        Expr::Map(pairs) => pairs
+            .iter()
+            .map(|(k, v)| eval_expr(v, at, cx).map(|ev| (k.clone(), ev)))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Map),
+        Expr::Array(xs) => xs
+            .iter()
+            .map(|x| eval_expr(x, at, cx))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        // Доступ — только в момент строки: нет ключа / не-мапа / не-массив —
+        // `unknown field`, выход за границы (и отрицательный) — `out of bounds`.
+        Expr::Field { base, field } => match eval_expr(base, at, cx)? {
+            Value::Map(pairs) => pairs
+                .iter()
+                .find(|(k, _)| k == field)
+                .map(|(_, v)| v.clone())
+                .ok_or_else(|| Error::e12_field(field)),
+            _ => Err(Error::e12_field(field)),
+        },
+        Expr::Index { base, index } => {
+            let items = match eval_expr(base, at, cx)? {
+                Value::Array(xs) => xs,
+                _ => return Err(Error::e12_field(index)),
+            };
+            let i: i64 = index.parse().map_err(|_| Error::e12_range(index))?;
+            if i < 0 {
+                return Err(Error::e12_index(index));
+            }
+            items
+                .get(i as usize)
+                .cloned()
+                .ok_or_else(|| Error::e12_index(index))
+        }
         Expr::At => Ok(Value::Num(at)),
         Expr::Name(name) => {
             if let Some(v) = cx.vars.get(name) {
@@ -747,7 +908,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 .checked_neg()
                 .map(Value::Num)
                 .ok_or_else(|| Error::e12_range("negation overflow")),
-            Value::Str(_) => Err(Error::e12_mismatch()),
+            _ => Err(Error::e12_mismatch()),
         },
         Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c, at)?))),
         Expr::Bin { op, left, right } => {
@@ -809,7 +970,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             for x in xs {
                 match eval_expr(x, at, cx)? {
                     Value::Str(s) => out.push_str(&s),
-                    Value::Num(_) => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::e12_mismatch()),
                 }
             }
             Ok(Value::Str(out))
@@ -837,7 +998,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             }
             match eval_expr(a, at, cx)? {
                 Value::Num(n) => Ok(Value::Str(n.to_string())),
-                Value::Str(_) => Err(Error::e12_mismatch()),
+                _ => Err(Error::e12_mismatch()),
             }
         }
         "pad" => {
@@ -993,6 +1154,7 @@ mod tests {
             stack: Vec::new(),
             unit: d.main,
             vars: HashMap::new(),
+            data: false,
         }
         .infer_cond(c)
     }
@@ -1522,6 +1684,68 @@ mod tests {
     fn private_names_stay_in_file() {
         let e = defs_of("fun f(t) = __z(t);").expect_err("чужое __ — ошибка");
         assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__z'"));
+    }
+
+    #[test]
+    fn map_consts_are_values() {
+        // Мапы/массивы/bool живут в константах (включая алиасы).
+        defs_of("const M = {\"name\": \"БЖД\", \"n\": 1, \"ok\": true, \"tags\": [\"a\", 2]};")
+            .expect("мапа обязана проверяться");
+        defs_of("const M = {\"n\": 1}; const A = M;").expect("алиас мапы обязан проверяться");
+        defs_of("const A = [1, {\"k\": false}];").expect("массив обязан проверяться");
+    }
+
+    #[test]
+    fn duplicate_map_keys_are_e15() {
+        // Дубль в литерале — E15 уже в объявлении (до развёртки).
+        let e = defs_of("const M = {\"a\": 1, \"a\": 2};").expect_err("дубль — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E15", "duplicate attribute 'a'")
+        );
+        // Вложенный литерал — тоже E15.
+        let e = defs_of("const M = {\"a\": {\"b\": 1, \"b\": 2}};")
+            .expect_err("вложенный дубль — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E15", "duplicate attribute 'b'")
+        );
+    }
+
+    #[test]
+    fn bare_data_const_in_condition_is_e11() {
+        // Данные напрямую в условии невидимы — даже под доступом.
+        let d = defs_of("const M = {\"n\": 1, \"tags\": [\"a\"]};").unwrap();
+        for row in ["M == 1", "M.n == 1", "M.tags[0] == \"a\""] {
+            let e = check_single(&cond_of(row), &d).expect_err("статика обязана браковать");
+            assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'M'"));
+        }
+    }
+
+    #[test]
+    fn map_comparison_is_e12() {
+        // Мапа с мапой — E12 «пока» (глубокое сравнение — будущее).
+        let e = static_err("{\"a\": 1} == {\"a\": 1}");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "cannot compare maps or arrays")
+        );
+        // Мапа с числом — обычное смешение.
+        let e = static_err("{\"a\": 1} == 1");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
+    }
+
+    #[test]
+    fn bool_in_condition_is_e12() {
+        // Булева типа в условиях нет: литерал в сравнении — E12.
+        let e = static_err("true == true");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E12", "type mismatch: cannot mix number and string")
+        );
     }
 
     #[test]

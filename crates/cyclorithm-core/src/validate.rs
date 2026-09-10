@@ -41,6 +41,13 @@ pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
         if points.contains_key(c.name.as_str()) {
             return Err(Error::e09_not_cycle(&c.name));
         }
+        // Дубли параметров (`cycle C(a, a)`) — E04, как дубли объявлений.
+        let mut seen = HashSet::new();
+        for p in &c.params {
+            if !seen.insert(p) {
+                return Err(Error::e04("param", p));
+            }
+        }
         cycles.insert(c.name.as_str(), c);
     }
     let tables = NameTables { points, cycles };
@@ -55,7 +62,7 @@ pub fn validate_names(schedule: &Schedule) -> Result<NameTables<'_>, Error> {
 fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Result<(), Error> {
     for st in stmts {
         match &st.invocation {
-            Invocation::PointAction { point, action } => {
+            Invocation::PointAction { point, action, .. } => {
                 if let Some(p) = tables.points.get(point.as_str()) {
                     if !p.actions.iter().any(|a| a == action) {
                         return Err(Error::e02(action, point));
@@ -66,9 +73,13 @@ fn check_stmts(tables: &NameTables<'_>, stmts: &[cyclorithm_parser::Stmt]) -> Re
                     return Err(Error::e01(point));
                 }
             }
-            Invocation::CycleCall { name } => {
-                if tables.cycles.contains_key(name.as_str()) {
-                    // ok
+            Invocation::CycleCall { name, args } => {
+                if let Some(callee) = tables.cycles.get(name.as_str()) {
+                    // Арность — сразу за существованием (E12, прецедент
+                    // арности fun/pred); выражения аргументов — позже, со строками.
+                    if callee.params.len() != args.len() {
+                        return Err(Error::e12_arity(name));
+                    }
                 } else if tables.points.contains_key(name.as_str()) {
                     return Err(Error::e09_not_cycle(name));
                 } else {
@@ -112,7 +123,7 @@ fn visit_cycle<'a>(
     }
     let cycle = tables.cycles.get(name).expect("имена уже проверены");
     for st in &cycle.stmts {
-        if let Invocation::CycleCall { name: callee } = &st.invocation {
+        if let Invocation::CycleCall { name: callee, .. } = &st.invocation {
             visit_cycle(callee.as_str(), tables, gray, black)?;
         }
     }
@@ -224,7 +235,7 @@ pub fn chain(
         Repeat::Once => {
             let span = match &st.invocation {
                 Invocation::PointAction { .. } => 0,
-                Invocation::CycleCall { name } => {
+                Invocation::CycleCall { name, .. } => {
                     duration_ms(&cycle_duration(tables, name).duration)?
                 }
             };
@@ -241,7 +252,7 @@ pub fn chain(
             let step = step_of(&st.invocation, tables)?;
             if step == 0 {
                 return Err(match &st.invocation {
-                    Invocation::CycleCall { name } => Error::e10_fill_zero(name),
+                    Invocation::CycleCall { name, .. } => Error::e10_fill_zero(name),
                     Invocation::PointAction { action, .. } => Error::e10_repeat_action(action),
                 });
             }
@@ -279,7 +290,7 @@ pub fn chain(
 fn step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
     match invocation {
         Invocation::PointAction { action, .. } => Err(Error::e10_repeat_action(action)),
-        Invocation::CycleCall { name } => duration_ms(&cycle_duration(tables, name).duration),
+        Invocation::CycleCall { name, .. } => duration_ms(&cycle_duration(tables, name).duration),
     }
 }
 
@@ -304,7 +315,9 @@ fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
         Invocation::PointAction { action, .. } => {
             Error::e07_action(action, outer, &excess, &end_s, &limit_s)
         }
-        Invocation::CycleCall { name } => Error::e07_cycle(name, outer, &excess, &end_s, &limit_s),
+        Invocation::CycleCall { name, .. } => {
+            Error::e07_cycle(name, outer, &excess, &end_s, &limit_s)
+        }
     }
 }
 
@@ -370,6 +383,36 @@ mod tests {
             let e = err(src);
             assert_eq!(e.code, code, "для {file}");
             assert_eq!(e.message, message, "для {file}");
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_cycle_params() {
+        // Дубли параметров — E04, как дубли объявлений.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C(a, a) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(1, 2); } }";
+        let e = err(src);
+        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate param 'a'"));
+    }
+
+    #[test]
+    fn rejects_cycle_arity_mismatch() {
+        // Арность — сразу за существованием (E12, прецедент fun/pred).
+        for (row, name) in [("6h: C();", "C"), ("6h: C(1, 2);", "C"), ("6h: R(1);", "R")] {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                cycle C(a) duration = 1h {{ 0m: A.x(); }} \
+                cycle R duration = 1h {{ 0m: A.x(); }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
+            );
+            let e = err(&src);
+            assert_eq!(e.code, "E12", "для {row}");
+            assert_eq!(
+                e.message,
+                format!("wrong arguments for '{name}'"),
+                "для {row}"
+            );
         }
     }
 
