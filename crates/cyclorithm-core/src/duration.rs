@@ -202,6 +202,7 @@ mod tests {
             condition: None,
             invocation: cyclorithm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
+                args: Vec::new(),
             },
         };
         use DurationUnit::*;
@@ -233,6 +234,7 @@ mod tests {
             condition: None,
             invocation: cyclorithm_parser::Invocation::CycleCall {
                 name: "R".to_owned(),
+                args: Vec::new(),
             },
         };
         let err = effective_offset_ms(&st, 4_800_000, "1h20m").expect_err("вылет ниже нуля");

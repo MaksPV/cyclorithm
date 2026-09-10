@@ -1,4 +1,4 @@
-//! Core logic for Cyclorithm: validation (E01–E09), lattice expansion,
+//! Core logic for Cyclorithm: validation (E01–E15), lattice expansion,
 //! ordering `(time, k, declaration order)`.
 
 use std::fmt;
@@ -12,14 +12,14 @@ pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
-// Ошибка валидации: коды E01–E09 из §5 спеки.
+// Ошибка валидации: коды E01–E15 из §5 спеки.
 // Печатается только `message` (примеры из таблицы спеки — без префикса кода).
 // ---------------------------------------------------------------------------
 
 /// Ошибка валидации уже разобранного AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    /// Код из §5 (`"E01"`–`"E09"`).
+    /// Код из §5 (`"E01"`–`"E15"`).
     pub code: &'static str,
     /// Текст для stderr, дословно по таблице §5.
     pub message: String,
@@ -175,6 +175,28 @@ impl Error {
     /// E12: кривой литерал даты в условии.
     pub fn e12_date(raw: &str) -> Self {
         Self::coded("E12", format!("invalid date '{raw}'"))
+    }
+
+    /// E15: `duplicate attribute 'a'` (дубль ключа в литерале мапы
+    /// или в блоке действий).
+    pub fn e15(name: &str) -> Self {
+        Self::coded("E15", format!("duplicate attribute '{name}'"))
+    }
+
+    /// E12: доступ к отсутствующему полю (`subj.name`), к полю не-мапы
+    /// и индекс не-массива — всё `unknown field 'name'`.
+    pub fn e12_field(name: &str) -> Self {
+        Self::coded("E12", format!("unknown field '{name}'"))
+    }
+
+    /// E12: индекс за границами массива (`tags[5]`, отрицательный `tags[-1]`).
+    pub fn e12_index(raw: &str) -> Self {
+        Self::coded("E12", format!("index out of bounds '{raw}'"))
+    }
+
+    /// E12: сравнение мап/массивов (`==`/`!=` между ними — «пока», см. черновик).
+    pub fn e12_map_cmp() -> Self {
+        Self::coded("E12", "cannot compare maps or arrays".to_owned())
     }
 
     /// E13: импорт не читается.

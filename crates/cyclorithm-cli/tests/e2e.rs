@@ -157,6 +157,24 @@ fn conditions_matches_expected_json() {
 }
 
 #[test]
+fn attrs_matches_expected_json() {
+    // Словари точек и блоков: 9 событий, tick только у лекции.
+    let out = run(&[
+        "run",
+        "../../examples/valid/attrs.cyclo",
+        "--start",
+        "2026-09-07T00:00:00",
+        "--end",
+        "2026-09-08T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/attrs.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn imports_matches_expected_json() {
     // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
     let out = run(&[
@@ -229,6 +247,7 @@ fn validation_errors_go_to_stderr() {
         ("bad_e12_div", "division by zero"),
         ("bad_e08", "invalid datetime 'not-a-datetime'"),
         ("bad_e09", "point 'DEPOT' is not a cycle"),
+        ("bad_e15", "duplicate attribute 'a'"),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
