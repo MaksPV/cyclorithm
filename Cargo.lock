@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "cyclorithm-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cyclorithm-core",
  "cyclorithm-parser",
@@ -13,14 +13,14 @@ dependencies = [
 
 [[package]]
 name = "cyclorithm-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cyclorithm-parser",
 ]
 
 [[package]]
 name = "cyclorithm-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pest",
  "pest_derive",
