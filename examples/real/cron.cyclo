@@ -1,0 +1,38 @@
+// Аналог cron: каждая задача — данные (что запускать), хост-программа
+// опрашивает окно [now, now + шаг) и исполняет `cmd` с `args` от имени
+// `user` (см.Descriptorниже). Запуск:
+//   cyclo run cron.cyclo --start 2026-09-07T00:00:00 --end 2026-09-07T23:59:59
+const BACKUP = {"cmd": "/usr/local/bin/backup.sh", "args": ["--incremental"], "user": "root", "timeout_s": 1800};
+const CLEANUP = {"cmd": "/opt/jobs/cleanup.sh", "args": ["--tmp", "--caches"], "user": "ops", "timeout_s": 600};
+const REPORT = {"cmd": "/opt/jobs/report.py", "args": ["--weekly"], "user": "analytics", "timeout_s": 900};
+const HEARTBEAT = {"cmd": "/opt/jobs/ping.sh", "args": [], "user": "ops", "timeout_s": 60};
+
+schedule "Cron" {
+  point JOB {
+    actions = [fire];
+  }
+
+  // Одна строка = один запуск: параметры задачи переезжают в action_attrs.
+  cycle RUN(job) duration = 1m {
+    0m: JOB.fire() { cmd = job.cmd, args = job.args, user = job.user, timeout_s = job.timeout_s };
+  }
+
+  cycle HOURLY_PING duration = 1h {
+    0m: JOB.fire() { cmd = HEARTBEAT.cmd, args = HEARTBEAT.args, user = HEARTBEAT.user, timeout_s = HEARTBEAT.timeout_s };
+  }
+
+  cycle HOURLY_CLEAN duration = 1h {
+    0m: JOB.fire() { cmd = CLEANUP.cmd, args = CLEANUP.args, user = CLEANUP.user, timeout_s = CLEANUP.timeout_s };
+  }
+
+  root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
+    // Ночной бэкап — каждый день в 03:00.
+    3h: RUN(BACKUP);
+    // Чистка — по будням каждый час с 08:00 до 18:00 включительно.
+    [workday(at)] 8h: repeat 11 HOURLY_CLEAN();
+    // Отчёт — по понедельникам в 09:30.
+    [day_of_week(at) == 1] 9h30m: RUN(REPORT);
+    // Heartbeat — каждый час круглосуточно.
+    0h: repeat 24 HOURLY_PING();
+  }
+}
