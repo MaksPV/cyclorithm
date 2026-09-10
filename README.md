@@ -3,6 +3,8 @@
 # Cyclorithm
 
 [![CI](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml)
+[![build](https://github.com/MaksPV/cyclorithm/actions/workflows/build.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/MaksPV/cyclorithm)](https://github.com/MaksPV/cyclorithm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
@@ -23,9 +25,11 @@ $ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo --start 2026-01-
 
 Окно — пятница 09.01: работают все ветки маршрута (будние рейсы, повторы, рейс в 18:00). Всего 18 событий, выше — первые 4; полный вывод — в `examples/valid/route.expected.json`. В субботу останутся только рейсы в 6:00 и 12:00 — так работают условия (см. мини-тур).
 
-Формат вызова: `cyclo run FILE --start DATETIME --end DATETIME` (даты — наивный ISO8601 `YYYY-MM-DDTHH:MM:SS`, миллисекунды опциональны). Успех — один JSON-объект в stdout, код `0`. Ошибка — текст в stderr, в stdout ничего: код `1` (ввод, парсинг, валидация), код `2` (неверные аргументы, текст usage).
+Формат вызова: `cyclo run FILE --start DATETIME --end DATETIME` (даты — наивный ISO8601 `YYYY-MM-DDTHH:MM:SS`, миллисекунды опциональны). Успех — один JSON-объект в stdout, код `0`. Ошибка — текст в stderr, в stdout ничего: код `1` (ввод, парсинг, валидация), код `2` (неверные аргументы, текст usage). Готовые бинарники (Linux/Windows, x86-64/ARM64) — в [релизах](https://github.com/MaksPV/cyclorithm/releases).
 
 ## Мини-тур по языку
+
+### Точки и циклы
 
 Точки объявляют действия, циклы — цепочки вызовов со смещениями от старта:
 
@@ -34,9 +38,7 @@ point DEPOT {
   actions = [depart, arrive];
 }
 
-cycle CITY_ROUTE
-  duration = 1h20m
-{
+cycle CITY_ROUTE duration = 1h20m {
   0m: DEPOT.depart();
   40m: AIRPORT.arrive();
   50m: AIRPORT.depart();
@@ -44,7 +46,9 @@ cycle CITY_ROUTE
 }
 ```
 
-Отрицательное смещение `-0m` — «встык к концу цикла» (здесь ≡ `80m`); ниже нуля — ошибка. Подробности — в §4 спеки.
+Отрицательное смещение `-0m` — «встык к концу цикла» (здесь ≡ `80m`); ниже нуля — ошибка. Корень расписания — `root_cycle` с `start_time` и `duration`, его окно пересекают с `--start/--end`. Подробности — в §4 спеки.
+
+### Условия и календарь
 
 Строки могут иметь условие `[…]` — оно вычисляется для времени строки (`at`):
 
@@ -55,7 +59,15 @@ cycle CITY_ROUTE
 
 Время суток без даты-условия — мёртвый код (константа во всех экземплярах), поэтому будние ветки всегда идут в паре с `weekend`. Условие на цепочке повторов проверяется на каждый экземпляр: ложные выпадают дырами, остальные не сдвигаются.
 
-Свои объявления — только верхний уровень файла, до `schedule`:
+Календарь встроен, подключать не нужно: `weekend`, `workday`, `morning`/`afternoon`/`evening`/`night`, `spring`–`winter`, `hour`/`minute`/`day`/`month`/`year`/`quarter`, `dow` (0 = пн … 6 = вс), `day_of_week` (1 = пн … 7 = вс, ISO), `datestr`/`datetimestr`, `start_of_day`/`start_of_month`, `is_leap`/`days_in_month`, `rand`, константы `mon`–`sun`, `DAY`. Списки дат — строковой альтернацией:
+
+```text
+pred holiday(at) = datestr(at) == ("2026-11-04" or "2026-12-31");
+```
+
+### Свои объявления
+
+Только верхний уровень файла, до `schedule`:
 
 ```text
 const MORNING = 6;
@@ -63,7 +75,35 @@ fun rush_top(x) = x + 1;
 pred commute(at) = morning(at) or evening(at);
 ```
 
-`const` — число, `fun` — число от аргумента, `pred` — истина/ложь от времени вызова. Плюс неявная прелюдия (календарь и словарь: `morning`, `evening`, `weekend`, `hour`, …) — подключать не нужно. Выражения: целочисленная арифметика, сравнения чисел и строк, `not`/`and`/`or`, `str`/`pad` (§4.17 спеки).
+`const` — число или данные, `fun` — число от аргумента, `pred` — истина/ложь от времени вызова. Плюс конструктор даты `mkdate(2026, 9, 7, 9, 0, 0, 0)`, строки `str`/`pad`, целочисленные `floordiv`/`floormod`. Выражения: целочисленная и битовая арифметика, сравнения чисел и строк, `not`/`and`/`or` (§4.17 спеки).
+
+### Данные и атрибуты
+
+Данные — мапы, массивы и `true`/`false` (только литералы, в питоновском духе). Едут в циклы параметрами и видны в условиях:
+
+```text
+const LEC = {"subject": "БЖД", "type": "лек", "room": "233/А", "tags": ["поток"]};
+const CORPUS = {"building": "Л"};
+
+point BELL {
+  actions = [ring];
+  attrs = CORPUS;
+}
+
+cycle LESSON(subj) duration = 1h35m {
+  0m: BELL.ring() { subject = subj.subject, event = "start" };
+  [subj.type == "лек"] 55m: BELL.ring();
+}
+```
+
+Доступ — `subj.subject`, `tags[0]`. Атрибуты точки (`attrs` — литерал или ссылка на константу-мапу) попадают в каждое событие полем `point_attrs`, блок действий `{...}` — полем `action_attrs`. Оба поля есть всегда; нет данных — пустой `{}`:
+
+```json
+{"time": "2026-09-07T09:00:00", "action": "ring", "point": "BELL",
+ "point_attrs": {"building": "Л"}, "action_attrs": {"subject": "БЖД", "event": "start"}}
+```
+
+### Библиотеки
 
 Общее выносится в библиотеки и подключается первой строкой файла:
 
@@ -71,9 +111,9 @@ pred commute(at) = morning(at) or evening(at);
 use "libs/route_lib.cyclo";
 ```
 
-Путь — от директории импортирующего, транзитивно; `schedule` внутри библиотеки запрещён. Полный список кодов ошибок (§5 спеки): `E01–E14`.
+Путь — от директории импортирующего, транзитивно; `schedule` внутри библиотеки запрещён. Полный список кодов ошибок (§5 спеки): `E01–E16`.
 
-Повторы — только для вызовов циклов:
+### Повторы
 
 ```text
 10h: repeat 2 SHUTTLE();
@@ -82,10 +122,31 @@ use "libs/route_lib.cyclo";
 
 `repeat N` — ровно `N` экземпляров, `fill` — сколько влезет в объемлющий цикл, `fill until T` — сколько влезет до смещения `T` от старта объемлющего цикла (не от строки).
 
+### Таблицы времени и рутины
+
+Расписание «по звонкам» — таблица слотов плюс рутина-день, вызываемая с таблицей и данными:
+
+```text
+time_const DAY duration = 24h {
+  1st: 9h;
+  [workday(at)] lunch: 12h -> LUNCH();
+}
+
+routine MONDAY(TC, subj) {
+  1st: LESSON(subj);
+}
+
+root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
+  [day_of_week(at) == 1] 0h: MONDAY(DAY, LEC);
+}
+```
+
+Метки тела заменяются смещениями таблицы (нет метки — `E16`), первый параметр — всегда таблица, пожары таблицы (`->`) добавляются после строк тела. Так один шаблон дня едет на разных сетках звонков — см. живое расписание группы в `examples/real/bvt231.cyclo`.
+
 ## Примеры
 
-- `examples/valid/` — контрактные: `route.cyclo` (+ `libs/route_lib.cyclo`, `route.expected.json` — дословно §1 спеки), `neg_offsets`, `repeat`, `conditions`, `imports`. Запуск: `cargo run -p cyclorithm-cli -- run examples/valid/<name>.cyclo --start … --end …`, сверка с `.expected.json`.
-- `examples/real/` — живые расписания: `101.cyclo`, автопарк `fleet.cyclo` (+ `fleet_lib.cyclo`, 5 бортов, 218 событий за неделю).
+- `examples/valid/` — контрактные: `route.cyclo` (+ `libs/route_lib.cyclo`, `route.expected.json` — дословно §1 спеки), `attrs`, `routines`, `conditions`, `repeat`, `neg_offsets`, `imports`, `bitwise`, `bool_groups`, `mkdate`, `rand`. Запуск: `cargo run -p cyclorithm-cli -- run examples/valid/<name>.cyclo --start … --end …`, сверка с `.expected.json`.
+- `examples/real/` — живые расписания: автобус `101.cyclo`, автопарк `fleet.cyclo` (+ `fleet_lib.cyclo`, 5 бортов, 218 событий за неделю), учебная группа `bvt231.cyclo` (рутины, семестр, госпраздники).
 - `examples/invalid/bad_*.cyclo` — негативные кейсы: минимум один файл на код ошибки (`bad_syntax.cyclo` — ошибка парсера без кода).
 
 ## Разработка
@@ -100,13 +161,12 @@ $ cargo clippy --workspace --all-targets
 
 ## Дорожная карта
 
-Уже готово: условия и объявления, `use`-импорты, повторы `repeat`/`fill`, отрицательные смещения, выражения §4.17.
+Уже готово (0.3.0): условия и объявления, `use`-импорты, повторы `repeat`/`fill`, отрицательные смещения, выражения §4.17, календарь прелюдии (`workday`, `day_of_week`, `datestr`, `mkdate`, `rand`), атрибуты точек и действий (`E15`), таблицы времени и рутины (`E16`).
 
 Дальше:
 
-- **Атрибуты точек** (`point_attrs`, черновик согласован): произвольные данные точки прямо в `.cyclo`, в выводе — поле `point_attrs` у каждого события; дублям — новый код `E15` (коды `E10`/`E11` уже заняты).
 - **`next-event` в CLI**: ближайшее будущее событие к текущему моменту — задел под аналог cron.
-- **GUI-редактор**: таймлайн + редактор кода + таблица событий в реальном времени. Идея, scope под вопросом — возможно, отдельный репозиторий.
+- **Плейграунд**: таймлайн + редактор кода + таблица событий в реальном времени (прототип — отдельный репозиторий `cyclorithm-playground`, запуск — `run.sh`).
 
 ## Лицензия
 
