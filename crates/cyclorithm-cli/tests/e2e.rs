@@ -1,6 +1,6 @@
 //! Сквозные тесты контракта CLI (§1 спеки): JSON в stdout, ошибки в stderr.
 
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn cyclo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cyclo"))
@@ -11,6 +11,27 @@ fn run(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("бинарь cyclo обязан запускаться")
+}
+
+/// Прогон со stdin вместо файла (`-`): вход подаётся в поток.
+fn run_stdin(args: &[&str], input: &str) -> Output {
+    use std::io::Write as _;
+    let mut child = cyclo()
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("бинарь cyclo обязан запускаться");
+    child
+        .stdin
+        .take()
+        .expect("stdin обязан открыться")
+        .write_all(input.as_bytes())
+        .expect("запись в stdin обязана удаваться");
+    child
+        .wait_with_output()
+        .expect("ожидание обязано удаваться")
 }
 
 fn stdout_json(out: &Output) -> serde_json::Value {
@@ -307,7 +328,6 @@ fn syntax_error_has_no_e_code() {
 #[test]
 fn bad_cli_args_give_usage() {
     for args in [
-        vec![],
         vec!["run"],
         vec!["run", "../../examples/valid/route.cyclo"],
         vec![
@@ -324,10 +344,157 @@ fn bad_cli_args_give_usage() {
             "--end",
             "2026-01-11T00:00:00",
         ],
+        vec!["next", "../../examples/real/cron.cyclo", "--within", "1x"],
+        vec!["next", "../../examples/real/cron.cyclo", "-n", "много"],
+        vec!["check"],
+        vec!["bogus"],
     ] {
         let out = run(&args);
         assert!(!out.status.success(), "для {args:?}");
         assert!(out.stdout.is_empty(), "для {args:?}");
         assert!(!out.stderr.is_empty(), "для {args:?}");
     }
+}
+
+#[test]
+fn help_and_version() {
+    // Без аргументов и --help — справка в stdout, код 0.
+    for args in [vec![], vec!["--help"]] {
+        let out = run(&args);
+        assert!(out.status.success(), "для {args:?}");
+        let text = String::from_utf8(out.stdout.clone()).expect("stdout — UTF-8");
+        assert!(text.starts_with("usage:"), "для {args:?}");
+    }
+    let out = run(&["--version"]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout.clone()).expect("stdout — UTF-8");
+    assert!(text.starts_with("cyclo "), "версия: {text:?}");
+}
+
+#[test]
+fn check_command() {
+    let out = run(&["check", "../../examples/valid/route.cyclo"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).expect("stdout — UTF-8"),
+        "ok\n"
+    );
+    let out = run(&["check", "../../examples/invalid/bad_e16.cyclo"]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).expect("stderr — UTF-8");
+    assert!(err.contains("unknown table 'SHORT'"), "{err:?}");
+}
+
+#[test]
+fn short_dates_and_deltas() {
+    // --start датой, --end дельтой от старта: те же 18 событий, что в контракте.
+    let out = run(&[
+        "run",
+        "../../examples/valid/route.cyclo",
+        "--start",
+        "2026-01-09",
+        "--end",
+        "+1d",
+    ]);
+    let got = stdout_json(&out);
+    assert_eq!(got["events"].as_array().expect("массив").len(), 18);
+    assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00");
+}
+
+#[test]
+fn stdin_source_matches_file() {
+    // `-` читает программу из stdin (без импортов — не зависит от cwd).
+    let args = [
+        "run",
+        "-",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ];
+    let from_file = run(&[
+        "run",
+        "../../examples/valid/neg_offsets.cyclo",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ]);
+    assert!(from_file.status.success());
+    let input = include_str!("../../../examples/valid/neg_offsets.cyclo");
+    let from_stdin = run_stdin(&args, input);
+    assert!(from_stdin.status.success());
+    assert_eq!(from_stdin.stdout, from_file.stdout);
+    // check и next тоже едят stdin.
+    let out = run_stdin(&["check", "-"], input);
+    assert!(out.status.success());
+    let out = run_stdin(
+        &["next", "-", "--from", "2026-01-10T00:00:00", "-n", "2"],
+        input,
+    );
+    assert!(out.status.success());
+    let got: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("stdout — один JSON-объект");
+    assert_eq!(got["events"].as_array().expect("массив").len(), 2);
+}
+
+#[test]
+fn next_command() {
+    let cron = "../../examples/real/cron.cyclo";
+    // Первые 3 события понедельника — часовые пинги с полуночи.
+    let out = run(&["next", cron, "--from", "2026-09-07T00:00:00", "-n", "3"]);
+    let got = stdout_json(&out);
+    assert_eq!(got["from"], "2026-09-07T00:00:00");
+    let times: Vec<&str> = got["events"]
+        .as_array()
+        .expect("массив")
+        .iter()
+        .map(|e| e["time"].as_str().expect("строка"))
+        .collect();
+    assert_eq!(
+        times,
+        vec![
+            "2026-09-07T00:00:00",
+            "2026-09-07T01:00:00",
+            "2026-09-07T02:00:00"
+        ]
+    );
+    // n считает события: отчёт 09:30 + чистка 10:00.
+    let out = run(&["next", cron, "--from", "2026-09-07T09:30:00", "-n", "2"]);
+    let got = stdout_json(&out);
+    let cmds: Vec<&str> = got["events"]
+        .as_array()
+        .expect("массив")
+        .iter()
+        .map(|e| e["action_attrs"]["cmd"].as_str().expect("строка"))
+        .collect();
+    assert_eq!(cmds, vec!["/opt/jobs/report.py", "/opt/jobs/cleanup.sh"]);
+    // Нулевой горизонт — пусто без ошибки.
+    let out = run(&[
+        "next",
+        cron,
+        "--from",
+        "2026-09-07T00:00:00",
+        "--within",
+        "0",
+    ]);
+    let got = stdout_json(&out);
+    assert_eq!(got["events"].as_array().expect("массив").len(), 0);
+    // --ndjson — по событию на строку.
+    let out = run(&[
+        "next",
+        cron,
+        "--from",
+        "2026-09-07T00:00:00",
+        "-n",
+        "2",
+        "--ndjson",
+    ]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).expect("stdout — UTF-8");
+    assert_eq!(text.lines().count(), 2);
+    let first: serde_json::Value =
+        serde_json::from_str(text.lines().next().expect("строка")).expect("JSON");
+    assert_eq!(first["time"], "2026-09-07T00:00:00");
 }
