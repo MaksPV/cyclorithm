@@ -55,7 +55,7 @@ fn run() -> i32 {
         }
     };
     groups.push(src.decls.clone());
-    let defs = match resolve_units(&groups) {
+    let (defs, _tables) = match resolve_units(&groups) {
         Ok(defs) => defs,
         Err(e) => {
             eprintln!("{e}");

@@ -149,8 +149,51 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
             let body = build_or(inner.next().expect("pred: тело"));
             Ok(Decl::Pred { name, body })
         }
+        Rule::time_const_decl => {
+            let mut inner = kind.into_inner();
+            let name = inner.next().expect("time_const: имя").as_str().to_owned();
+            let duration = build_duration(inner.next().expect("time_const: duration"));
+            let rows = inner.map(build_slot_row).collect::<Result<_, _>>()?;
+            Ok(Decl::TimeConst {
+                name,
+                duration,
+                rows,
+            })
+        }
         r => unreachable!("decl: неожиданное правило {r:?}"),
     }
+}
+
+/// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
+fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::slot_row);
+    let mut inner = pair.into_inner();
+    let mut first = inner.next().expect("slot_row: условие или метка");
+    let mut condition = None;
+    if first.as_rule() == Rule::condition_block {
+        let cond = first.into_inner().next().expect("condition_block: условие");
+        condition = Some(build_cond(cond));
+        first = inner.next().expect("slot_row: метка");
+    }
+    debug_assert_eq!(first.as_rule(), Rule::label);
+    let label = first.as_str().to_owned();
+    let offset = build_duration(inner.next().expect("slot_row: смещение"));
+    let firing = inner.next().map(|p| {
+        debug_assert_eq!(p.as_rule(), Rule::slot_fire);
+        p.into_inner()
+            .next()
+            .expect("slot_fire: invocation")
+            .into_inner()
+            .next()
+            .map(build_invocation)
+            .expect("invocation: вызов")
+    });
+    Ok(SlotRow {
+        condition,
+        label,
+        offset,
+        firing,
+    })
 }
 
 fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>> {
@@ -158,11 +201,13 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
     let mut inner = pair.into_inner();
     let name = unquote(inner.next().expect("schedule: имя"));
     let mut points = Vec::new();
+    let mut routines = Vec::new();
     let mut cycles = Vec::new();
     let mut root = None;
     for p in inner {
         match p.as_rule() {
             Rule::point => points.push(build_point(p)),
+            Rule::routine => routines.push(build_routine(p)?),
             Rule::cycle => cycles.push(build_cycle(p)?),
             Rule::root_cycle => root = Some(build_root_cycle(p)?),
             r => unreachable!("schedule: неожиданное правило {r:?}"),
@@ -171,6 +216,7 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
     Ok(Schedule {
         name,
         points,
+        routines,
         cycles,
         root: root.expect("schedule: root_cycle обязателен"),
     })
@@ -240,6 +286,29 @@ fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Ru
     })
 }
 
+/// `routine MONDAY(TC) { ... }`: параметры как у цикла (`params[0]` — таблица).
+fn build_routine(pair: Pair<Rule>) -> Result<Routine, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine);
+    let mut inner = pair.into_inner();
+    let name = inner.next().expect("routine: имя").as_str().to_owned();
+    let mut params = Vec::new();
+    let mut stmts = Vec::new();
+    for p in inner {
+        match p.as_rule() {
+            Rule::cycle_params => {
+                params = p.into_inner().map(|p| p.as_str().to_owned()).collect();
+            }
+            Rule::routine_stmt => stmts.push(build_routine_stmt(p)?),
+            r => unreachable!("routine: неожиданное правило {r:?}"),
+        }
+    }
+    Ok(Routine {
+        name,
+        params,
+        stmts,
+    })
+}
+
 fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
     let span = pair.as_span();
@@ -269,10 +338,67 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     };
     let offset = build_duration(offset_pair);
     let body = inner.next().expect("stmt: тело");
+    let (repeat, invocation) = build_row_body(body)?;
+    Ok(Stmt {
+        offset,
+        negative,
+        repeat,
+        condition,
+        invocation,
+    })
+}
+
+/// Строка routine: `[условие] (<смещение> | <метка>): <тело>;`.
+/// Минус — только у длительности (`-10m` от конца таблицы).
+fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine_stmt);
+    let span = pair.as_span();
+    let mut inner = pair.into_inner();
+    let mut first = inner.next().expect("routine_stmt: условие или смещение");
+    let mut condition = None;
+    if first.as_rule() == Rule::condition_block {
+        let cond = first.into_inner().next().expect("condition_block: условие");
+        condition = Some(build_cond(cond));
+        first = inner.next().expect("routine_stmt: смещение или метка");
+    }
+    debug_assert_eq!(first.as_rule(), Rule::routine_offset);
+    let mut off = first.into_inner();
+    let head = off.next().expect("routine_offset: смещение или метка");
+    let (negative, offset) = if head.as_rule() == Rule::neg_sign {
+        let dur = off.next().expect("routine_stmt: длительность после минуса");
+        if head.as_span().end() != dur.as_span().start() {
+            return Err(pest::error::Error::new_from_span(
+                pest::error::ErrorVariant::CustomError {
+                    message: "minus in offset must be glued to duration ('-10m')".to_owned(),
+                },
+                span,
+            ));
+        }
+        (true, RoutineOffset::Duration(build_duration(dur)))
+    } else if head.as_rule() == Rule::duration {
+        (false, RoutineOffset::Duration(build_duration(head)))
+    } else {
+        debug_assert_eq!(head.as_rule(), Rule::label);
+        (false, RoutineOffset::Label(head.as_str().to_owned()))
+    };
+    let body = inner.next().expect("routine_stmt: тело");
+    let (repeat, invocation) = build_row_body(body)?;
+    Ok(RoutineStmt {
+        offset,
+        negative,
+        repeat,
+        condition,
+        invocation,
+    })
+}
+
+/// Тело строки (`stmt_body`): опциональный модификатор повторов и вызов.
+/// Общее для `stmt` и `routine_stmt`.
+fn build_row_body(body: Pair<Rule>) -> Result<(Repeat, Invocation), pest::error::Error<Rule>> {
     debug_assert_eq!(body.as_rule(), Rule::stmt_body);
     let mut binner = body.into_inner();
     let bfirst = binner.next().expect("stmt_body: модификатор или вызов");
-    let (repeat, call) = if bfirst.as_rule() == Rule::repeat_mod {
+    if bfirst.as_rule() == Rule::repeat_mod {
         let repeat = build_repeat(bfirst)?;
         let call = binner
             .next()
@@ -280,12 +406,17 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
             .into_inner()
             .next()
             .expect("invocation: вызов");
-        (repeat, call)
+        Ok((repeat, build_invocation(call)))
     } else {
         let call = bfirst.into_inner().next().expect("invocation: вызов");
-        (Repeat::Once, call)
-    };
-    let invocation = match call.as_rule() {
+        Ok((Repeat::Once, build_invocation(call)))
+    }
+}
+
+/// Вызов: действие точки или вызов цикла/routine
+/// (`MONDAY(DAY)` от вызова цикла отличит валидация по имени).
+fn build_invocation(call: Pair<Rule>) -> Invocation {
+    match call.as_rule() {
         Rule::point_action => {
             let mut parts = call.into_inner();
             let point = parts.next().expect("вызов: точка").as_str().to_owned();
@@ -317,14 +448,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
             Invocation::CycleCall { name, args }
         }
         r => unreachable!("stmt: неожиданный вызов {r:?}"),
-    };
-    Ok(Stmt {
-        offset,
-        negative,
-        repeat,
-        condition,
-        invocation,
-    })
+    }
 }
 
 /// Условие строки (§3 спеки): логика над сравнениями.
@@ -822,13 +946,30 @@ pub enum Decl {
         name: String,
         body: Cond,
     },
+    /// Таблица слотов: `time_const DAY duration = 21h35m { 1st: 9h; ... }`.
+    TimeConst {
+        name: String,
+        duration: Duration,
+        rows: Vec<SlotRow>,
+    },
 }
 
-/// Корень расписания: `schedule "имя" { point* cycle* root_cycle }`.
+/// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
+/// `firing` — собственный вызов слота (пожар при каждом инстанцировании).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotRow {
+    pub condition: Option<Cond>,
+    pub label: String,
+    pub offset: Duration,
+    pub firing: Option<Invocation>,
+}
+
+/// Корень расписания: `schedule "имя" { point* routine* cycle* root_cycle }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub name: String,
     pub points: Vec<Point>,
+    pub routines: Vec<Routine>,
     pub cycles: Vec<Cycle>,
     pub root: RootCycle,
 }
@@ -850,6 +991,35 @@ pub struct Cycle {
     pub params: Vec<String>,
     pub duration: Duration,
     pub stmts: Vec<Stmt>,
+}
+
+/// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня (§3).
+/// `params[0]` — таблица (`time_const`), остальные — данные как у цикла.
+/// Вызов routine — `CycleCall` с таблицей первым аргументом
+/// (`MONDAY(DAY)`); routine от цикла отличает валидация по имени.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routine {
+    pub name: String,
+    pub params: Vec<String>,
+    pub stmts: Vec<RoutineStmt>,
+}
+
+/// Одна строка routine: `[условие] (<смещение> | <метка>): [<повтор>] <вызов>;`.
+/// Метка разрешается в смещение таблицы в момент вызова.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutineStmt {
+    pub offset: RoutineOffset,
+    pub negative: bool,
+    pub repeat: Repeat,
+    pub condition: Option<Cond>,
+    pub invocation: Invocation,
+}
+
+/// Смещение строки routine: обычная длительность или метка таблицы.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoutineOffset {
+    Duration(Duration),
+    Label(String),
 }
 
 /// `root_cycle start_time = "...", duration = 24h { ... }`.
@@ -1584,6 +1754,7 @@ mod tests {
                     attrs: None,
                 },
             ],
+            routines: Vec::new(),
             cycles: vec![
                 Cycle {
                     name: "CITY_ROUTE".to_owned(),
@@ -2002,5 +2173,87 @@ mod tests {
         assert!(s.cycles[0].stmts[3].negative);
         assert_eq!(s.cycles[1].stmts.len(), 2);
         assert_eq!(s.root.stmts.len(), 5);
+    }
+
+    #[test]
+    fn parses_time_const_with_firing() {
+        // Слоты с метками; `->` — слот и вызов в одном лице, условие опционально.
+        let src = "time_const DAY duration = 21h35m { \
+            1st: 9h; \
+            [workday(at)] lunch: 12h20m -> LUNCH(); \
+            3rd: 13h -> BELL.ring(); \
+        } schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let f = parse(src).expect("таблица обязана разбираться");
+        let (name, duration, rows) = match &f.decls[..] {
+            [Decl::TimeConst {
+                name,
+                duration,
+                rows,
+            }] => (name, duration, rows),
+            d => panic!("ожидалась одна time_const, получено {d:?}"),
+        };
+        assert_eq!(name, "DAY");
+        assert_eq!(duration.raw, "21h35m");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].label, "1st");
+        assert_eq!(rows[0].offset.raw, "9h");
+        assert!(rows[0].condition.is_none());
+        assert!(rows[0].firing.is_none());
+        assert_eq!(rows[1].label, "lunch");
+        assert!(rows[1].condition.is_some());
+        assert!(matches!(
+            rows[1].firing,
+            Some(Invocation::CycleCall { ref name, ref args })
+                if name == "LUNCH" && args.is_empty()
+        ));
+        assert!(matches!(
+            rows[2].firing,
+            Some(Invocation::PointAction { ref point, ref action, .. })
+                if point == "BELL" && action == "ring"
+        ));
+    }
+
+    #[test]
+    fn parses_routine_with_labels_and_durations() {
+        // `1st` — метка, `45m` — смещение (длительность пробуется раньше),
+        // пустая рутина валидна.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine MONDAY(TC) { [odd(at)] 1st: A.x(); 45m: A.x(); } \
+            routine EMPTY(TC) {} \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { [dow(at) == 1] 0h: MONDAY(DAY); } }";
+        let s = parse(src).expect("рутины обязаны разбираться").schedule;
+        assert_eq!(s.routines.len(), 2);
+        assert_eq!(s.routines[0].name, "MONDAY");
+        assert_eq!(s.routines[0].params, vec!["TC".to_owned()]);
+        assert_eq!(s.routines[0].stmts.len(), 2);
+        assert_eq!(
+            s.routines[0].stmts[0].offset,
+            RoutineOffset::Label("1st".to_owned())
+        );
+        assert!(s.routines[0].stmts[0].condition.is_some());
+        assert!(matches!(
+            s.routines[0].stmts[1].offset,
+            RoutineOffset::Duration(ref d) if d.raw == "45m"
+        ));
+        assert!(s.routines[1].stmts.is_empty());
+        assert!(matches!(
+            s.root.stmts[0].invocation,
+            Invocation::CycleCall { ref name, .. } if name == "MONDAY"
+        ));
+    }
+
+    #[test]
+    fn parses_ms_like_name_as_duration() {
+        // Ловушка `1ms`: разбирается длительностью, а не меткой.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            routine R(TC) { 1ms: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let s = parse(src).expect("строка обязана разбираться").schedule;
+        assert!(matches!(
+            s.routines[0].stmts[0].offset,
+            RoutineOffset::Duration(ref d) if d.raw == "1ms"
+        ));
     }
 }

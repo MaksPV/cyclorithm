@@ -108,7 +108,7 @@ fn pipeline(
     })
     .map_err(Diag::import)?;
     groups.push(file.decls.clone());
-    let defs = resolve_units(&groups).map_err(Diag::valid)?;
+    let (defs, _tables) = resolve_units(&groups).map_err(Diag::valid)?;
     let tables = validate_names(ast)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))

@@ -135,6 +135,7 @@ mod tests {
                 Decl::Const { name, .. } => name.clone(),
                 Decl::Fun { name, .. } => name.clone(),
                 Decl::Pred { name, .. } => name.clone(),
+                Decl::TimeConst { name, .. } => name.clone(),
             })
             .collect()
     }

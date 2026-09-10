@@ -300,7 +300,7 @@ mod tests {
         })
         .expect("импорты тестов обязаны разрешаться");
         groups.push(file.decls.clone());
-        let d: &'static Defs = Box::leak(Box::new(resolve_units(&groups).unwrap()));
+        let d: &'static Defs = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
         check_conditions(ast, d).unwrap();
         (ast, t, d)
     }
@@ -473,7 +473,7 @@ mod tests {
         check_recursion(ast, &t).unwrap();
         check_bounds(ast, &t).unwrap();
         let groups = vec![file.decls.clone()];
-        let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
+        let d = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
         check_conditions(ast, d).expect("статика видит имя параметра");
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         let err = expand(ast, &t, d, s, e).expect_err("несвязанный параметр — ошибка");
@@ -546,7 +546,7 @@ mod tests {
             check_recursion(ast, &t).unwrap();
             check_bounds(ast, &t).unwrap();
             let groups = vec![parsed.decls.clone()];
-            let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
+            let d = Box::leak(Box::new(resolve_units(&groups).unwrap().0));
             check_conditions(ast, d).unwrap();
             let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
             let err = expand(ast, &t, d, s, e).expect_err("атрибуты обязаны браковаться");

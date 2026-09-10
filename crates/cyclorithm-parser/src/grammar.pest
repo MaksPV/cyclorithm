@@ -13,13 +13,22 @@ decls_file  = { SOI ~ decl* ~ EOI }
 // (его наличие бракует резолвер кодом E14, а не синтаксис).
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { "use" ~ string ~ ";" }
-schedule    = { "schedule" ~ string ~ "{" ~ point* ~ cycle* ~ root_cycle ~ "}" }
+schedule    = { "schedule" ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
-decl        = { const_decl | fun_decl | pred_decl }
+decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
 const_decl  = { "const" ~ IDENT ~ "=" ~ decl_value ~ ";" }
 fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
+// Таблица слотов (§3): именованные смещения для routine; `->` — слот
+// и собственный вызов в одном лице (пожар при каждом инстанцировании).
+time_const_decl = { "time_const" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
+slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
+slot_fire   = { "->" ~ invocation }
+// Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
+// Ловушка как с `ms`: `1ms` разберётся длительностью, а не меткой
+// (в `routine_offset` длительность пробуется раньше) — таких имён не давать.
+label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
 // Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
 decl_value  = { concat | bitor }
@@ -33,6 +42,16 @@ cycle       = { "cycle" ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ 
 // Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (E04).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
+// данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
+// тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
+routine     = { "routine" ~ IDENT ~ cycle_params? ~ "{" ~ routine_stmt* ~ "}" }
+routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
+// Сначала длительность, потом метка: иначе `45m` съестся как метка.
+// Граница `!word_tail` — чтобы `1st` не резалось на длительность `1s` + мусор:
+// PEG не возвращается в альтернативу, если правило уже успело (потом падает `:`).
+// Минус — только у длительности (`-10m` от конца таблицы; `-1st` нет).
+routine_offset = { neg_sign? ~ duration ~ !word_tail | label }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
 // Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
 // строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).

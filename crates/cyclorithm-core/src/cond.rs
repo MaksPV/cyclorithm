@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cyclorithm_parser::{
-    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Invocation, Schedule, Stmt,
+    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow, Stmt,
 };
 
 use crate::Error;
@@ -67,15 +67,33 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Таблица слотов `time_const`: длительность, строки и юнит исходника
+/// (для `__`-видимости условий `->`-строк — как у `Def.unit`).
+#[derive(Debug, Clone)]
+pub struct TimeTable {
+    pub name: String,
+    pub duration: Duration,
+    pub rows: Vec<SlotRow>,
+    pub unit: usize,
+}
+
+/// Реестр таблиц рядом с `Defs`: последнее объявление побеждает.
+#[derive(Debug, Default, Clone)]
+pub struct TableReg {
+    pub tables: HashMap<String, TimeTable>,
+}
+
 /// Собрать определения одного файла поверх системных.
-pub fn resolve_defs(decls: &[Decl]) -> Result<Defs, Error> {
+pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
     resolve_units(&[decls.to_vec()])
 }
 
 /// Собрать определения: оверлей групп в порядке наложения
 // (последняя группа — тело программы), затем проверить все тела.
 // Дубли — только внутри одной группы (`E04`); между файлами побеждает последнее.
-pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
+// Таблицы (`time_const`) — отдельным реестром: своё пространство имён
+// (позиции ссылок не пересекаются с выражениями), дубли — `duplicate table`.
+pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
     let system = cyclorithm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
     let mut map = HashMap::new();
     let mut all: Vec<String> = Vec::new();
@@ -86,14 +104,37 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
         }
         map.insert(name, def);
     }
+    let mut tables = TableReg::default();
     for (i, group) in units.iter().enumerate() {
         let unit = i + 1;
         let mut seen = HashSet::new();
+        let mut seen_tables = HashSet::new();
         for d in group {
+            if let Decl::TimeConst {
+                name,
+                duration,
+                rows,
+            } = d
+            {
+                if !seen_tables.insert(name.clone()) {
+                    return Err(Error::e04("table", name));
+                }
+                tables.tables.insert(
+                    name.clone(),
+                    TimeTable {
+                        name: name.clone(),
+                        duration: duration.clone(),
+                        rows: rows.clone(),
+                        unit,
+                    },
+                );
+                continue;
+            }
             let (name, kind) = match d {
                 Decl::Const { name, .. } => (name, "const"),
                 Decl::Fun { name, .. } => (name, "fun"),
                 Decl::Pred { name, .. } => (name, "pred"),
+                Decl::TimeConst { .. } => unreachable!("таблицы разобраны выше"),
             };
             if !seen.insert(name.clone()) {
                 return Err(Error::e04(kind, name));
@@ -110,11 +151,12 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<Defs, Error> {
     for name in &all {
         check_def(&defs, name)?;
     }
-    Ok(defs)
+    Ok((defs, tables))
 }
 
 fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
     match decl {
+        Decl::TimeConst { .. } => unreachable!("таблицы в Defs не попадают"),
         Decl::Const { name, body } => (
             name.clone(),
             Def {
@@ -1248,7 +1290,7 @@ mod tests {
     }
 
     fn test_defs() -> Defs {
-        resolve_defs(&[]).expect("прелюдия обязана проверяться")
+        resolve_defs(&[]).expect("прелюдия обязана проверяться").0
     }
 
     fn yes(row: &str, at: i64) -> bool {
@@ -1281,7 +1323,7 @@ mod tests {
     fn defs_of(body: &str) -> Result<Defs, Error> {
         let src = format!("{body} schedule \"T\" {{ point A {{ actions = [x]; }} root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0m: A.x(); }} }}");
         let s = p::parse(&src).expect("фикстура обязана разбираться");
-        resolve_defs(&s.decls)
+        resolve_defs(&s.decls).map(|(d, _)| d)
     }
 
     fn eval_with(body: &str, row: &str, at: i64) -> Result<bool, Error> {
@@ -1918,7 +1960,7 @@ mod tests {
 
     fn check_rows(src: &str) -> Result<(), Error> {
         let f = p::parse(src).expect("фикстура обязана разбираться");
-        let d =
+        let (d, _) =
             resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
         check_conditions(&f.schedule, &d)
     }
@@ -2006,7 +2048,7 @@ mod tests {
     fn cross_file_shadow_wins_silently() {
         // Импорт переопределяет системное имя без E04; программа — поверх.
         let imp = p::parse_decls("const sat = 3;").unwrap();
-        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("weekend(at)");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 0, &d).unwrap());
@@ -2016,13 +2058,13 @@ mod tests {
     fn private_names_do_not_cross_files() {
         // `__` импорта не видно из программы — E11.
         let imp = p::parse_decls("fun __h(t) = t;").unwrap();
-        let d = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("__h(at) == 1");
         let e = check_single(&c, &d).expect_err("чужое __ — ошибка");
         assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__h'"));
         // Своё `__` внутри своего файла работает.
         let prog = p::parse_decls("fun __p(t) = t + 1;").unwrap();
-        let d = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
         let c = cond_of("__p(at) == 3");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 2, &d).unwrap());
@@ -2033,10 +2075,31 @@ mod tests {
         // Дубль — только внутри одного файла.
         let a = p::parse_decls("const K = 1;").unwrap();
         let b = p::parse_decls("const K = 2;").unwrap();
-        let d = resolve_units(&[a, b]).expect("склейка обязана сходиться");
+        let (d, _) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
         let c = cond_of("at >= K");
         check_single(&c, &d).unwrap();
         assert!(eval_cond(&c, 2, &d).unwrap());
         assert!(!eval_cond(&c, 1, &d).unwrap());
+    }
+
+    #[test]
+    fn time_const_registry_dup_and_overlay() {
+        // Дубль таблицы внутри файла — E04 `duplicate table`.
+        let d = p::parse_decls(
+            "time_const D duration = 1h { 1st: 0m; } time_const D duration = 2h { 1st: 0m; }",
+        )
+        .unwrap();
+        let e = resolve_units(&[d]).expect_err("дубль таблицы");
+        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate table 'D'"));
+        // Между файлами побеждает последнее; в выражениях таблиц не видно (E11).
+        let a = p::parse_decls("time_const D duration = 1h { 1st: 0m; }").unwrap();
+        let b = p::parse_decls("time_const D duration = 2h { 1st: 0m; }").unwrap();
+        let (d, reg) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
+        assert_eq!(reg.tables["D"].duration.raw, "2h");
+        assert_eq!(reg.tables["D"].unit, 2);
+        assert_eq!(reg.tables["D"].rows.len(), 1);
+        let c = cond_of("at >= D");
+        let e = check_single(&c, &d).expect_err("таблица — не имя условия");
+        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'D'"));
     }
 }
