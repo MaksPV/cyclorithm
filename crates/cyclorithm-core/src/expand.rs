@@ -11,9 +11,11 @@
 //! валидации (`validate_names`, `check_recursion`, `check_bounds`):
 //! рекурсивные цепочки здесь зациклили бы развёртку.
 
+use std::collections::HashMap;
+
 use cyclorithm_parser::{Invocation, Schedule};
 
-use crate::cond::{eval_cond, Defs};
+use crate::cond::{eval_cond_with_env, eval_expr_with_env, Defs, Value};
 use crate::datetime::parse_datetime;
 use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
 use crate::validate::{chain, root_actual_ms, NameTables};
@@ -30,12 +32,15 @@ pub struct Span {
 }
 
 /// Событие вывода (§2, §6): время — `i64` мс epoch, остальное — имена
-/// из исходника. Вектор от `expand` уже упорядочен.
+/// из исходника. Словари — копии атрибутов точки и значений блока строки
+/// (порядок ключей — порядок объявления). Вектор от `expand` уже упорядочен.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub time: i64,
     pub point: String,
     pub action: String,
+    pub point_attrs: Vec<(String, Value)>,
+    pub action_attrs: Vec<(String, Value)>,
     /// Ближайший экземпляр цикла, породивший событие.
     pub span: Span,
 }
@@ -66,6 +71,8 @@ pub fn expand(
     let mut seq: usize = 0;
     // Период влезает в i64: пришёл из root_period_ms.
     let period_ms = period as i64;
+    // Корень параметров не имеет: окружение строк — пустое.
+    let root_env: HashMap<String, Value> = HashMap::new();
     while t0 + k * period < end {
         let base = t0 + k * period;
         let root_span = Span {
@@ -92,6 +99,7 @@ pub fn expand(
                 },
                 &root_span,
                 &mut ctx,
+                &root_env,
             )?;
         }
         k += 1;
@@ -105,6 +113,8 @@ pub fn expand(
             time: e.time as i64,
             point: e.point,
             action: e.action,
+            point_attrs: e.point_attrs,
+            action_attrs: e.action_attrs,
             span: e.span,
         })
         .collect())
@@ -129,6 +139,8 @@ struct RawEvent {
     seq: usize,
     point: String,
     action: String,
+    point_attrs: Vec<(String, Value)>,
+    action_attrs: Vec<(String, Value)>,
     span: Span,
 }
 
@@ -149,59 +161,82 @@ struct Ctx<'a, 'n, 'o> {
     out: &'o mut Vec<RawEvent>,
     seq: &'o mut usize,
 }
-
 /// Развёртка строки: цепочка экземпляров по `chain` (валидация уже прошла,
 /// счёт конечен). Порядок обхода задаёт `seq` для сортировки.
+/// `env` — динамическое окружение параметров цепочки вызовов.
 fn unfold_stmt(
     stmt: &cyclorithm_parser::Stmt,
     frame: Frame<'_>,
     parent: &Span,
     ctx: &mut Ctx<'_, '_, '_>,
+    env: &HashMap<String, Value>,
 ) -> Result<(), Error> {
     let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, ctx.tables)?;
     for i in 0..count {
         let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
         if let Some(cond) = &stmt.condition {
             let at = i64::try_from(base).unwrap_or(i64::MAX);
-            if !eval_cond(cond, at, ctx.defs)? {
+            if !eval_cond_with_env(cond, at, ctx.defs, env)? {
                 continue;
             }
         }
-        unfold(&stmt.invocation, base, frame.k, parent, ctx)?;
+        unfold(&stmt.invocation, base, frame.k, parent, ctx, env)?;
     }
     Ok(())
 }
 
 /// Рекурсивная развёртка вызова с накопленной базой времени.
 /// `parent` — спан ближайшего цикла (для корня — `root_cycle`).
+/// Аргументы вычисляются в окружении вызывающего (`at` — время экземпляра),
+/// параметры связываются поверх него (вложенный вызов перетирает целиком);
+/// вызов без аргументов окружение не меняет (течёт вниз как есть).
 fn unfold(
     invocation: &Invocation,
     base: i128,
     k: i128,
     parent: &Span,
     ctx: &mut Ctx<'_, '_, '_>,
+    env: &HashMap<String, Value>,
 ) -> Result<(), Error> {
+    let at = i64::try_from(base).unwrap_or(i64::MAX);
     match invocation {
-        Invocation::PointAction { point, action } => {
+        Invocation::PointAction {
+            point,
+            action,
+            block,
+        } => {
+            let mut action_attrs = Vec::with_capacity(block.len());
+            for (key, value) in block {
+                action_attrs.push((key.clone(), eval_expr_with_env(value, at, ctx.defs, env)?));
+            }
             ctx.out.push(RawEvent {
                 time: base,
                 k,
                 seq: *ctx.seq,
                 point: point.clone(),
                 action: action.clone(),
+                // Атрибуты точки — следующим коммитом (разрешение по таблицам).
+                point_attrs: Vec::new(),
+                action_attrs,
                 span: parent.clone(),
             });
             *ctx.seq += 1;
             Ok(())
         }
-        Invocation::CycleCall { name } => {
+        Invocation::CycleCall { name, args } => {
             let cycle = ctx
                 .tables
                 .cycles
                 .get(name.as_str())
                 .expect("имена уже проверены");
+            // Арность уже проверена (E12): длины совпадают.
+            debug_assert_eq!(cycle.params.len(), args.len());
+            let mut child = env.clone();
+            for (param, arg) in cycle.params.iter().zip(args.iter()) {
+                child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
+            }
             let limit = duration_ms(&cycle.duration)?;
-            let child = Span {
+            let child_span = Span {
                 cycle: name.clone(),
                 start: clamp_i64(base),
                 end: clamp_i64(base + limit as i128),
@@ -217,15 +252,15 @@ fn unfold(
                         limit_raw: &cycle.duration.raw,
                         k,
                     },
-                    &child,
+                    &child_span,
                     ctx,
+                    &child,
                 )?;
             }
             Ok(())
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +366,117 @@ mod tests {
         // Окно встык к границе экземпляра: событие на end не входит.
         let (s, e) = window("2026-01-10T06:00:00", "2026-01-10T06:00:00");
         assert_eq!(expand(ast, &t, d, s, e).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn params_flow_into_blocks_and_conditions() {
+        // Параметр виден и в блоках, и в условиях; условие режет строки.
+        let src = "const LEC = {\"name\": \"БЖД\", \"type\": \"лек\"}; \
+            const PR = {\"name\": \"БЖД\", \"type\": \"прак\"}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle LESSON(subj) duration = 1h { \
+            0m: B.ring() { subject = subj.name, event = \"start\" }; \
+            [subj.type == \"лек\"] 30m: B.ring() { subject = subj.name, event = \"extra\" }; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 9h: LESSON(LEC); 13h: LESSON(PR); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(
+            times(&events),
+            vec![
+                "2026-01-01T09:00:00",
+                "2026-01-01T09:30:00",
+                "2026-01-01T13:00:00",
+            ]
+        );
+        let str_ = |s: &str| crate::cond::Value::Str(s.to_owned());
+        assert_eq!(
+            events[0].action_attrs,
+            vec![
+                ("subject".to_owned(), str_("БЖД")),
+                ("event".to_owned(), str_("start")),
+            ]
+        );
+        assert_eq!(
+            events[1].action_attrs,
+            vec![
+                ("subject".to_owned(), str_("БЖД")),
+                ("event".to_owned(), str_("extra")),
+            ]
+        );
+        // У практики нет extra-строки: третье событие — снова start.
+        assert_eq!(
+            events[2].action_attrs[1],
+            ("event".to_owned(), str_("start"))
+        );
+    }
+
+    #[test]
+    fn inner_cycle_sees_outer_params() {
+        // Динамический скоуп: безаргументный INNER видит subj вызывающего.
+        let src = "const LEC = {\"name\": \"БЖД\", \"type\": \"лек\"}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle INNER duration = 30m { [subj.type == \"лек\"] 0m: B.ring() { subject = subj.name }; } \
+            cycle LESSON(subj) duration = 1h { 0m: INNER(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: LESSON(LEC); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(times(&events), vec!["2026-01-01T09:00:00"]);
+        assert_eq!(
+            events[0].action_attrs,
+            vec![(
+                "subject".to_owned(),
+                crate::cond::Value::Str("БЖД".to_owned())
+            )]
+        );
+    }
+
+    #[test]
+    fn inner_call_shadows_outer_param() {
+        // Вложенный вызов со своим аргументом перетирает параметр целиком.
+        let src = "const LEC = {\"name\": \"Лек\", \"type\": \"лек\"}; \
+            const PR = {\"name\": \"Прак\", \"type\": \"прак\"}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle INNER(subj) duration = 30m { 0m: B.ring() { subject = subj.name }; } \
+            cycle OUTER(subj) duration = 1h { 0m: INNER(PR); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: OUTER(LEC); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(times(&events), vec!["2026-01-01T09:00:00"]);
+        assert_eq!(
+            events[0].action_attrs,
+            vec![(
+                "subject".to_owned(),
+                crate::cond::Value::Str("Прак".to_owned())
+            )]
+        );
+    }
+
+    #[test]
+    fn unbound_param_is_runtime_e11() {
+        // Статика пропускает (имя — параметр LESSON), строка без связывания — E11.
+        let src = "const LEC = {\"name\": \"БЖД\"}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle LESSON(subj) duration = 1h { 0m: B.ring() { subject = subj.name }; } \
+            cycle INNER duration = 30m { 0m: B.ring() { subject = subj.name }; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
+        let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        let ast = &file.schedule;
+        let t = validate_names(ast).unwrap();
+        check_recursion(ast, &t).unwrap();
+        check_bounds(ast, &t).unwrap();
+        let groups = vec![file.decls.clone()];
+        let d = Box::leak(Box::new(resolve_units(&groups).unwrap()));
+        check_conditions(ast, d).expect("статика видит имя параметра");
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let err = expand(ast, &t, d, s, e).expect_err("несвязанный параметр — ошибка");
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            ("E11", "unknown name 'subj'")
+        );
     }
 
     #[test]

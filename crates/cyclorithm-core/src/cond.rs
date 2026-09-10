@@ -8,7 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cyclorithm_parser::{ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Schedule};
+use cyclorithm_parser::{
+    ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Expr, Invocation, Schedule, Stmt,
+};
 
 use crate::Error;
 
@@ -211,31 +213,60 @@ fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error
 }
 
 /// Проверить все условия файла в порядке объявления: циклы, затем корень.
+/// Заодно — аргументы вызовов циклов и блоки действий (та же фаза E11/E12:
+/// сначала условие строки, затем вызов — как в момент развёртки).
 pub fn check_conditions(schedule: &Schedule, defs: &Defs) -> Result<(), Error> {
+    // Динамический скоуп: строка видит параметры любого цикла
+    // (связываются в момент вызова); статика знает только имена.
+    let mut params: HashMap<String, Ty> = HashMap::new();
+    for c in &schedule.cycles {
+        for p in &c.params {
+            params.insert(p.clone(), Ty::Dyn);
+        }
+    }
     for c in &schedule.cycles {
         for st in &c.stmts {
-            if let Some(cond) = &st.condition {
-                CxTy {
-                    defs,
-                    stack: Vec::new(),
-                    unit: defs.main,
-                    vars: HashMap::new(),
-                    data: false,
-                }
-                .infer_cond(cond)?;
-            }
+            check_row(st, defs, &params)?;
         }
     }
     for st in &schedule.root.stmts {
-        if let Some(cond) = &st.condition {
-            CxTy {
-                defs,
-                stack: Vec::new(),
-                unit: defs.main,
-                vars: HashMap::new(),
-                data: false,
+        check_row(st, defs, &params)?;
+    }
+    Ok(())
+}
+
+/// Проверить одну строку: условие, затем вызов (аргументы/блок).
+fn check_row(st: &Stmt, defs: &Defs, params: &HashMap<String, Ty>) -> Result<(), Error> {
+    let mut cx = CxTy {
+        defs,
+        stack: Vec::new(),
+        unit: defs.main,
+        vars: params.clone(),
+        data: false,
+    };
+    if let Some(cond) = &st.condition {
+        cx.infer_cond(cond)?;
+    }
+    // Аргументы и значения блока — позиция данных (мапы!): типы любые,
+    // видны и голые имена констант-данных.
+    cx.data = true;
+    match &st.invocation {
+        Invocation::PointAction { block, .. } => {
+            // Дубли ключей блока — E15 (порядок объявления).
+            let mut seen = HashSet::new();
+            for (k, _) in block {
+                if !seen.insert(k) {
+                    return Err(Error::e15(k));
+                }
             }
-            .infer_cond(cond)?;
+            for (_, v) in block {
+                cx.infer(v)?;
+            }
+        }
+        Invocation::CycleCall { args, .. } => {
+            for a in args {
+                cx.infer(a)?;
+            }
         }
     }
     Ok(())
@@ -717,6 +748,40 @@ pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
         vars: HashMap::new(),
     }
     .eval_cond(cond, at)
+}
+
+/// Вычислить условие в окружении параметров (динамический скоуп развёртки).
+/// Пустое окружение — то же, что `eval_cond`.
+pub fn eval_cond_with_env(
+    cond: &Cond,
+    at: i64,
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+) -> Result<bool, Error> {
+    CxEv {
+        defs,
+        stack: Vec::new(),
+        unit: defs.main,
+        vars: env.clone(),
+    }
+    .eval_cond(cond, at)
+}
+
+/// Вычислить выражение (аргумент вызова, значение блока) в окружении
+/// параметров. Несвязанное имя — E11, как голое неизвестное имя.
+pub fn eval_expr_with_env(
+    expr: &Expr,
+    at: i64,
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+) -> Result<Value, Error> {
+    let mut cx = CxEv {
+        defs,
+        stack: Vec::new(),
+        unit: defs.main,
+        vars: env.clone(),
+    };
+    eval_expr(expr, at, &mut cx)
 }
 
 impl CxEv<'_> {
@@ -1746,6 +1811,66 @@ mod tests {
             (e.code, e.message.as_str()),
             ("E12", "type mismatch: cannot mix number and string")
         );
+    }
+
+    #[test]
+    fn duplicate_block_keys_are_e15() {
+        // Дубль ключей блока — E15 в фазе строк.
+        let e = check_rows(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x() { a = 1, a = 2 }; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
+        )
+        .expect_err("дубль в блоке — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E15", "duplicate attribute 'a'")
+        );
+    }
+
+    #[test]
+    fn call_args_see_data_names() {
+        // Аргументы — позиция данных: константы-мапы видны, неизвестные — E11.
+        check_rows(
+            "const M = {\"n\": 1}; schedule \"T\" { point A { actions = [x]; } \
+            cycle R(a) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(M); } }",
+        )
+        .expect("мапа в аргументе обязана проходить");
+        check_rows(
+            "const M = {\"n\": 1}; schedule \"T\" { point A { actions = [x]; } \
+            cycle R(a) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(M.n); } }",
+        )
+        .expect("поле в аргументе обязано проходить");
+        let e = check_rows(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R(a) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(banana); } }",
+        )
+        .expect_err("неизвестное имя в аргументе — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E11", "unknown name 'banana'")
+        );
+        // Дубль в литерале аргумента — E15 (интеграция infer).
+        let e = check_rows(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R(a) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 6h: R({\"k\": 1, \"k\": 2}); } }",
+        )
+        .expect_err("дубль в аргументе — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("E15", "duplicate attribute 'k'")
+        );
+    }
+
+    fn check_rows(src: &str) -> Result<(), Error> {
+        let f = p::parse(src).expect("фикстура обязана разбираться");
+        let d = resolve_units(std::slice::from_ref(&f.decls)).expect("объявления обязаны проверяться");
+        check_conditions(&f.schedule, &d)
     }
 
     #[test]
