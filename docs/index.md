@@ -25,7 +25,7 @@ $ cyclo run route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00
 | [Концепты](reference/concepts.md) | Сущности: расписание, точка, цикл, рутина, событие |
 | [Синтаксис](reference/syntax.md) | Грамматика EBNF, имена, длительности, условия |
 | [Семантика](reference/semantics.md) | Решётка корневого цикла, повторы, данные |
-| [Ошибки](reference/errors.md) | Коды E01–E16: значение и исправление |
+| [Ошибки](reference/errors.md) | Ситуации поименно: сообщение и исправление |
 | [Формат вывода](reference/output.md) | JSON Schema и календарь ICS |
 | [CLI](reference/cli.md) | Команды `run` / `next` / `check`, коды 0/1/2 |
 | [Стандартная библиотека](reference/stdlib.md) | Календарь, `day_of_week`, `rand` |

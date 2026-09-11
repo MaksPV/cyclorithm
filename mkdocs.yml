@@ -58,7 +58,7 @@ nav:
       - Концепты: reference/concepts.md
       - Синтаксис: reference/syntax.md
       - Семантика: reference/semantics.md
-      - Ошибки E01–E16: reference/errors.md
+      - Ошибки: reference/errors.md
       - Формат вывода: reference/output.md
       - CLI: reference/cli.md
       - Стандартная библиотека: reference/stdlib.md
