@@ -1,0 +1,64 @@
+site_name: Cyclorithm
+site_url: https://MaksPV.github.io/cyclorithm/
+site_description: DSL и движок для циклических расписаний — циклы на входе, плоский список событий на выходе.
+site_author: MaksPV
+repo_url: https://github.com/MaksPV/cyclorithm
+repo_name: GitHub
+copyright: MIT — см. LICENSE
+
+theme:
+  name: material
+  language: ru
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Тёмная тема
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Светлая тема
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - toc:
+      permalink: true
+  - attr_list
+
+plugins:
+  - search:
+      lang: ru
+
+nav:
+  - Главная: index.md
+  - Новичкам:
+      - Установка: getting-started/install.md
+      - Туториал с нуля: getting-started/tutorial.md
+  - Справочник:
+      - Концепты: reference/concepts.md
+      - Синтаксис: reference/syntax.md
+      - Семантика: reference/semantics.md
+      - Ошибки E01–E16: reference/errors.md
+      - Формат вывода: reference/output.md
+      - CLI: reference/cli.md
+      - Стандартная библиотека: reference/stdlib.md
+      - Старая спека (legacy): reference/spec-legacy.md
+  - Рецепты: cookbook/index.md
+  - Экосистема:
+      - Интеграции: ecosystem/integrations.md
+      - Библиотеки и use: ecosystem/libraries.md
+  - Глоссарий: glossary.md
