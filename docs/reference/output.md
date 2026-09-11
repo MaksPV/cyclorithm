@@ -39,3 +39,10 @@
 `SUMMARY` — `action @ point`; `DESCRIPTION` — компактный JSON `action_attrs`.
 Пример — `examples/valid/route.ics`. Комбинация с `--ndjson` запрещена
 (код возврата `2`).
+
+## Контракт
+
+Маршрут — исполняемый: файлы `examples/valid/route.cyclo`,
+`examples/valid/libs/route_lib.cyclo` и `examples/valid/route.expected.json`
+взаимно соответствуют; вывод команды сверяется с эталоном (автоматически —
+в e2e-тестах).

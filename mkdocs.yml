@@ -63,7 +63,6 @@ nav:
       - Формат вывода: reference/output.md
       - CLI: reference/cli.md
       - Стандартная библиотека: reference/stdlib.md
-      - Полная спека: spec.md
   - Рецепты: cookbook/index.md
   - Экосистема:
       - Интеграции: ecosystem/integrations.md
