@@ -183,7 +183,8 @@ cycle LESSON(subj) duration = 1h35m {
 
 ```text
 const MORNING = 6;
-const LEC = {"subject": "БЖД", "room": "233/А"};
+const ROOM = "233/А";
+const LEC = {"subject": "БЖД", "room": ROOM};
 ```
 
 `fun` — число от аргумента, `pred` — условие от момента времени. Оба
