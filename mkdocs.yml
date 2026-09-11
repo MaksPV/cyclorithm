@@ -1,6 +1,6 @@
 site_name: Cyclorithm
 site_url: https://MaksPV.github.io/cyclorithm/
-site_description: DSL и движок для циклических расписаний — циклы на входе, плоский список событий на выходе.
+site_description: DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.
 site_author: MaksPV
 repo_url: https://github.com/MaksPV/cyclorithm
 repo_name: GitHub
