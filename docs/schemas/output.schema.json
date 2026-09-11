@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schedule", "start", "end", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schedule": {"type": "string"},
+    "start": {"type": "string"},
+    "end": {"type": "string"},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["time", "action", "point", "point_attrs", "action_attrs"],
+        "additionalProperties": false,
+        "properties": {
+          "time": {"type": "string"},
+          "action": {"type": "string"},
+          "point": {"type": "string"},
+          "point_attrs": {"type": "object"},
+          "action_attrs": {"type": "object"}
+        }
+      }
+    }
+  }
+}

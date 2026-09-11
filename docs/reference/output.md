@@ -20,8 +20,9 @@
 {"schedule": "Автобусный парк", "start": "...", "end": "...", "events": []}
 ```
 
-Поля `start`/`end` повторяют аргументы CLI. JSON Schema (draft 2020-12) —
-в [полной спеке](../spec.md).
+Поля `start`/`end` повторяют аргументы CLI. Машиночитаемая схема —
+[output.schema.json](../schemas/output.schema.json) (draft 2020-12):
+все `.expected.json` примеров ей соответствуют.
 
 ## Объект команды next
 
