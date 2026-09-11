@@ -11,7 +11,7 @@ root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
 }
 ```
 
-## Повторы: строгий и мягкий режимы
+## Повторы `repeat` и `fill`
 
 ```text
 [hour(at) >= 7 and not weekend(at)] 10h: repeat 2 SHUTTLE();
