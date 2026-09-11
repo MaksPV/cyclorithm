@@ -21,7 +21,7 @@
 ```
 
 Поля `start`/`end` повторяют аргументы CLI. JSON Schema (draft 2020-12) —
-в [legacy §6](spec-legacy.md).
+в [полной спеке](../spec.md).
 
 ## Объект команды next
 
