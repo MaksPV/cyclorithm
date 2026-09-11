@@ -4,15 +4,16 @@
 
 [![CI](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/ci.yml)
 [![build](https://github.com/MaksPV/cyclorithm/actions/workflows/build.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/build.yml)
+[![docs](https://github.com/MaksPV/cyclorithm/actions/workflows/docs.yml/badge.svg)](https://github.com/MaksPV/cyclorithm/actions/workflows/docs.yml)
 [![Release](https://img.shields.io/github/v/release/MaksPV/cyclorithm)](https://github.com/MaksPV/cyclorithm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
-**DSL и движок для циклических расписаний: повторяющиеся процессы описываются как циклы, на выходе — плоский список событий.**
+**DSL для циклических расписаний: процессы описываются циклами так, чтобы их читал человек, а проверял движок. На выходе — плоский список событий.**
 
 </div>
 
-Канон — `docs/spec.md`: грамматика, семантика, коды ошибок и формат вывода. Ниже — вход за пять минут.
+Документация — вики: [makspv.github.io/cyclorithm](https://makspv.github.io/cyclorithm/) (канон — `docs/` + примеры). Ниже — вход за пять минут.
 
 ## Быстрый старт
 
@@ -20,12 +21,12 @@
 
 ```console
 $ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00
-{"schedule":"Автобусный парк","start":"2026-01-09T00:00:00","end":"2026-01-10T00:00:00","events":[{"time":"2026-01-09T06:00:00","action":"depart","point":"DEPOT"},{"time":"2026-01-09T06:40:00","action":"arrive","point":"AIRPORT"},{"time":"2026-01-09T06:50:00","action":"depart","point":"AIRPORT"},{"time":"2026-01-09T07:20:00","action":"arrive","point":"DEPOT"}, ... ]}
+{"schedule":"Автобусный парк","start":"2026-01-09T00:00:00","end":"2026-01-10T00:00:00","events":[{"time":"2026-01-09T06:00:00","action":"depart","point":"DEPOT","point_attrs":{},"action_attrs":{}}, ... ]}
 ```
 
 Окно — пятница 09.01: работают все ветки маршрута (будние рейсы, повторы, рейс в 18:00). Всего 18 событий, выше — первые 4; полный вывод — в `examples/valid/route.expected.json`. В субботу останутся только рейсы в 6:00 и 12:00 — так работают условия (см. мини-тур).
 
-Команды: `cyclo run FILE --start T --end T` (окно), `cyclo next FILE [--from T] [--within D] [-n K]` (первые `K` событий от `from`, по умолчанию — now), `cyclo check FILE` (только проверки, печатает `ok`). Вместо файла — `-` (stdin, `use` тогда от cwd). Даты короткие: `2026-09-07`, `2026-09-07T09:30`, `+7d` (для `--end` — от `--start`). Флаг `--ndjson` (`run`, `next`) — по событию на строку для пайпов. Успех — вывод в stdout, код `0`. Ошибка — текст в stderr, в stdout ничего: код `1` (ввод, парсинг, валидация), код `2` (неверные аргументы, текст usage). Готовые бинарники (Linux/Windows, x86-64/ARM64) — в [релизах](https://github.com/MaksPV/cyclorithm/releases).
+Команды: `cyclo run FILE --start T --end T` (окно), `cyclo next FILE [--from T] [--within D] [-n K]` (первые `K` событий от `from`, по умолчанию — now), `cyclo check FILE` (только проверки, печатает `ok`). Вместо файла — `-` (stdin, `use` тогда от cwd). Даты короткие: `2026-09-07`, `2026-09-07T09:30`, `+7d` (для `--end` — от `--start`). Флаг `--ndjson` (`run`, `next`) — по событию на строку для пайпов. Флаг `--format ics` — календарь RFC 5545 вместо JSON. Успех — вывод в stdout, код `0`. Ошибка — текст в stderr, в stdout ничего: код `1` (ввод, парсинг, валидация), код `2` (неверные аргументы, текст usage). Готовые бинарники (Linux/Windows, x86-64/ARM64) — в [релизах](https://github.com/MaksPV/cyclorithm/releases).
 
 ## Мини-тур по языку
 
@@ -46,7 +47,7 @@ cycle CITY_ROUTE duration = 1h20m {
 }
 ```
 
-Отрицательное смещение `-0m` — «встык к концу цикла» (здесь ≡ `80m`); ниже нуля — ошибка. Корень расписания — `root_cycle` с `start_time` и `duration`, его окно пересекают с `--start/--end`. Подробности — в §4 спеки.
+Отрицательное смещение `-0m` — «встык к концу цикла» (здесь ≡ `80m`); ниже нуля — ошибка. Корень расписания — `root_cycle` с `start_time` и `duration`, его окно пересекают с `--start/--end`. Подробности — в [главе семантики](https://makspv.github.io/cyclorithm/reference/semantics/).
 
 ### Условия и календарь
 
@@ -75,11 +76,11 @@ fun rush_top(x) = x + 1;
 pred commute(at) = morning(at) or evening(at);
 ```
 
-`const` — число или данные, `fun` — число от аргумента, `pred` — истина/ложь от времени вызова. Плюс конструктор даты `mkdate(2026, 9, 7, 9, 0, 0, 0)`, строки `str`/`pad`, целочисленные `floordiv`/`floormod`. Выражения: целочисленная и битовая арифметика, сравнения чисел и строк, `not`/`and`/`or` (§4.17 спеки).
+`const` — число или данные, `fun` — число от аргумента, `pred` — истина/ложь от времени вызова. Плюс конструктор даты `mkdate(2026, 9, 7, 9, 0, 0, 0)`, строки `str`/`pad`, целочисленные `floordiv`/`floormod`. Выражения: целочисленная и битовая арифметика, сравнения чисел и строк, `not`/`and`/`or` ([глава выражений](https://makspv.github.io/cyclorithm/reference/expressions/)).
 
 ### Данные и атрибуты
 
-Данные — мапы, массивы и `true`/`false` (только литералы, в питоновском духе). Едут в циклы параметрами и видны в условиях:
+Данные — мапы, массивы и `true`/`false`; имена внутри словарей подставляются. Едут в циклы параметрами и видны в условиях:
 
 ```text
 const LEC = {"subject": "БЖД", "type": "лек", "room": "233/А", "tags": ["поток"]};
@@ -91,12 +92,12 @@ point BELL {
 }
 
 cycle LESSON(subj) duration = 1h35m {
-  0m: BELL.ring() { subject = subj.subject, event = "start" };
+  0m: BELL.ring() {"subject": subj.subject, "event": "start"};
   [subj.type == "лек"] 55m: BELL.ring();
 }
 ```
 
-Доступ — `subj.subject`, `tags[0]`. Атрибуты точки (`attrs` — литерал или ссылка на константу-мапу) попадают в каждое событие полем `point_attrs`, блок действий `{...}` — полем `action_attrs`. Оба поля есть всегда; нет данных — пустой `{}`:
+Доступ — `subj.subject`, `tags[0]`. Атрибуты точки (`attrs` — литерал или ссылка на константу-мапу) попадают в каждое событие полем `point_attrs`, атрибуты действия `{...}` — полем `action_attrs`. Оба поля есть всегда; нет данных — пустой `{}`:
 
 ```json
 {"time": "2026-09-07T09:00:00", "action": "ring", "point": "BELL",
@@ -111,7 +112,7 @@ cycle LESSON(subj) duration = 1h35m {
 use "libs/route_lib.cyclo";
 ```
 
-Путь — от директории импортирующего, транзитивно; `schedule` внутри библиотеки запрещён. Полный список кодов ошибок (§5 спеки): `E01–E16`.
+Путь — от директории импортирующего, транзитивно; `schedule` внутри библиотеки запрещён. Все ситуации поименно — в [главе ошибок](https://makspv.github.io/cyclorithm/reference/errors/).
 
 ### Повторы
 
@@ -141,13 +142,13 @@ root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
 }
 ```
 
-Метки тела заменяются смещениями таблицы (нет метки — `E16`), первый параметр — всегда таблица, пожары таблицы (`->`) добавляются после строк тела. Так один шаблон дня едет на разных сетках звонков — см. живое расписание группы в `examples/real/bvt231.cyclo`.
+Метки тела заменяются смещениями таблицы (нет метки — `unknown-slot`), первый параметр — всегда таблица, строки таблицы со стрелкой (`->`) добавляются после строк тела. Так один шаблон дня едет на разных сетках звонков — см. живое расписание группы в `examples/real/bvt231.cyclo`.
 
 ## Примеры
 
-- `examples/valid/` — контрактные: `route.cyclo` (+ `libs/route_lib.cyclo`, `route.expected.json` — дословно §1 спеки), `attrs`, `routines`, `conditions`, `repeat`, `neg_offsets`, `imports`, `bitwise`, `bool_groups`, `mkdate`, `rand`. Запуск: `cargo run -p cyclorithm-cli -- run examples/valid/<name>.cyclo --start … --end …`, сверка с `.expected.json`.
+- `examples/valid/` — контрактные: `route.cyclo` (+ `libs/route_lib.cyclo`, `route.expected.json` — контракт из главы вывода), `attrs`, `routines`, `conditions`, `repeat`, `neg_offsets`, `imports`, `bitwise`, `bool_groups`, `mkdate`, `rand`. Запуск: `cargo run -p cyclorithm-cli -- run examples/valid/<name>.cyclo --start … --end …`, сверка с `.expected.json`.
 - `examples/real/` — живые расписания: автобус `101.cyclo`, автопарк `fleet.cyclo` (+ `fleet_lib.cyclo`, 5 бортов, 218 событий за неделю), учебная группа `bvt231.cyclo` (рутины, семестр, госпраздники).
-- `examples/invalid/bad_*.cyclo` — негативные кейсы: минимум один файл на код ошибки (`bad_syntax.cyclo` — ошибка парсера без кода).
+- `examples/invalid/bad_*.cyclo` — негативные кейсы: минимум один файл на ситуацию (`bad_syntax.cyclo` — ошибка парсера без имени).
 
 ## Разработка
 
@@ -157,13 +158,13 @@ $ cargo fmt --all -- --check
 $ cargo clippy --workspace --all-targets
 ```
 
-То же гоняет CI на push/PR в `main`/`dev`. Правила работы с репозиторием (конвейер фаз, тесты, как менять спеку, оформление коммитов) — в `AGENTS.md`. Рабочая ветка — `dev`, коммиты и пуши — только вручную.
+То же гоняет CI на push/PR в `main`/`dev`. Правила работы с репозиторием (конвейер фаз, тесты, как менять вики, оформление коммитов) — в `AGENTS.md`. Рабочая ветка — `dev`, коммиты и пуши — только вручную.
 
 ## Дорожная карта
 
-Уже готово (0.3.0): условия и объявления, `use`-импорты, повторы `repeat`/`fill`, отрицательные смещения, выражения §4.17, календарь прелюдии (`workday`, `day_of_week`, `datestr`, `mkdate`, `rand`), атрибуты точек и действий (`E15`), таблицы времени и рутины (`E16`), команды `next`/`check`, короткие даты, stdin, `--ndjson`.
+Уже готово (0.3.0): условия и объявления, `use`-импорты, повторы `repeat`/`fill`, отрицательные смещения, выражения, календарь прелюдии (`workday`, `day_of_week`, `datestr`, `mkdate`, `rand`), атрибуты точек и действий, таблицы времени и рутины, команды `next`/`check`, короткие даты, stdin, `--ndjson`, `--format ics`.
 
-Дальше:
+Дальше — в [планах вики](https://makspv.github.io/cyclorithm/todo/): C-стиль условий, подстановка имён, JSON-блоки, слаги ошибок, подсветка кода.
 
 - **cron-демон**: хост-программа поверх `next` (поллинг окна) — пример расписания задач уже есть (`examples/real/cron.cyclo`, команды в `action_attrs`).
 - **Плейграунд**: таймлайн + редактор кода + таблица событий в реальном времени (прототип — отдельный репозиторий `cyclorithm-playground`, запуск — `run.sh`).
