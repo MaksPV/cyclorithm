@@ -69,3 +69,4 @@ nav:
       - Интеграции: ecosystem/integrations.md
       - Библиотеки и use: ecosystem/libraries.md
   - Глоссарий: glossary.md
+  - Планы: todo.md
