@@ -57,6 +57,7 @@ nav:
   - Справочник:
       - Концепты: reference/concepts.md
       - Синтаксис: reference/syntax.md
+      - Выражения: reference/expressions.md
       - Семантика: reference/semantics.md
       - Ошибки: reference/errors.md
       - Формат вывода: reference/output.md
