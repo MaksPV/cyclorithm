@@ -260,6 +260,12 @@ impl Error {
         )
     }
 
+    /// `broken-prelude`: встроенная прелюдия не разобралась (битый `std.cyclo`
+    /// в сборке — вместо паники аккуратная ошибка).
+    pub fn broken_prelude(details: &str) -> Self {
+        Self::coded("broken-prelude", format!("broken prelude '{details}'"))
+    }
+
     /// `cannot-read-import`: импорт не читается.
     pub fn cannot_read_import(path: &str) -> Self {
         Self::coded("cannot-read-import", format!("cannot read import '{path}'"))

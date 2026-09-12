@@ -77,6 +77,7 @@
 | `cannot-read-import` | `cannot read import '...'` | Путь от директории файла; исключить циклические импорты |
 | `import-cycle` | `import cycle '...'` | Разорвать цикл импортов |
 | `schedule-in-import` | `schedule not allowed in import '...'` | Оставить в библиотеке только объявления |
+| `broken-prelude` | `broken prelude '...'` | Битая сборка: пересобрать из чистого репозитория (пользовательский код ни при чём) |
 
 ## Атрибуты
 

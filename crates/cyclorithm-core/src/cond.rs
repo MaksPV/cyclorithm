@@ -7,6 +7,7 @@
 //! деление нулём выражения — вычислением в момент строки (тоже division-by-zero).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use cyclorithm_parser::{
     ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
@@ -68,6 +69,18 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Разобранная прелюдия — один раз на процесс (каждый `resolve_units`
+/// раньше парсил её заново). Битая сборка — `broken-prelude`, не паника.
+static SYSTEM: LazyLock<Result<Vec<Decl>, Error>> = LazyLock::new(|| resolve_system(PRELUDE));
+
+/// Разобрать системный файл в объявления. Публична для тестов битой прелюдии.
+fn resolve_system(src: &str) -> Result<Vec<Decl>, Error> {
+    cyclorithm_parser::parse_decls(src).map_err(|e| {
+        let first = e.to_string().lines().next().unwrap_or("").to_owned();
+        Error::broken_prelude(&first)
+    })
+}
+
 /// Таблица слотов `time_const`: длительность, строки и юнит исходника
 /// (для `__`-видимости условий `->`-строк — как у `Def.unit`).
 #[derive(Debug, Clone)]
@@ -105,7 +118,7 @@ pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
 // Таблицы (`time_const`) — отдельным реестром: своё пространство имён
 // (позиции ссылок не пересекаются с выражениями), дубли — `duplicate table`.
 pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
-    let system = cyclorithm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
+    let system = SYSTEM.clone()?;
     let mut map = HashMap::new();
     let mut all: Vec<String> = Vec::new();
     for d in &system {
@@ -2362,6 +2375,19 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             ("unknown-name", "unknown name 'D'")
+        );
+    }
+
+    #[test]
+    fn broken_prelude_is_error_not_panic() {
+        // Загрузчик системного файла возвращает слаг вместо паники.
+        assert!(resolve_system(PRELUDE).is_ok());
+        let e = resolve_system("const = ;").expect_err("битая прелюдия — ошибка");
+        assert_eq!(e.code, "broken-prelude");
+        assert!(
+            e.message.starts_with("broken prelude '"),
+            "{}",
+            e.message
         );
     }
 }
