@@ -2,7 +2,7 @@
 //! подставляет вызыватель (CLI), здесь — только обход, циклы и склейка.
 //!
 //! Порядок оверлея — обход вглубь: зависимости раньше зависимых, тело
-//! программы — последним. Дубль внутри одного файла — позже отдаст `E04`,
+//! программы — последним. Дубль внутри одного файла — позже отдаст `duplicate`,
 //! одно имя в разных файлах — молча побеждает последнее.
 
 use std::collections::HashSet;
@@ -12,7 +12,7 @@ use cyclorithm_parser::Decl;
 
 use crate::Error;
 
-/// Неудача резолвера: код (E13/E14) или сырая ошибка разбора с путём.
+/// Неудача резолвера: код (cannot-read-import/import-cycle/schedule-in-import) или сырая ошибка разбора с путём.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportError {
     Coded(Error),
@@ -57,16 +57,16 @@ fn visit(
 ) -> Result<(), ImportError> {
     let full = clean_join(importer_dir, use_str);
     if stack.contains(&full) {
-        return Err(ImportError::Coded(Error::e13_cycle(use_str)));
+        return Err(ImportError::Coded(Error::import_cycle(use_str)));
     }
     if !done.insert(full.clone()) {
         return Ok(());
     }
-    let src = read(&full).map_err(|_| ImportError::Coded(Error::e13_read(use_str)))?;
+    let src = read(&full).map_err(|_| ImportError::Coded(Error::cannot_read_import(use_str)))?;
     let unit = cyclorithm_parser::parse_unit(&src)
         .map_err(|e| ImportError::Syntax(format!("{}: {e}", full.display())))?;
     if unit.has_schedule {
-        return Err(ImportError::Coded(Error::e14_schedule(use_str)));
+        return Err(ImportError::Coded(Error::schedule_in_import(use_str)));
     }
     stack.push(full.clone());
     let dir = full.parent().unwrap_or(Path::new(""));
@@ -169,11 +169,15 @@ mod tests {
             ("/lib/a.cyclo", "use \"b.cyclo\";"),
             ("/lib/b.cyclo", "use \"a.cyclo\";"),
         ]);
-        let e = collect(&["a.cyclo"], "/lib", &files).expect_err("цикл — E13");
-        assert_eq!(e, ImportError::Coded(Error::e13_cycle("a.cyclo")));
+        let e = collect(&["a.cyclo"], "/lib", &files).expect_err("цикл — import-cycle");
+        assert_eq!(e, ImportError::Coded(Error::import_cycle("a.cyclo")));
         let files = mem(&[]);
-        let e = collect(&["nope.cyclo"], "/lib", &files).expect_err("нет файла — E13");
-        assert_eq!(e, ImportError::Coded(Error::e13_read("nope.cyclo")));
+        let e =
+            collect(&["nope.cyclo"], "/lib", &files).expect_err("нет файла — cannot-read-import");
+        assert_eq!(
+            e,
+            ImportError::Coded(Error::cannot_read_import("nope.cyclo"))
+        );
     }
 
     #[test]
@@ -184,8 +188,8 @@ mod tests {
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
         )]);
-        let e = collect(&["s.cyclo"], "/lib", &files).expect_err("расписание — E14");
-        assert_eq!(e, ImportError::Coded(Error::e14_schedule("s.cyclo")));
+        let e = collect(&["s.cyclo"], "/lib", &files).expect_err("расписание — schedule-in-import");
+        assert_eq!(e, ImportError::Coded(Error::schedule_in_import("s.cyclo")));
     }
 
     #[test]

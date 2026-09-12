@@ -1,5 +1,5 @@
-//! Core logic for Cyclorithm: validation (E01–E16), lattice expansion,
-//! ordering `(time, k, declaration order)`.
+//! Core logic for Cyclorithm: validation (slugs from the errors chapter),
+//! lattice expansion, ordering `(time, k, declaration order)`.
 
 use std::fmt;
 
@@ -12,16 +12,16 @@ pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
-// Ошибка валидации: коды E01–E16 из §5 спеки.
-// Печатается только `message` (примеры из таблицы спеки — без префикса кода).
+// Ошибка валидации: слаг ситуации из главы ошибок вики.
+// Печатается только `message` (примеры из таблицы — без префикса слага).
 // ---------------------------------------------------------------------------
 
 /// Ошибка валидации уже разобранного AST.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    /// Код из §5 (`"E01"`–`"E16"`).
+    /// Слаг ситуации (`"unknown-point"`, `"cycle-overruns"` и т.п.).
     pub code: &'static str,
-    /// Текст для stderr, дословно по таблице §5.
+    /// Текст для stderr, дословно по таблице главы ошибок.
     pub message: String,
 }
 
@@ -30,234 +30,270 @@ impl Error {
         Self { code, message }
     }
 
-    /// E05: `invalid duration '1h2h'`, переполнение, нулевой период root_cycle.
-    pub fn e05(raw: &str) -> Self {
-        Self::coded("E05", format!("invalid duration '{raw}'"))
+    /// `invalid-duration`: `invalid duration '1h2h'`, переполнение, нулевой период root_cycle.
+    pub fn invalid_duration(raw: &str) -> Self {
+        Self::coded("invalid-duration", format!("invalid duration '{raw}'"))
     }
 
-    /// E08: `invalid datetime '...'` (битый `start_time` или `--start`/`--end`).
-    pub fn e08(raw: &str) -> Self {
-        Self::coded("E08", format!("invalid datetime '{raw}'"))
+    /// `invalid-datetime`: `invalid datetime '...'` (битый `start_time` или `--start`/`--end`).
+    pub fn invalid_datetime(raw: &str) -> Self {
+        Self::coded("invalid-datetime", format!("invalid datetime '{raw}'"))
     }
 
-    /// E01: `unknown point 'PORT'`.
-    pub fn e01(name: &str) -> Self {
-        Self::coded("E01", format!("unknown point '{name}'"))
+    /// `unknown-point`: `unknown point 'PORT'`.
+    pub fn unknown_point(name: &str) -> Self {
+        Self::coded("unknown-point", format!("unknown point '{name}'"))
     }
 
-    /// E02: `action 'arrive' not allowed for point 'DEPOT'`.
-    pub fn e02(action: &str, point: &str) -> Self {
+    /// `action-not-allowed`: `action 'arrive' not allowed for point 'DEPOT'`.
+    pub fn action_not_allowed(action: &str, point: &str) -> Self {
         Self::coded(
-            "E02",
+            "action-not-allowed",
             format!("action '{action}' not allowed for point '{point}'"),
         )
     }
 
-    /// E03: `unknown cycle 'NIGHT_ROUTE'`.
-    pub fn e03(name: &str) -> Self {
-        Self::coded("E03", format!("unknown cycle '{name}'"))
+    /// `unknown-cycle`: `unknown cycle 'NIGHT_ROUTE'`.
+    pub fn unknown_cycle(name: &str) -> Self {
+        Self::coded("unknown-cycle", format!("unknown cycle '{name}'"))
     }
 
-    /// E04: `duplicate point 'DEPOT'` / `duplicate cycle 'R'`.
+    /// `duplicate`: `duplicate point 'DEPOT'` / `duplicate cycle 'R'`.
     /// `kind` — `"point"` или `"cycle"`.
-    pub fn e04(kind: &str, name: &str) -> Self {
-        Self::coded("E04", format!("duplicate {kind} '{name}'"))
+    pub fn duplicate(kind: &str, name: &str) -> Self {
+        Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
-    /// E09: `point 'DEPOT' is not a cycle` (точку вызвали как цикл).
-    pub fn e09_not_cycle(name: &str) -> Self {
-        Self::coded("E09", format!("point '{name}' is not a cycle"))
+    /// `wrong-kind`: `point 'DEPOT' is not a cycle` (точку вызвали как цикл).
+    pub fn point_not_cycle(name: &str) -> Self {
+        Self::coded("wrong-kind", format!("point '{name}' is not a cycle"))
     }
 
-    /// E09: `cycle 'X' is not a point` (цикл вызвали как точку).
-    pub fn e09_not_point(name: &str) -> Self {
-        Self::coded("E09", format!("cycle '{name}' is not a point"))
+    /// `wrong-kind`: `cycle 'X' is not a point` (цикл вызвали как точку).
+    pub fn cycle_not_point(name: &str) -> Self {
+        Self::coded("wrong-kind", format!("cycle '{name}' is not a point"))
     }
 
-    /// E09: `point 'X' is not a routine` (точку вызвали с таблицей).
-    pub fn e09_not_routine(name: &str) -> Self {
-        Self::coded("E09", format!("point '{name}' is not a routine"))
+    /// `wrong-kind`: `point 'X' is not a routine` (точку вызвали с таблицей).
+    pub fn point_not_routine(name: &str) -> Self {
+        Self::coded("wrong-kind", format!("point '{name}' is not a routine"))
     }
 
-    /// E09: `routine 'X' is not a point` (рутину вызвали как точку).
-    pub fn e09_routine_not_point(name: &str) -> Self {
-        Self::coded("E09", format!("routine '{name}' is not a point"))
+    /// `wrong-kind`: `routine 'X' is not a point` (рутину вызвали как точку).
+    pub fn routine_not_point(name: &str) -> Self {
+        Self::coded("wrong-kind", format!("routine '{name}' is not a point"))
     }
 
-    /// E09: `routine 'X' is not a cycle` (имя занято и рутиной, и циклом).
-    pub fn e09_routine_not_cycle(name: &str) -> Self {
-        Self::coded("E09", format!("routine '{name}' is not a cycle"))
+    /// `wrong-kind`: `routine 'X' is not a cycle` (имя занято и рутиной, и циклом).
+    pub fn routine_not_cycle(name: &str) -> Self {
+        Self::coded("wrong-kind", format!("routine '{name}' is not a cycle"))
     }
 
-    /// E06: `recursive cycle 'A'`.
-    pub fn e06(name: &str) -> Self {
-        Self::coded("E06", format!("recursive cycle '{name}'"))
+    /// `recursive`: `recursive cycle 'A'`.
+    pub fn recursive_cycle(name: &str) -> Self {
+        Self::coded("recursive", format!("recursive cycle '{name}'"))
     }
 
-    /// E06: рекурсия через рутину — `recursive routine 'M'`.
-    pub fn e06_routine(name: &str) -> Self {
-        Self::coded("E06", format!("recursive routine '{name}'"))
+    /// `recursive`: рекурсия через рутину — `recursive routine 'M'`.
+    pub fn recursive_routine(name: &str) -> Self {
+        Self::coded("recursive", format!("recursive routine '{name}'"))
     }
 
-    /// E06: рекурсия через таблицу — `recursive table 'T'`
+    /// `recursive`: рекурсия через таблицу — `recursive table 'T'`
     /// (пожар `->` инстанцирует рутину с той же таблицей).
-    pub fn e06_table(name: &str) -> Self {
-        Self::coded("E06", format!("recursive table '{name}'"))
+    pub fn recursive_table(name: &str) -> Self {
+        Self::coded("recursive", format!("recursive table '{name}'"))
     }
 
-    /// E07: `cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)`.
+    /// `cycle-overruns`: `cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)`.
     /// Суммы уже отформатированы (`excess`, `end`, `limit` — строки вида `20m`).
-    pub fn e07_cycle(inner: &str, outer: &str, excess: &str, end: &str, limit: &str) -> Self {
+    pub fn cycle_overruns(inner: &str, outer: &str, excess: &str, end: &str, limit: &str) -> Self {
         Self::coded(
-            "E07",
+            "cycle-overruns",
             format!("cycle '{inner}' overruns '{outer}' by {excess} ({end} > {limit})"),
         )
     }
 
-    /// E07 для действия точки (формат спеки задан только для циклов;
+    /// `action-overruns` для действия точки (формат главы задан только для циклов;
     /// сообщение симметрично: `action 'depart' overruns 'C' by 1m (61m > 60m)`).
-    pub fn e07_action(action: &str, outer: &str, excess: &str, end: &str, limit: &str) -> Self {
+    pub fn action_overruns(
+        action: &str,
+        outer: &str,
+        excess: &str,
+        end: &str,
+        limit: &str,
+    ) -> Self {
         Self::coded(
-            "E07",
+            "action-overruns",
             format!("action '{action}' overruns '{outer}' by {excess} ({end} > {limit})"),
         )
     }
 
-    /// E07 для отрицательного смещения ниже нуля (§4 спеки):
+    /// `offset-out-of-bounds` для отрицательного смещения ниже нуля (§4 спеки):
     /// `offset '-2h' out of bounds (duration 1h20m)`.
     /// `offset_raw` — сырой текст со знаком (`'-2h'`), `duration_raw` — сырой
     /// текст объявленной длительности объемлющего цикла.
-    pub fn e07_neg_offset(offset_raw: &str, duration_raw: &str) -> Self {
+    pub fn offset_out_of_bounds(offset_raw: &str, duration_raw: &str) -> Self {
         Self::coded(
-            "E07",
+            "offset-out-of-bounds",
             format!("offset '{offset_raw}' out of bounds (duration {duration_raw})"),
         )
     }
 
-    /// E07: горизонт `until` вне `[0, duration]`.
-    pub fn e07_until(until_raw: &str, duration_raw: &str) -> Self {
+    /// `until-out-of-bounds`: горизонт `until` вне `[0, duration]`.
+    pub fn until_out_of_bounds(until_raw: &str, duration_raw: &str) -> Self {
         Self::coded(
-            "E07",
+            "until-out-of-bounds",
             format!("until '{until_raw}' out of bounds (duration {duration_raw})"),
         )
     }
 
-    /// E10: `repeat 0` и невлезающее в `u64` число.
-    pub fn e10_repeat_count(raw: &str) -> Self {
-        Self::coded("E10", format!("invalid repeat count '{raw}'"))
-    }
-
-    /// E10: `fill` по циклу нулевой длительности.
-    pub fn e10_fill_zero(name: &str) -> Self {
-        Self::coded("E10", format!("fill of zero-duration cycle '{name}'"))
-    }
-
-    /// E10: повтор действия точки (повторы только для циклов).
-    pub fn e10_repeat_action(action: &str) -> Self {
+    /// `invalid-repeat-count`: `repeat 0` и невлезающее в `u64` число.
+    pub fn invalid_repeat_count(raw: &str) -> Self {
         Self::coded(
-            "E10",
+            "invalid-repeat-count",
+            format!("invalid repeat count '{raw}'"),
+        )
+    }
+
+    /// `fill-zero-duration`: `fill` по циклу нулевой длительности.
+    pub fn fill_zero_duration(name: &str) -> Self {
+        Self::coded(
+            "fill-zero-duration",
+            format!("fill of zero-duration cycle '{name}'"),
+        )
+    }
+
+    /// `repeat-point-action`: повтор действия точки (повторы только для циклов).
+    pub fn repeat_point_action(action: &str) -> Self {
+        Self::coded(
+            "repeat-point-action",
             format!("repeat of point action '{action}' not allowed"),
         )
     }
 
-    /// E11: неизвестное имя в условии.
-    pub fn e11(name: &str) -> Self {
-        Self::coded("E11", format!("unknown name '{name}'"))
+    /// `unknown-name`: неизвестное имя в условии.
+    pub fn unknown_name(name: &str) -> Self {
+        Self::coded("unknown-name", format!("unknown name '{name}'"))
     }
 
-    /// E12: смешение числа и строки в условии.
-    pub fn e12_mismatch() -> Self {
+    /// `type-mismatch`: смешение числа и строки в условии.
+    pub fn type_mismatch() -> Self {
         Self::coded(
-            "E12",
+            "type-mismatch",
             "type mismatch: cannot mix number and string".to_owned(),
         )
     }
 
-    /// E12: неверное число аргументов вызова в условии.
-    pub fn e12_arity(name: &str) -> Self {
-        Self::coded("E12", format!("wrong arguments for '{name}'"))
+    /// `wrong-arguments`: неверное число аргументов вызова в условии.
+    pub fn wrong_arguments(name: &str) -> Self {
+        Self::coded("wrong-arguments", format!("wrong arguments for '{name}'"))
     }
 
-    /// E12: у рутины нет табличного параметра (`params[0]` — таблица).
-    pub fn e12_no_table_param(name: &str) -> Self {
-        Self::coded("E12", format!("routine '{name}' has no table parameter"))
+    /// `no-table-parameter`: у рутины нет табличного параметра (`params[0]` — таблица).
+    pub fn no_table_parameter(name: &str) -> Self {
+        Self::coded(
+            "no-table-parameter",
+            format!("routine '{name}' has no table parameter"),
+        )
     }
 
-    /// E12: деление на ноль в условии.
-    pub fn e12_divzero() -> Self {
-        Self::coded("E12", "division by zero".to_owned())
+    /// `division-by-zero`: деление на ноль в условии.
+    pub fn division_by_zero() -> Self {
+        Self::coded("division-by-zero", "division by zero".to_owned())
     }
 
-    /// E12: рекурсивное определение.
-    pub fn e12_recursive(name: &str) -> Self {
-        Self::coded("E12", format!("recursive definition '{name}'"))
+    /// `recursive-definition`: рекурсивное определение.
+    pub fn recursive_definition(name: &str) -> Self {
+        Self::coded(
+            "recursive-definition",
+            format!("recursive definition '{name}'"),
+        )
     }
 
-    /// E12: вызов не-предиката в позиции условия.
-    pub fn e12_not_pred(name: &str) -> Self {
-        Self::coded("E12", format!("'{name}' is not a predicate"))
+    /// `not-a-predicate`: вызов не-предиката в позиции условия.
+    pub fn not_a_predicate(name: &str) -> Self {
+        Self::coded("not-a-predicate", format!("'{name}' is not a predicate"))
     }
 
-    /// E12: число вне диапазона `i64` в условии.
-    pub fn e12_range(raw: &str) -> Self {
-        Self::coded("E12", format!("integer out of range '{raw}'"))
+    /// `integer-out-of-range`: число вне диапазона `i64` в условии.
+    pub fn integer_out_of_range(raw: &str) -> Self {
+        Self::coded(
+            "integer-out-of-range",
+            format!("integer out of range '{raw}'"),
+        )
     }
 
-    /// E12: кривой литерал даты в условии.
-    pub fn e12_date(raw: &str) -> Self {
-        Self::coded("E12", format!("invalid date '{raw}'"))
+    /// `invalid-date`: кривой литерал даты в условии.
+    pub fn invalid_date(raw: &str) -> Self {
+        Self::coded("invalid-date", format!("invalid date '{raw}'"))
     }
 
-    /// E15: `duplicate attribute 'a'` (дубль ключа в литерале мапы
+    /// `duplicate-attribute`: `duplicate attribute 'a'` (дубль ключа в литерале мапы
     /// или в блоке действий).
-    pub fn e15(name: &str) -> Self {
-        Self::coded("E15", format!("duplicate attribute '{name}'"))
+    pub fn duplicate_attribute(name: &str) -> Self {
+        Self::coded(
+            "duplicate-attribute",
+            format!("duplicate attribute '{name}'"),
+        )
     }
 
-    /// E12: доступ к отсутствующему полю (`subj.name`), к полю не-мапы
+    /// `unknown-field`: доступ к отсутствующему полю (`subj.name`), к полю не-мапы
     /// и индекс не-массива — всё `unknown field 'name'`.
-    pub fn e12_field(name: &str) -> Self {
-        Self::coded("E12", format!("unknown field '{name}'"))
+    pub fn unknown_field(name: &str) -> Self {
+        Self::coded("unknown-field", format!("unknown field '{name}'"))
     }
 
-    /// E12: индекс за границами массива (`tags[5]`, отрицательный `tags[-1]`).
-    pub fn e12_index(raw: &str) -> Self {
-        Self::coded("E12", format!("index out of bounds '{raw}'"))
+    /// `index-out-of-bounds`: индекс за границами массива (`tags[5]`, отрицательный `tags[-1]`).
+    pub fn index_out_of_bounds(raw: &str) -> Self {
+        Self::coded(
+            "index-out-of-bounds",
+            format!("index out of bounds '{raw}'"),
+        )
     }
 
-    /// E12: сравнение мап/массивов (`==`/`!=` между ними — «пока», см. черновик).
-    pub fn e12_map_cmp() -> Self {
-        Self::coded("E12", "cannot compare maps or arrays".to_owned())
+    /// `maps-not-comparable`: сравнение мап/массивов (`==`/`!=` между ними — «пока», см. черновик).
+    pub fn maps_not_comparable() -> Self {
+        Self::coded(
+            "maps-not-comparable",
+            "cannot compare maps or arrays".to_owned(),
+        )
     }
 
-    /// E13: импорт не читается.
-    pub fn e13_read(path: &str) -> Self {
-        Self::coded("E13", format!("cannot read import '{path}'"))
+    /// `cannot-read-import`: импорт не читается.
+    pub fn cannot_read_import(path: &str) -> Self {
+        Self::coded("cannot-read-import", format!("cannot read import '{path}'"))
     }
 
-    /// E13: цикл импорта.
-    pub fn e13_cycle(path: &str) -> Self {
-        Self::coded("E13", format!("import cycle '{path}'"))
+    /// `import-cycle`: цикл импорта.
+    pub fn import_cycle(path: &str) -> Self {
+        Self::coded("import-cycle", format!("import cycle '{path}'"))
     }
 
-    /// E14: расписание внутри импорта.
-    pub fn e14_schedule(path: &str) -> Self {
-        Self::coded("E14", format!("schedule not allowed in import '{path}'"))
+    /// `schedule-in-import`: расписание внутри импорта.
+    pub fn schedule_in_import(path: &str) -> Self {
+        Self::coded(
+            "schedule-in-import",
+            format!("schedule not allowed in import '{path}'"),
+        )
     }
 
-    /// E16: `unknown table 'SHORT'` — таблицы с таким именем нет.
-    pub fn e16_table(name: &str) -> Self {
-        Self::coded("E16", format!("unknown table '{name}'"))
+    /// `unknown-table`: `unknown table 'SHORT'` — таблицы с таким именем нет.
+    pub fn unknown_table(name: &str) -> Self {
+        Self::coded("unknown-table", format!("unknown table '{name}'"))
     }
 
-    /// E16: `unknown slot '8th'` — метки нет в таблице вызова.
-    pub fn e16_slot(label: &str) -> Self {
-        Self::coded("E16", format!("unknown slot '{label}'"))
+    /// `unknown-slot`: `unknown slot '8th'` — метки нет в таблице вызова.
+    pub fn unknown_slot(label: &str) -> Self {
+        Self::coded("unknown-slot", format!("unknown slot '{label}'"))
     }
 
-    /// E16: первый аргумент вызова рутины — не имя таблицы.
-    pub fn e16_table_arg(name: &str) -> Self {
-        Self::coded("E16", format!("invalid table argument for '{name}'"))
+    /// `invalid-table-argument`: первый аргумент вызова рутины — не имя таблицы.
+    pub fn invalid_table_argument(name: &str) -> Self {
+        Self::coded(
+            "invalid-table-argument",
+            format!("invalid table argument for '{name}'"),
+        )
     }
 }
 

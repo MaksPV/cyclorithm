@@ -1,10 +1,10 @@
 //! Длительности в миллисекунды (`i64`) — §2 и §4 спеки.
 //!
 //! Фиксированные: `w = 7d`, `d = 24h`. Порядок компонентов строго по убыванию
-//! (`w > d > h > m > s > ms`), каждый не более одного раза — иначе E05.
-//! Значение обязано влезать в `i64` миллисекунд — иначе E05.
+//! (`w > d > h > m > s > ms`), каждый не более одного раза — иначе invalid-duration.
+//! Значение обязано влезать в `i64` миллисекунд — иначе invalid-duration.
 //! Ноль (`0m`) сам по себе валиден; запрет нулевого *периода* `root_cycle`
-//! (деление на ноль в решётке) проверяется отдельно, тоже E05.
+//! (деление на ноль в решётке) проверяется отдельно, тоже invalid-duration.
 
 use cyclorithm_parser::{Duration, DurationUnit, RootCycle};
 
@@ -35,7 +35,7 @@ fn unit_rank(unit: DurationUnit) -> u8 {
 }
 
 /// Сырые цифры в число. Переполнение `i128` невозможно для корректного
-/// значения `i64` мс — значит, это E05.
+/// значения `i64` мс — значит, это invalid-duration.
 fn parse_number(s: &str) -> Result<i128, ()> {
     let mut v: i128 = 0;
     for b in s.bytes() {
@@ -48,10 +48,10 @@ fn parse_number(s: &str) -> Result<i128, ()> {
 }
 
 /// Сумма компонентов в миллисекундах (`i64`).
-/// Ошибки — E05 с сырым текстом: `invalid duration '1h2h'`.
+/// Ошибки — invalid-duration с сырым текстом: `invalid duration '1h2h'`.
 pub fn duration_ms(d: &Duration) -> Result<i64, Error> {
     if d.items.is_empty() {
-        return Err(Error::e05(&d.raw));
+        return Err(Error::invalid_duration(&d.raw));
     }
     let mut prev_rank = u8::MAX;
     let mut total: i128 = 0;
@@ -59,24 +59,26 @@ pub fn duration_ms(d: &Duration) -> Result<i64, Error> {
         let rank = unit_rank(item.unit);
         // Равный ранг = повтор (`1h2h`), больший = неверный порядок (`30s1d`).
         if rank >= prev_rank {
-            return Err(Error::e05(&d.raw));
+            return Err(Error::invalid_duration(&d.raw));
         }
         prev_rank = rank;
-        let n = parse_number(&item.number).map_err(|_| Error::e05(&d.raw))?;
+        let n = parse_number(&item.number).map_err(|_| Error::invalid_duration(&d.raw))?;
         let add = n
             .checked_mul(unit_ms(item.unit))
-            .ok_or_else(|| Error::e05(&d.raw))?;
-        total = total.checked_add(add).ok_or_else(|| Error::e05(&d.raw))?;
+            .ok_or_else(|| Error::invalid_duration(&d.raw))?;
+        total = total
+            .checked_add(add)
+            .ok_or_else(|| Error::invalid_duration(&d.raw))?;
     }
-    i64::try_from(total).map_err(|_| Error::e05(&d.raw))
+    i64::try_from(total).map_err(|_| Error::invalid_duration(&d.raw))
 }
 
 /// Период `root_cycle` в миллисекундах. Ноль запрещён (деление на ноль
-/// в решётке) — тоже E05 с сырым текстом длительности.
+/// в решётке) — тоже invalid-duration с сырым текстом длительности.
 pub fn root_period_ms(root: &RootCycle) -> Result<i64, Error> {
     let ms = duration_ms(&root.duration)?;
     if ms == 0 {
-        return Err(Error::e05(&root.duration.raw));
+        return Err(Error::invalid_duration(&root.duration.raw));
     }
     Ok(ms)
 }
@@ -84,9 +86,9 @@ pub fn root_period_ms(root: &RootCycle) -> Result<i64, Error> {
 /// Эффективное смещение строки (§4 спеки): обычное — как есть,
 /// отрицательное `-X` — как `parent_ms − X`, где `parent_ms` — объявленная
 /// длительность непосредственно объемлющего цикла.
-/// `X > parent_ms` — E07 (`offset '-2h' out of bounds (duration 1h20m)`);
+/// `X > parent_ms` — offset-out-of-bounds (`offset '-2h' out of bounds (duration 1h20m)`);
 /// `parent_raw` — сырой текст длительности родителя для сообщения.
-/// Невалидная запись самого смещения (`1h2h`) — сначала E05.
+/// Невалидная запись самого смещения (`1h2h`) — сначала invalid-duration.
 pub fn effective_offset_ms(
     stmt: &cyclorithm_parser::Stmt,
     parent_ms: i64,
@@ -95,7 +97,7 @@ pub fn effective_offset_ms(
     let x = duration_ms(&stmt.offset)?;
     if stmt.negative {
         if x > parent_ms {
-            return Err(Error::e07_neg_offset(&stmt.offset_raw(), parent_raw));
+            return Err(Error::offset_out_of_bounds(&stmt.offset_raw(), parent_raw));
         }
         Ok(parent_ms - x)
     } else {
@@ -103,9 +105,9 @@ pub fn effective_offset_ms(
     }
 }
 
-/// Миллисекунды в человеческую строку для сообщений E07.
+/// Миллисекунды в человеческую строку для сообщений границ.
 ///
-/// Формат прибит примером из §5: `by 20m (80m > 60m)` — все три числа
+/// Формат прибит примером из главы ошибок: `by 20m (80m > 60m)` — все три числа
 /// в минутах, хотя `60m` это ровно `1h`. Отсюда каскад: целые минуты —
 /// суммарно в `m`, иначе целые секунды — в `s`, иначе `s+ms`/`ms`.
 /// Часы и крупнее никогда не печатаются (иначе пример не сходится).
@@ -142,8 +144,8 @@ mod tests {
         duration_ms(&dur(raw, items)).expect("длительность обязана быть корректной")
     }
 
-    fn e05(raw: &str, items: &[(&str, DurationUnit)]) -> Error {
-        duration_ms(&dur(raw, items)).expect_err("ожидалась E05")
+    fn invalid_duration(raw: &str, items: &[(&str, DurationUnit)]) -> Error {
+        duration_ms(&dur(raw, items)).expect_err("ожидалась invalid-duration")
     }
 
     #[test]
@@ -178,7 +180,7 @@ mod tests {
 
     #[test]
     fn formats_for_e07_messages() {
-        // Прибито примером §5: `by 20m (80m > 60m)`.
+        // Прибито примером главы ошибок: `by 20m (80m > 60m)`.
         assert_eq!(format_duration(1_200_000), "20m");
         assert_eq!(format_duration(4_800_000), "80m");
         assert_eq!(format_duration(3_600_000), "60m");
@@ -226,7 +228,7 @@ mod tests {
     fn rejects_negative_out_of_bounds() {
         use cyclorithm_parser::Stmt;
         use DurationUnit::*;
-        // -2h при родителе 1h20m: эффективное -40m — E07, код и сообщение по §5.
+        // -2h при родителе 1h20m: эффективное -40m — offset-out-of-bounds, слаг и сообщение по главе ошибок.
         let st = Stmt {
             offset: dur("2h", &[("2", Hour)]),
             negative: true,
@@ -238,7 +240,7 @@ mod tests {
             },
         };
         let err = effective_offset_ms(&st, 4_800_000, "1h20m").expect_err("вылет ниже нуля");
-        assert_eq!(err.code, "E07");
+        assert_eq!(err.code, "offset-out-of-bounds");
         assert_eq!(err.message, "offset '-2h' out of bounds (duration 1h20m)");
     }
 
@@ -251,13 +253,13 @@ mod tests {
             duration: dur(raw, items),
             stmts: Vec::<Stmt>::new(),
         };
-        // Ноль в любом виде — E05; ненулевой период проходит.
+        // Ноль в любом виде — invalid-duration; ненулевой период проходит.
         for (raw, items) in [
             ("0m", vec![("0", Minute)]),
             ("0h0m", vec![("0", Hour), ("0", Minute)]),
         ] {
             let err = root_period_ms(&root(raw, &items)).expect_err("нулевой период запрещён");
-            assert_eq!(err.code, "E05");
+            assert_eq!(err.code, "invalid-duration");
             assert_eq!(err.message, format!("invalid duration '{raw}'"));
         }
         assert_eq!(
@@ -275,8 +277,8 @@ mod tests {
             ("30s1d", vec![("30", Second), ("1", Day)]),
             ("1ms1m", vec![("1", Millisecond), ("1", Minute)]),
         ] {
-            let err = e05(raw, &items);
-            assert_eq!(err.code, "E05");
+            let err = invalid_duration(raw, &items);
+            assert_eq!(err.code, "invalid-duration");
             assert_eq!(err.message, format!("invalid duration '{raw}'"));
         }
         // А так можно: убывание `m > ms`, `s > ms`.
@@ -292,14 +294,14 @@ mod tests {
             ms("106751991167d", &[("106751991167", Day)]),
             9_223_372_036_828_800_000
         );
-        let err = e05("106751991168d", &[("106751991168", Day)]);
-        assert_eq!(err.code, "E05");
+        let err = invalid_duration("106751991168d", &[("106751991168", Day)]);
+        assert_eq!(err.code, "invalid-duration");
         assert_eq!(err.message, "invalid duration '106751991168d'");
-        // Мусорные цифры длиной в километр — тоже E05, а не паника.
-        let err = e05(
+        // Мусорные цифры длиной в километр — тоже invalid-duration, а не паника.
+        let err = invalid_duration(
             "99999999999999999999999h",
             &[("99999999999999999999999", Hour)],
         );
-        assert_eq!(err.code, "E05");
+        assert_eq!(err.code, "invalid-duration");
     }
 }

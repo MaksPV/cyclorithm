@@ -3,7 +3,7 @@
 //! Внутри — `i64` миллисекунд от unix epoch. Строки без таймзоны трактуются
 //! 1:1, без сдвигов; таймзоны и DST не учитываются, сутки всегда 24h.
 //! Формат входа и выхода: `YYYY-MM-DDTHH:MM:SS`, миллисекунды опциональны
-//! (`.mmm`). Любое отклонение — E08. Календарь — пролептический григорианский.
+//! (`.mmm`). Любое отклонение — invalid-datetime. Календарь — пролептический григорианский.
 
 use crate::Error;
 
@@ -13,10 +13,10 @@ const MS_PER_MIN: i64 = 60_000;
 const MS_PER_SEC: i64 = 1_000;
 
 /// Разбор наивной ISO-строки в миллисекунды epoch.
-/// Ошибка — E08 с сырым текстом: `invalid datetime '...'`.
+/// Ошибка — invalid-datetime с сырым текстом: `invalid datetime '...'`.
 pub fn parse_datetime(s: &str) -> Result<i64, Error> {
     let b = s.as_bytes();
-    let bad = || Error::e08(s);
+    let bad = || Error::invalid_datetime(s);
     // Строгая форма: 19 символов, плюс опциональные `.mmm`.
     if b.len() != 19 && b.len() != 23 {
         return Err(bad());
@@ -55,17 +55,19 @@ pub fn parse_datetime(s: &str) -> Result<i64, Error> {
 ///   `anchor_ms` + длительность;
 /// - иначе — строгий `parse_datetime`.
 ///
-/// Ошибка — E08 с исходным текстом.
+/// Ошибка — invalid-datetime с исходным текстом.
 pub fn parse_cli_datetime(s: &str, anchor_ms: i64) -> Result<i64, Error> {
     if let Some(rest) = s.strip_prefix('+') {
-        let delta = parse_cli_duration(rest).ok_or_else(|| Error::e08(s))?;
-        return anchor_ms.checked_add(delta).ok_or_else(|| Error::e08(s));
+        let delta = parse_cli_duration(rest).ok_or_else(|| Error::invalid_datetime(s))?;
+        return anchor_ms
+            .checked_add(delta)
+            .ok_or_else(|| Error::invalid_datetime(s));
     }
     if s.len() == 10 {
-        return parse_datetime(&format!("{s}T00:00:00")).map_err(|_| Error::e08(s));
+        return parse_datetime(&format!("{s}T00:00:00")).map_err(|_| Error::invalid_datetime(s));
     }
     if s.len() == 16 {
-        return parse_datetime(&format!("{s}:00")).map_err(|_| Error::e08(s));
+        return parse_datetime(&format!("{s}:00")).map_err(|_| Error::invalid_datetime(s));
     }
     parse_datetime(s)
 }
@@ -253,7 +255,7 @@ mod tests {
     }
 
     fn bad(s: &str) -> Error {
-        parse_datetime(s).expect_err("ожидалась E08")
+        parse_datetime(s).expect_err("ожидалась invalid-datetime")
     }
 
     #[test]
@@ -269,13 +271,13 @@ mod tests {
     fn respects_leap_years() {
         ok("2024-02-29T12:00:00");
         ok("2000-02-29T00:00:00");
-        assert_eq!(bad("2023-02-29T00:00:00").code, "E08");
-        assert_eq!(bad("1900-02-29T00:00:00").code, "E08");
+        assert_eq!(bad("2023-02-29T00:00:00").code, "invalid-datetime");
+        assert_eq!(bad("1900-02-29T00:00:00").code, "invalid-datetime");
     }
 
     #[test]
     fn rejects_malformed() {
-        // Фикстура bad_e08 + нарушения формы и диапазонов.
+        // Фикстура bad_invalid-datetime + нарушения формы и диапазонов.
         for s in [
             "not-a-datetime",
             "2026-1-1T0:0:0",
@@ -292,7 +294,7 @@ mod tests {
             "",
         ] {
             let err = bad(s);
-            assert_eq!(err.code, "E08", "для {s:?}");
+            assert_eq!(err.code, "invalid-datetime", "для {s:?}");
             assert_eq!(err.message, format!("invalid datetime '{s}'"), "для {s:?}");
         }
     }
@@ -313,7 +315,7 @@ mod tests {
         assert_eq!(cli("+0"), base);
         assert_eq!(cli("+1500"), base + 1500);
         assert_eq!(cli("+1d2"), base + 86_400_002);
-        // Битые — E08 с исходным текстом.
+        // Битые — invalid-datetime с исходным текстом.
         for s in [
             "2026-09-07T09",
             "+1x",
@@ -322,8 +324,8 @@ mod tests {
             "2026-13-40",
             "+999999999999999999999d",
         ] {
-            let err = parse_cli_datetime(s, base).expect_err("ожидалась E08");
-            assert_eq!(err.code, "E08", "для {s:?}");
+            let err = parse_cli_datetime(s, base).expect_err("ожидалась invalid-datetime");
+            assert_eq!(err.code, "invalid-datetime", "для {s:?}");
             assert_eq!(err.message, format!("invalid datetime '{s}'"), "для {s:?}");
         }
     }
