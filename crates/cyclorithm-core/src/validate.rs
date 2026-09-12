@@ -19,7 +19,7 @@ use cyclorithm_parser::{
     Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt,
 };
 
-use crate::cond::TableReg;
+use crate::cond::{check_reserved, TableReg};
 use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 use crate::Error;
 
@@ -46,6 +46,7 @@ pub fn validate_names<'a>(
         if points.contains_key(p.name.as_str()) {
             return Err(Error::duplicate("point", &p.name));
         }
+        check_reserved(&p.name)?;
         points.insert(p.name.as_str(), p);
     }
     let mut routines = HashMap::new();
@@ -53,6 +54,7 @@ pub fn validate_names<'a>(
         if routines.contains_key(r.name.as_str()) {
             return Err(Error::duplicate("routine", &r.name));
         }
+        check_reserved(&r.name)?;
         if points.contains_key(r.name.as_str()) {
             return Err(Error::point_not_routine(&r.name));
         }
@@ -60,12 +62,13 @@ pub fn validate_names<'a>(
         if r.params.is_empty() {
             return Err(Error::no_table_parameter(&r.name));
         }
-        // Дубли параметров — duplicate, как у циклов.
+        // Дубли параметров — duplicate, как у циклов; `at` — reserved-name.
         let mut seen = HashSet::new();
         for p in &r.params {
             if !seen.insert(p) {
                 return Err(Error::duplicate("param", p));
             }
+            check_reserved(p)?;
         }
         routines.insert(r.name.as_str(), r);
     }
@@ -74,6 +77,7 @@ pub fn validate_names<'a>(
         if cycles.contains_key(c.name.as_str()) {
             return Err(Error::duplicate("cycle", &c.name));
         }
+        check_reserved(&c.name)?;
         if points.contains_key(c.name.as_str()) {
             return Err(Error::point_not_cycle(&c.name));
         }
@@ -81,11 +85,13 @@ pub fn validate_names<'a>(
             return Err(Error::routine_not_cycle(&c.name));
         }
         // Дубли параметров (`cycle C(a, a)`) — duplicate, как дубли объявлений.
+        // `at` — reserved-name (момент строки затенил бы параметр).
         let mut seen = HashSet::new();
         for p in &c.params {
             if !seen.insert(p) {
                 return Err(Error::duplicate("param", p));
             }
+            check_reserved(p)?;
         }
         cycles.insert(c.name.as_str(), c);
     }
@@ -823,6 +829,12 @@ mod tests {
                 "wrong-kind",
                 "point 'DEPOT' is not a cycle",
             ),
+            (
+                "bad_reserved-name",
+                include_str!("../../../examples/invalid/bad_reserved-name.cyclo"),
+                "reserved-name",
+                "reserved name 'at'",
+            ),
         ] {
             let e = err(src);
             assert_eq!(e.code, code, "для {file}");
@@ -840,6 +852,19 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             ("duplicate", "duplicate param 'a'")
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_at_as_param() {
+        // Параметр `at` затенил бы момент строки — reserved-name, не duplicate.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C(at) duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(1); } }";
+        let e = err(src);
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("reserved-name", "reserved name 'at'")
         );
     }
 

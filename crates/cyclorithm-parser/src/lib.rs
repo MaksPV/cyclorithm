@@ -461,15 +461,28 @@ fn build_or(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::or_expr);
     let mut inner = pair.into_inner();
     let mut acc = build_and(inner.next().expect("or_expr: левый операнд"));
-    while inner.next().is_some() {
-        let rhs = build_and(inner.next().expect("or_expr: правый операнд"));
-        acc = match acc {
-            Cond::Or(mut all) => {
-                all.push(rhs);
+    // Прозрачная группа даёт вложенный Or — вжимаем (один уровень логики —
+    // один узел, `a or (b or c)` ≡ `a or b or c`).
+    let mut push = |acc: Cond, rhs: Cond| match acc {
+        Cond::Or(mut all) => {
+            match rhs {
+                Cond::Or(more) => all.extend(more),
+                r => all.push(r),
+            }
+            Cond::Or(all)
+        }
+        other => match rhs {
+            Cond::Or(mut more) => {
+                let mut all = vec![other];
+                all.append(&mut more);
                 Cond::Or(all)
             }
-            other => Cond::Or(vec![other, rhs]),
-        };
+            r => Cond::Or(vec![other, r]),
+        },
+    };
+    while inner.next().is_some() {
+        let rhs = build_and(inner.next().expect("or_expr: правый операнд"));
+        acc = push(acc, rhs);
     }
     acc
 }
@@ -511,15 +524,27 @@ fn build_and(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::and_expr);
     let mut inner = pair.into_inner();
     let mut acc = build_not(inner.next().expect("and_expr: левый операнд"));
-    while inner.next().is_some() {
-        let rhs = build_not(inner.next().expect("and_expr: правый операнд"));
-        acc = match acc {
-            Cond::And(mut all) => {
-                all.push(rhs);
+    // Как в `build_or`: вложенный And вжимается в плоский вектор.
+    let mut push = |acc: Cond, rhs: Cond| match acc {
+        Cond::And(mut all) => {
+            match rhs {
+                Cond::And(more) => all.extend(more),
+                r => all.push(r),
+            }
+            Cond::And(all)
+        }
+        other => match rhs {
+            Cond::And(mut more) => {
+                let mut all = vec![other];
+                all.append(&mut more);
                 Cond::And(all)
             }
-            other => Cond::And(vec![other, rhs]),
-        };
+            r => Cond::And(vec![other, r]),
+        },
+    };
+    while inner.next().is_some() {
+        let rhs = build_not(inner.next().expect("and_expr: правый операнд"));
+        acc = push(acc, rhs);
     }
     acc
 }
@@ -552,13 +577,8 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
         .expect("cmp_right: содержимое");
     let right = if right.as_rule() == Rule::alternation {
         let mut alts = right.into_inner();
-        let branch = |p: Pair<Rule>| {
-            build_operand(
-                p.into_inner()
-                    .next()
-                    .expect("alternation: cond_value"),
-            )
-        };
+        let branch =
+            |p: Pair<Rule>| build_operand(p.into_inner().next().expect("alternation: cond_value"));
         let mut values = vec![branch(alts.next().expect("alternation: ветка"))];
         while alts.next().is_some() {
             values.push(branch(alts.next().expect("alternation: ветка")));
@@ -1063,6 +1083,11 @@ pub struct Stmt {
 }
 
 /// Условие строки: логика над сравнениями и C-выражения (ненулевое — истина).
+///
+/// Зеркальные пары с выражениями (один синтаксис — два узла, различает позиция):
+/// `Pred` (условие) ↔ `Call` (значение), `Truthy(Expr)` (значение как условие)
+/// ↔ `Truth(Cond)` (условие как значение 1/0). Порядок в `not_expr` решает:
+/// вызов без продолжения — `Pred`, иначе — `Call` внутри `Truthy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cond {
     Or(Vec<Cond>),
@@ -1092,6 +1117,9 @@ pub enum CondRhs {
 /// Выражение условия: числа — сырым текстом, `at` — время строки.
 /// `Bool`/`Map`/`Array` — JSON-значения (черновик `attrs.md`): литералы
 /// и доступ `.поле` / `[n]`; вычисляются в момент строки.
+/// `Bool` в сравнениях запрещён (`type-mismatch`): живёт только ради
+/// `Truthy(true/false)` и литералов в мапах. `Truth` — обратный мостик
+/// к `Truthy`: условие как число 1/0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Num(String),
@@ -1353,6 +1381,41 @@ mod tests {
         };
         assert_eq!(cond_of(grouped), cond_of(plain));
         assert_eq!(cond_of(nested), cond_of(plain));
+    }
+
+    #[test]
+    fn parse_bool_group_flattens_same_op() {
+        // Прозрачная группа не плодит вложенность: один уровень — один узел.
+        let cond_of = |row: &str| {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                cycle R duration = 1h {{ 0m: A.x(); }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} 0m: A.x(); }} }}"
+            );
+            parse(&src)
+                .expect("условие обязано разбираться")
+                .schedule
+                .root
+                .stmts
+                .into_iter()
+                .next()
+                .expect("строка есть")
+                .condition
+                .expect("условие есть")
+        };
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond_of("[(at == 1 or at == 2) or at == 3]"),
+            Cond::Or(vec![cmp("1"), cmp("2"), cmp("3")])
+        );
+        assert_eq!(
+            cond_of("[(at == 1 and at == 2) and at == 3]"),
+            Cond::And(vec![cmp("1"), cmp("2"), cmp("3")])
+        );
     }
 
     #[test]
@@ -1737,7 +1800,7 @@ mod tests {
 
     #[test]
     fn parse_accepts_validation_fixtures() {
-        // Граница парсер/ядро: файлы bad_unknown-point–e09 и bad_duplicate-attribute синтаксически корректны,
+        // Граница парсер/ядро: негативные файлы синтаксически корректны,
         // их ошибки — валидация (слаги главы ошибок), а не синтаксис.
         for src in [
             include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
@@ -1759,6 +1822,7 @@ mod tests {
             include_str!("../../../examples/invalid/bad_type-mismatch.cyclo"),
             include_str!("../../../examples/invalid/bad_division-by-zero.cyclo"),
             include_str!("../../../examples/invalid/bad_duplicate-attribute.cyclo"),
+            include_str!("../../../examples/invalid/bad_reserved-name.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }

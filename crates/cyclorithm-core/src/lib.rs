@@ -64,6 +64,12 @@ impl Error {
         Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
+    /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
+    /// ничего нельзя, иначе момент молча затенит объявление.
+    pub fn reserved_name(name: &str) -> Self {
+        Self::coded("reserved-name", format!("reserved name '{name}'"))
+    }
+
     /// `wrong-kind`: `point 'DEPOT' is not a cycle` (точку вызвали как цикл).
     pub fn point_not_cycle(name: &str) -> Self {
         Self::coded("wrong-kind", format!("point '{name}' is not a cycle"))

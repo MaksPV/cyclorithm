@@ -107,11 +107,21 @@ impl TableReg {
     }
 }
 
+/// `at` зарезервировано (момент строки): объявлять так ничего нельзя.
+/// Проверяют обе фазы именования — объявления (`resolve_units`) и сущности
+/// расписания (`validate_names`), плюс параметры циклов/рутин (но не предикатов:
+/// у предиката параметр обязан буквально зваться `at`).
+pub(crate) fn check_reserved(name: &str) -> Result<(), Error> {
+    if name == "at" {
+        return Err(Error::reserved_name(name));
+    }
+    Ok(())
+}
+
 /// Собрать определения одного файла поверх системных.
 pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
     resolve_units(&[decls.to_vec()])
 }
-
 /// Собрать определения: оверлей групп в порядке наложения
 // (последняя группа — тело программы), затем проверить все тела.
 // Дубли — только внутри одной группы (`duplicate`); между файлами побеждает последнее.
@@ -143,6 +153,7 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
                 if !seen_tables.insert(name.clone()) {
                     return Err(Error::duplicate("table", name));
                 }
+                check_reserved(name)?;
                 if !tables.tables.contains_key(name) {
                     tables.order.push(name.clone());
                 }
@@ -166,6 +177,7 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
             if !seen.insert(name.clone()) {
                 return Err(Error::duplicate(kind, name));
             }
+            check_reserved(name)?;
             all.push(name.clone());
             let (_, def) = to_def(d, unit);
             map.insert(name.clone(), def);
