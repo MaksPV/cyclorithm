@@ -1,4 +1,4 @@
-schedule "E12" {
+schedule "type-mismatch" {
   point DEPOT {
     actions = [depart];
   }

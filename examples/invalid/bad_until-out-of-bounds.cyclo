@@ -1,4 +1,4 @@
-schedule "E07-until" {
+schedule "until-out-of-bounds" {
   point DEPOT {
     actions = [depart];
   }

@@ -1,6 +1,6 @@
-use "bad_e13_cycle_a.cyclo";
+use "bad_import-cycle_a.cyclo";
 
-schedule "E13-cycle" {
+schedule "import-cycle" {
   point DEPOT {
     actions = [depart];
   }

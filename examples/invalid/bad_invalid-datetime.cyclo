@@ -1,4 +1,4 @@
-schedule "E08" {
+schedule "invalid-datetime" {
   point DEPOT {
     actions = [depart];
   }

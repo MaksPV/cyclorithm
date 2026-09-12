@@ -1,6 +1,6 @@
 const M = {"a": 1, "a": 2};
 
-schedule "E15" {
+schedule "duplicate-attribute" {
   point DEPOT {
     actions = [depart];
   }

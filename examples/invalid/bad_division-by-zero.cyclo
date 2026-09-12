@@ -1,4 +1,4 @@
-schedule "E12-div" {
+schedule "division-by-zero" {
   point DEPOT {
     actions = [depart];
   }

@@ -1,4 +1,4 @@
-schedule "E09" {
+schedule "wrong-kind" {
   point DEPOT {
     actions = [depart];
   }

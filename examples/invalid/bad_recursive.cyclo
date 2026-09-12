@@ -1,4 +1,4 @@
-schedule "E06" {
+schedule "recursive" {
   point DEPOT {
     actions = [depart];
   }

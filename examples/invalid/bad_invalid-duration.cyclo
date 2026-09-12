@@ -1,4 +1,4 @@
-schedule "E05" {
+schedule "invalid-duration" {
   point DEPOT {
     actions = [depart];
   }

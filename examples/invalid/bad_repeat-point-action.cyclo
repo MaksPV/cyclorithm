@@ -1,4 +1,4 @@
-schedule "E10-action" {
+schedule "repeat-point-action" {
   point DEPOT {
     actions = [depart];
   }

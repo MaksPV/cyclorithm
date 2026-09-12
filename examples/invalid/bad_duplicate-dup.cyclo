@@ -1,7 +1,7 @@
 const K = 1;
 const K = 2;
 
-schedule "E04-dup" {
+schedule "duplicate-dup" {
   point DEPOT {
     actions = [depart];
   }

@@ -1,6 +1,6 @@
-use "bad_e14_lib.cyclo";
+use "bad_schedule-in-import-lib.cyclo";
 
-schedule "E14-schedule" {
+schedule "schedule-in-import" {
   point DEPOT {
     actions = [depart];
   }

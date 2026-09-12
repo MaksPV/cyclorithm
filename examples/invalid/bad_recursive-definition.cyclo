@@ -1,7 +1,7 @@
 fun a(t) = b(t);
 fun b(t) = a(t);
 
-schedule "E12-recursive" {
+schedule "recursive-definition" {
   point DEPOT {
     actions = [depart];
   }

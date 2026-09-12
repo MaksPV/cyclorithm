@@ -250,46 +250,67 @@ fn empty_window_gives_empty_events() {
 fn validation_errors_go_to_stderr() {
     // (файл, фрагмент stderr). В stdout при ошибке — ничего.
     for (file, message) in [
-        ("bad_e01", "unknown point 'PORT'"),
-        ("bad_e02", "action 'arrive' not allowed for point 'DEPOT'"),
-        ("bad_e03", "unknown cycle 'NIGHT_ROUTE'"),
-        ("bad_e04", "duplicate point 'DEPOT'"),
-        ("bad_e05", "invalid duration '1h2h'"),
-        ("bad_e06", "recursive cycle 'A'"),
+        ("bad_unknown-point", "unknown point 'PORT'"),
         (
-            "bad_e07",
+            "bad_action-not-allowed",
+            "action 'arrive' not allowed for point 'DEPOT'",
+        ),
+        ("bad_unknown-cycle", "unknown cycle 'NIGHT_ROUTE'"),
+        ("bad_duplicate", "duplicate point 'DEPOT'"),
+        ("bad_invalid-duration", "invalid duration '1h2h'"),
+        ("bad_recursive", "recursive cycle 'A'"),
+        (
+            "bad_cycle-overruns",
             "cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)",
         ),
-        ("bad_e07_neg", "offset '-2h' out of bounds (duration 1h20m)"),
         (
-            "bad_e07_chain",
+            "bad_offset-out-of-bounds",
+            "offset '-2h' out of bounds (duration 1h20m)",
+        ),
+        (
+            "bad_cycle-overruns-chain",
             "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
         ),
-        ("bad_e07_until", "until '30h' out of bounds (duration 24h)"),
-        ("bad_e10_zero", "invalid repeat count '0'"),
-        ("bad_e10_fill0", "fill of zero-duration cycle 'EMPTY'"),
         (
-            "bad_e10_action",
+            "bad_until-out-of-bounds",
+            "until '30h' out of bounds (duration 24h)",
+        ),
+        ("bad_invalid-repeat-count", "invalid repeat count '0'"),
+        (
+            "bad_fill-zero-duration",
+            "fill of zero-duration cycle 'EMPTY'",
+        ),
+        (
+            "bad_repeat-point-action",
             "repeat of point action 'depart' not allowed",
         ),
-        ("bad_e11", "unknown name 'banana'"),
-        ("bad_e11_private", "unknown name '__z'"),
-        ("bad_e12_recursive", "recursive definition 'a'"),
-        ("bad_e12_datestr", "invalid date '2026-13-01'"),
-        ("bad_e13_cycle", "import cycle 'bad_e13_cycle_a.cyclo'"),
-        ("bad_e13_missing", "cannot read import 'no_such_lib.cyclo'"),
+        ("bad_unknown-name", "unknown name 'banana'"),
+        ("bad_unknown-name-private", "unknown name '__z'"),
+        ("bad_recursive-definition", "recursive definition 'a'"),
+        ("bad_invalid-date", "invalid date '2026-13-01'"),
         (
-            "bad_e14_schedule",
-            "schedule not allowed in import 'bad_e14_lib.cyclo'",
+            "bad_import-cycle",
+            "import cycle 'bad_import-cycle_a.cyclo'",
         ),
-        ("bad_e04_dup", "duplicate const 'K'"),
-        ("bad_e12", "type mismatch: cannot mix number and string"),
-        ("bad_e12_div", "division by zero"),
-        ("bad_e08", "invalid datetime 'not-a-datetime'"),
-        ("bad_e09", "point 'DEPOT' is not a cycle"),
-        ("bad_e15", "duplicate attribute 'a'"),
-        ("bad_e16", "unknown table 'SHORT'"),
-        ("bad_e16_slot", "unknown slot '8th'"),
+        (
+            "bad_cannot-read-import",
+            "cannot read import 'no_such_lib.cyclo'",
+        ),
+        (
+            "bad_schedule-in-import",
+            "schedule not allowed in import 'bad_schedule-in-import-lib.cyclo'",
+        ),
+        ("bad_duplicate-dup", "duplicate const 'K'"),
+        (
+            "bad_type-mismatch",
+            "type mismatch: cannot mix number and string",
+        ),
+        ("bad_division-by-zero", "division by zero"),
+        ("bad_invalid-datetime", "invalid datetime 'not-a-datetime'"),
+        ("bad_wrong-kind", "point 'DEPOT' is not a cycle"),
+        ("bad_duplicate-attribute", "duplicate attribute 'a'"),
+        ("bad_unknown-table", "unknown table 'SHORT'"),
+        ("bad_unknown-slot", "unknown slot '8th'"),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
@@ -311,7 +332,7 @@ fn validation_errors_go_to_stderr() {
 }
 
 #[test]
-fn syntax_error_has_no_e_code() {
+fn syntax_error_has_no_slug() {
     let out = run(&[
         "run",
         "../../examples/invalid/bad_syntax.cyclo",
@@ -379,7 +400,7 @@ fn check_command() {
         String::from_utf8(out.stdout).expect("stdout — UTF-8"),
         "ok\n"
     );
-    let out = run(&["check", "../../examples/invalid/bad_e16.cyclo"]);
+    let out = run(&["check", "../../examples/invalid/bad_unknown-table.cyclo"]);
     assert!(!out.status.success());
     assert!(out.stdout.is_empty());
     let err = String::from_utf8(out.stderr).expect("stderr — UTF-8");

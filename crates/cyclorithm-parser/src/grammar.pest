@@ -1,6 +1,6 @@
 // Cyclorithm grammar — дословно §3 спеки (EBNF почти 1:1).
 //
-// Осознанно пропуски грамматики (ловит валидация, E05):
+// Осознанно пропуски грамматики (ловит валидация, invalid-duration):
 // - порядок/уникальность компонентов длительности (`1h2h`, `30s1d`);
 // - переполнение i64 и нулевой период root_cycle.
 //
@@ -10,7 +10,7 @@ file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
 // Единица импорта: объявления и свои use, расписание — опционально
-// (его наличие бракует резолвер кодом E14, а не синтаксис).
+// (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { "use" ~ string ~ ";" }
 schedule    = { "schedule" ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
@@ -35,11 +35,11 @@ decl_value  = { concat | bitor }
 point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
 // Атрибуты точки (§3 спеки): только литерал или ссылка на константу-мапу,
-// строк `k = v;` нет. Дубли ключей ловит валидация (E15), не синтаксис.
+// строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
 point_attrs = { "attrs" ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
 cycle       = { "cycle" ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-// Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (E04).
+// Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 // Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
@@ -54,7 +54,7 @@ routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
 routine_offset = { neg_sign? ~ duration ~ !word_tail | label }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
 // Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
-// строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).
+// строковый префикс. Смешение типов разбирается, бракуется валидацией (type-mismatch).
 condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
 or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
@@ -97,7 +97,7 @@ concat_term = { postfix | "(" ~ concat ~ ")" }
 // (`[0]`). `BELL.ring()` остаётся вызовом: различие по скобке —
 // `IDENT.IDENT(` разбирает `point_action` на уровне строк, а не выражение.
 // Вычисляемых ключей нет: в скобках только целочисленный литерал
-// (минус пишется слитно, как у смещений; `-1` даст E12 в момент строки).
+// (минус пишется слитно, как у смещений; `-1` даст index-out-of-bounds в момент строки).
 postfix     = { postfix_base ~ postfix_suffix* }
 // Порядок как у операндов: `call` раньше `bool_lit`, иначе `true(x)`
 // режется на литерал + мусор; `bool_lit` раньше `IDENT`, иначе `true`

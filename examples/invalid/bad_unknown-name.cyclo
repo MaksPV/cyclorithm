@@ -1,4 +1,4 @@
-schedule "E11" {
+schedule "unknown-name" {
   point DEPOT {
     actions = [depart];
   }

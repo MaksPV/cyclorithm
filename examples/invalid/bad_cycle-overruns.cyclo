@@ -1,4 +1,4 @@
-schedule "E07" {
+schedule "cycle-overruns" {
   point DEPOT {
     actions = [depart];
   }

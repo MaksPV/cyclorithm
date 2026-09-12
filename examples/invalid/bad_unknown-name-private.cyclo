@@ -1,4 +1,4 @@
-schedule "E11-private" {
+schedule "unknown-name-private" {
   point DEPOT {
     actions = [depart];
   }

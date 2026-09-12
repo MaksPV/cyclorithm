@@ -1,4 +1,4 @@
-schedule "E12-datestr" {
+schedule "invalid-date" {
   point DEPOT {
     actions = [depart];
   }

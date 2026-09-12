@@ -1,6 +1,6 @@
 use "no_such_lib.cyclo";
 
-schedule "E13-missing" {
+schedule "cannot-read-import" {
   point DEPOT {
     actions = [depart];
   }

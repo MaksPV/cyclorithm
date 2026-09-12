@@ -1,4 +1,4 @@
-schedule "E04" {
+schedule "duplicate" {
   point DEPOT {
     actions = [depart];
   }

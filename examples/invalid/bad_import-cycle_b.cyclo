@@ -1,3 +1,3 @@
-use "bad_e13_cycle_a.cyclo";
+use "bad_import-cycle_a.cyclo";
 
 const B = 1;
