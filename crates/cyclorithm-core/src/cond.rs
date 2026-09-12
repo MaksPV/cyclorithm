@@ -409,7 +409,7 @@ impl CxTy<'_> {
                 self.leave();
                 r
             }
-            Cond::Cmp { left, right, .. } => {
+            Cond::Cmp { op, left, right } => {
                 let lt = self.infer(left)?;
                 match right {
                     CondRhs::One(r) => {
@@ -438,6 +438,12 @@ impl CxTy<'_> {
                         }
                     }
                     CondRhs::Alt(alts) => {
+                        // Альтернация — только `==`/`!=`: ловим здесь, а не
+                        // в момент строки (рантайм-ветка в eval — страховка
+                        // для прямых вызовов `eval_cond` без статики).
+                        if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
+                            return Err(Error::type_mismatch());
+                        }
                         // Каждая ветка — того же типа, что левая часть
                         // (динамика — мимо: разберётся строка). Строковые
                         // ветки — только под строку слева
@@ -1953,11 +1959,19 @@ mod tests {
     }
 
     #[test]
-    fn alternation_beyond_eq_ne_is_runtime_error() {
-        // Статика пропускает (числа, арность в норме), падает вычисление.
+    fn alternation_beyond_eq_ne_is_static_error() {
+        // Оператор смотрит статика: `check_single` падает, до вычисления не доходит.
+        let e = static_err("at < (1 or 2)");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+        // Рантайм-ветка осталась страховкой для прямых вызовов `eval_cond`.
         let c = cond_of("at < (1 or 2)");
         let d = test_defs();
-        check_single(&c, &d).expect("оператор статика не смотрит");
         let e = eval_cond(&c, 1, &d).expect_err("только == и !=");
         assert_eq!(
             (e.code, e.message.as_str()),
