@@ -529,14 +529,20 @@ impl CxTy<'_> {
                 self.infer_cond(c)?;
                 Ok(Ty::Num)
             }
-            Expr::Bin { left, right, .. } => {
+            Expr::Bin { op, left, right } => {
                 let ty = match (self.infer(left)?, self.infer(right)?) {
                     (Ty::Num, Ty::Num) => Ty::Num,
                     (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ty::Dyn,
                     _ => return Err(Error::type_mismatch()),
                 };
-                if let Some(Err(e)) = self.const_div(right) {
-                    return Err(e);
+                // Ноль опасен только в делителе: `1 + 0` и `5 * 0` валидны.
+                if matches!(
+                    op,
+                    ArithOp::Div | ArithOp::Mod | ArithOp::FloorDiv | ArithOp::FloorMod
+                ) {
+                    if let Some(Err(e)) = self.const_div(right) {
+                        return Err(e);
+                    }
                 }
                 Ok(ty)
             }
@@ -1854,6 +1860,21 @@ mod tests {
     #[test]
     fn rejects_constant_division_by_zero() {
         let e = static_err("1 / 0 == 0");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
+    }
+
+    #[test]
+    fn zero_lhs_rhs_ok_for_non_division() {
+        // Ноль опасен только в делителе: `+`, `-`, `*` с константным нулём валидны.
+        assert!(yes("1 + 0 == 1", 0));
+        assert!(yes("5 * 0 == 0", 0));
+        assert!(yes("1 - 0 == 1", 0));
+        assert!(yes("1 * (1 + 2 > 9) == 0", 0));
+        assert!(yes("1 % 3 == 1", 0));
+        let e = static_err("1 % 0 == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("division-by-zero", "division by zero")
