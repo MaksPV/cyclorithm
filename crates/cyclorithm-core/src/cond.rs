@@ -225,8 +225,10 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
     // Тело проверяется изнутри своего файла: `__` видно.
     let mut cx = CxTy {
         defs,
-        stack: vec![(name.to_owned(), def.unit)],
-        unit: def.unit,
+        scope: Scope {
+            stack: vec![(name.to_owned(), def.unit)],
+            unit: def.unit,
+        },
         vars: HashMap::new(),
         // Тела объявлений — позиция данных: `const M = {...}`, `const A = M`.
         data: true,
@@ -258,8 +260,7 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
 
 struct CxTy<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, usize)>,
-    unit: usize,
+    scope: Scope,
     vars: HashMap<String, Ty>,
     /// Позиция данных (`true`): голые имена констант-мап/массивов/bool видны.
     /// В условиях (`false`) они — unknown-name (в скоупе только числа, строки и `at`).
@@ -268,16 +269,72 @@ struct CxTy<'a> {
 
 struct CxEv<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, usize)>,
-    unit: usize,
+    scope: Scope,
     vars: HashMap<String, Value>,
 }
 
+/// Стек вызовов + текущий юнит: общий для статики (`CxTy`) и вычисления
+/// (`CxEv`). Раньше `enter`/`leave` жили копипастой в обоих контекстах.
+#[derive(Debug, Clone, Default)]
+struct Scope {
+    stack: Vec<(String, usize)>,
+    unit: usize,
+}
+
+impl Scope {
+    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
+        if self.stack.iter().any(|(n, _)| n == name) {
+            return Err(Error::recursive_definition(name));
+        }
+        let prev = std::mem::replace(&mut self.unit, unit);
+        self.stack.push((name.to_owned(), prev));
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        if let Some((_, prev)) = self.stack.pop() {
+            self.unit = prev;
+        }
+    }
+}
+
 fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error> {
+    visible_def(defs, name, unit).ok_or_else(|| Error::unknown_name(name))
+}
+
+/// Объявление, видимое из юнита: чужое private не в счёт. Единое правило
+/// для резолва, предикатов, встроенных и вызовов — раньше `infer` смотрел
+/// `contains_key`, а `eval` — `private`-видимость.
+fn visible_def<'a>(defs: &'a Defs, name: &str, unit: usize) -> Option<&'a Def> {
     match defs.map.get(name) {
-        Some(d) if d.private && d.unit != unit => Err(Error::unknown_name(name)),
-        Some(d) => Ok(d),
-        None => Err(Error::unknown_name(name)),
+        Some(d) if d.private && d.unit != unit => None,
+        Some(d) => Some(d),
+        None => None,
+    }
+}
+
+/// Вызов предиката: резолв + проверка рода. Общее для статики и вычисления —
+/// раньше living копипастой в `infer_cond`/`eval_cond`.
+fn resolve_pred<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error> {
+    let def = resolve(defs, name, unit)?;
+    match def.kind {
+        DefKind::Pred => Ok(def),
+        _ => Err(Error::not_a_predicate(name)),
+    }
+}
+
+/// Встроенные функции (`str`/`pad`/`floordiv`/`floormod`/`mkdate`) действуют,
+/// только если имя не затенено видимым объявлением. Общее для `infer_call`
+/// и `eval_call` (раньше проверки расходились).
+fn builtin_arity(defs: &Defs, name: &str, unit: usize) -> Option<usize> {
+    if visible_def(defs, name, unit).is_some() {
+        return None;
+    }
+    match name {
+        "str" => Some(1),
+        "pad" | "floordiv" | "floormod" => Some(2),
+        "mkdate" => Some(7),
+        _ => None,
     }
 }
 
@@ -348,8 +405,10 @@ fn check_row(
 ) -> Result<(), Error> {
     let mut cx = CxTy {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: params.clone(),
         data: false,
     };
@@ -410,16 +469,11 @@ impl CxTy<'_> {
                     Ty::Num | Ty::Dyn => {}
                     _ => return Err(Error::type_mismatch()),
                 }
-                let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Pred => {}
-                    _ => return Err(Error::not_a_predicate(name)),
-                };
-                self.enter(name, def.unit)?;
+                let def = resolve_pred(self.defs, name, self.scope.unit)?;
+                self.scope.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.infer_cond(&body);
-                self.leave();
+                self.scope.leave();
                 r
             }
             Cond::Cmp { op, left, right } => {
@@ -514,7 +568,7 @@ impl CxTy<'_> {
                     // Параметр — динамика, пропускаем.
                     if !self.vars.contains_key(name) {
                         let defs = self.defs;
-                        let def = resolve(defs, name, self.unit)?;
+                        let def = resolve(defs, name, self.scope.unit)?;
                         if def.kind == DefKind::Const {
                             let ty = self.const_body_ty(name, def)?;
                             self.hide_data(name, ty)?;
@@ -530,7 +584,7 @@ impl CxTy<'_> {
                 }
                 // Голая константа (K, DAY); fun/pred без вызова — не значение.
                 let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
+                let def = resolve(defs, name, self.scope.unit)?;
                 match def.kind {
                     DefKind::Const => {
                         let ty = self.const_body_ty(name, def)?;
@@ -587,48 +641,31 @@ impl CxTy<'_> {
     }
 
     fn infer_call(&mut self, name: &str, args: &[Expr]) -> Result<Ty, Error> {
-        match name {
-            "str" | "pad" if !self.defs.map.contains_key(name) => {
-                let want = if name == "str" { 1 } else { 2 };
-                if args.len() != want {
-                    return Err(Error::wrong_arguments(name));
-                }
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Dyn => {}
-                        _ => return Err(Error::type_mismatch()),
-                    }
-                }
-                Ok(Ty::Str)
+        // Встроенные — только если не затенены (`builtin_arity`); все берут числа.
+        if let Some(want) = builtin_arity(self.defs, name, self.scope.unit) {
+            if args.len() != want {
+                return Err(Error::wrong_arguments(name));
             }
-            // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
-            "floordiv" | "floormod" if !self.defs.map.contains_key(name) => {
-                let [a, b] = args else {
-                    return Err(Error::wrong_arguments(name));
-                };
-                match (self.infer(a)?, self.infer(b)?) {
-                    (Ty::Num, Ty::Num) => {}
-                    (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => {}
+            for a in args {
+                match self.infer(a)? {
+                    Ty::Num | Ty::Dyn => {}
                     _ => return Err(Error::type_mismatch()),
                 }
+            }
+            // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
+            if name == "floordiv" || name == "floormod" {
+                let [_, b] = args else {
+                    return Err(Error::wrong_arguments(name));
+                };
                 if let Some(Err(e)) = self.const_div(b) {
                     return Err(e);
                 }
-                Ok(Ty::Num)
+                return Ok(Ty::Num);
             }
             // Конструктор даты — встроенная функция (§4.13): ровно 7 чисел.
             // Все-константа проверяется сразу (как константный ноль у деления),
             // иначе — в момент строки.
-            "mkdate" if !self.defs.map.contains_key(name) => {
-                if args.len() != 7 {
-                    return Err(Error::wrong_arguments(name));
-                }
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Dyn => {}
-                        _ => return Err(Error::type_mismatch()),
-                    }
-                }
+            if name == "mkdate" {
                 let mut vals = Vec::with_capacity(7);
                 for a in args {
                     match const_eval(a, self) {
@@ -639,59 +676,59 @@ impl CxTy<'_> {
                     }
                 }
                 build_date(&vals, name)?;
-                Ok(Ty::Num)
+                return Ok(Ty::Num);
             }
-            _ => {
-                let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Const => {
-                        if !args.is_empty() {
-                            return Err(Error::wrong_arguments(name));
-                        }
-                        let ty = self.const_body_ty(name, def)?;
-                        // Как голое имя: данные через вызов в условии невидимы.
-                        self.hide_data(name, ty)
-                    }
-                    DefKind::Fun => {
-                        let arg = match args {
-                            [a] => a,
-                            _ => return Err(Error::wrong_arguments(name)),
-                        };
-                        let arg_ty = self.infer(arg)?;
-                        self.enter(name, def.unit)?;
-                        let param = def.param.clone().expect("fun: параметр");
-                        let body = def.expr.clone().expect("fun: тело");
-                        // Восстановить внешнее значение: параметры вложенных
-                        // вызовов часто зовутся так же (`t` в прелюдии).
-                        let old = self.vars.insert(param.clone(), arg_ty);
-                        let ty = self.infer(&body);
-                        match old {
-                            Some(v) => {
-                                self.vars.insert(param, v);
-                            }
-                            None => {
-                                self.vars.remove(&param);
-                            }
-                        }
-                        self.leave();
-                        ty
-                    }
-                    DefKind::Pred => Err(Error::type_mismatch()),
+            return Ok(Ty::Str);
+        }
+        // Пользовательское объявление (встроенные выше уже отсечены).
+        let defs = self.defs;
+        let def = resolve(defs, name, self.scope.unit)?;
+        match def.kind {
+            DefKind::Const => {
+                if !args.is_empty() {
+                    return Err(Error::wrong_arguments(name));
                 }
+                let ty = self.const_body_ty(name, def)?;
+                // Как голое имя: данные через вызов в условии невидимы.
+                self.hide_data(name, ty)
             }
+            DefKind::Fun => {
+                let arg = match args {
+                    [a] => a,
+                    _ => return Err(Error::wrong_arguments(name)),
+                };
+                let arg_ty = self.infer(arg)?;
+                self.scope.enter(name, def.unit)?;
+                let param = def.param.clone().expect("fun: параметр");
+                let body = def.expr.clone().expect("fun: тело");
+                // Восстановить внешнее значение: параметры вложенных
+                // вызовов часто зовутся так же (`t` в прелюдии).
+                let old = self.vars.insert(param.clone(), arg_ty);
+                let ty = self.infer(&body);
+                match old {
+                    Some(v) => {
+                        self.vars.insert(param, v);
+                    }
+                    None => {
+                        self.vars.remove(&param);
+                    }
+                }
+                self.scope.leave();
+                ty
+            }
+            DefKind::Pred => Err(Error::type_mismatch()),
         }
     }
 
     /// Тип тела константы. Тело — всегда позиция данных (`const A = M` —
     /// алиас мапы); видимость решает место использования (`hide_data`).
     fn const_body_ty(&mut self, name: &str, def: &Def) -> Result<Ty, Error> {
-        self.enter(name, def.unit)?;
+        self.scope.enter(name, def.unit)?;
         let body = def.expr.clone().expect("const: тело");
         let saved = std::mem::replace(&mut self.data, true);
         let ty = self.infer(&body);
         self.data = saved;
-        self.leave();
+        self.scope.leave();
         ty
     }
 
@@ -701,21 +738,6 @@ impl CxTy<'_> {
             return Err(Error::unknown_name(name));
         }
         Ok(ty)
-    }
-
-    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
-        if self.stack.iter().any(|(n, _)| n == name) {
-            return Err(Error::recursive_definition(name));
-        }
-        let prev = std::mem::replace(&mut self.unit, unit);
-        self.stack.push((name.to_owned(), prev));
-        Ok(())
-    }
-
-    fn leave(&mut self) {
-        if let Some((_, prev)) = self.stack.pop() {
-            self.unit = prev;
-        }
     }
 
     fn const_div(&mut self, expr: &Expr) -> Option<Result<(), Error>> {
@@ -863,8 +885,7 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
     }
     let mut ev = CxEv {
         defs: cx.defs,
-        stack: cx.stack.clone(),
-        unit: cx.unit,
+        scope: cx.scope.clone(),
         vars: HashMap::new(),
     };
     let r = eval_expr(expr, 0, &mut ev);
@@ -941,8 +962,10 @@ fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
 pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
     CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: HashMap::new(),
     }
     .eval_cond(cond, at)
@@ -958,8 +981,10 @@ pub fn eval_cond_with_env(
 ) -> Result<bool, Error> {
     CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: env.clone(),
     }
     .eval_cond(cond, at)
@@ -975,29 +1000,16 @@ pub fn eval_expr_with_env(
 ) -> Result<Value, Error> {
     let mut cx = CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: env.clone(),
     };
     eval_expr(expr, at, &mut cx)
 }
 
 impl CxEv<'_> {
-    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
-        if self.stack.iter().any(|(n, _)| n == name) {
-            return Err(Error::recursive_definition(name));
-        }
-        let prev = std::mem::replace(&mut self.unit, unit);
-        self.stack.push((name.to_owned(), prev));
-        Ok(())
-    }
-
-    fn leave(&mut self) {
-        if let Some((_, prev)) = self.stack.pop() {
-            self.unit = prev;
-        }
-    }
-
     fn eval_cond(&mut self, cond: &Cond, at: i64) -> Result<bool, Error> {
         match cond {
             Cond::Or(cs) => {
@@ -1033,15 +1045,11 @@ impl CxEv<'_> {
                     _ => return Err(Error::type_mismatch()),
                 };
                 let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Pred => {}
-                    _ => return Err(Error::not_a_predicate(name)),
-                }
-                self.enter(name, def.unit)?;
+                let def = resolve_pred(defs, name, self.scope.unit)?;
+                self.scope.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.eval_cond(&body, at_arg);
-                self.leave();
+                self.scope.leave();
                 r
             }
             Cond::Cmp { op, left, right } => {
@@ -1167,16 +1175,16 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 return Ok(v.clone());
             }
             let defs = cx.defs;
-            let (unit, body) = match resolve(defs, name, cx.unit) {
+            let (unit, body) = match resolve(defs, name, cx.scope.unit) {
                 Ok(def) if def.kind == DefKind::Const => {
                     (def.unit, def.expr.clone().expect("const: тело"))
                 }
                 Ok(_) => return Err(Error::type_mismatch()),
                 Err(e) => return Err(e),
             };
-            cx.enter(name, unit)?;
+            cx.scope.enter(name, unit)?;
             let r = eval_expr(&body, at, cx);
-            cx.leave();
+            cx.scope.leave();
             r
         }
         Expr::Neg(x) => match eval_expr(x, at, cx)? {
@@ -1261,10 +1269,10 @@ fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> 
 
 fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     let defs = cx.defs;
-    if let Some(def) = defs.map.get(name) {
-        if !(def.private && def.unit != cx.unit) {
-            return eval_def_call(name, def, args, at, cx);
-        }
+    // Видимое объявление затеняет встроенную — то же правило, что в infer
+    // (`builtin_arity` через `visible_def`).
+    if let Some(def) = visible_def(defs, name, cx.scope.unit) {
+        return eval_def_call(name, def, args, at, cx);
     }
     match name {
         "str" => {
@@ -1348,7 +1356,7 @@ fn eval_def_call(
     at: i64,
     cx: &mut CxEv<'_>,
 ) -> Result<Value, Error> {
-    if cx.stack.iter().any(|(n, _)| n == name) {
+    if cx.scope.stack.iter().any(|(n, _)| n == name) {
         return Err(Error::recursive_definition(name));
     }
     match def.kind {
@@ -1356,10 +1364,10 @@ fn eval_def_call(
             if !args.is_empty() {
                 return Err(Error::wrong_arguments(name));
             }
-            cx.enter(name, def.unit)?;
+            cx.scope.enter(name, def.unit)?;
             let body = def.expr.clone().expect("const: тело");
             let r = eval_expr(&body, at, cx);
-            cx.leave();
+            cx.scope.leave();
             r
         }
         DefKind::Fun => {
@@ -1367,7 +1375,7 @@ fn eval_def_call(
                 [a] => eval_expr(a, at, cx)?,
                 _ => return Err(Error::wrong_arguments(name)),
             };
-            cx.enter(name, def.unit)?;
+            cx.scope.enter(name, def.unit)?;
             let param = def.param.clone().expect("fun: параметр");
             let body = def.expr.clone().expect("fun: тело");
             let old = cx.vars.insert(param.clone(), arg);
@@ -1380,7 +1388,7 @@ fn eval_def_call(
                     cx.vars.remove(&param);
                 }
             }
-            cx.leave();
+            cx.scope.leave();
             r
         }
         DefKind::Pred => Err(Error::type_mismatch()),
@@ -1428,8 +1436,10 @@ mod tests {
     fn check_single(c: &Cond, d: &Defs) -> Result<(), Error> {
         CxTy {
             defs: d,
-            stack: Vec::new(),
-            unit: d.main,
+            scope: Scope {
+                stack: Vec::new(),
+                unit: d.main,
+            },
             vars: HashMap::new(),
             data: false,
         }
@@ -1597,8 +1607,10 @@ mod tests {
         let d = test_defs();
         let mut cx = CxEv {
             defs: &d,
-            stack: Vec::new(),
-            unit: d.main,
+            scope: Scope {
+                stack: Vec::new(),
+                unit: d.main,
+            },
             vars: HashMap::new(),
         };
         (0..n)
@@ -2392,10 +2404,6 @@ mod tests {
         assert!(resolve_system(PRELUDE).is_ok());
         let e = resolve_system("const = ;").expect_err("битая прелюдия — ошибка");
         assert_eq!(e.code, "broken-prelude");
-        assert!(
-            e.message.starts_with("broken prelude '"),
-            "{}",
-            e.message
-        );
+        assert!(e.message.starts_with("broken prelude '"), "{}", e.message);
     }
 }
