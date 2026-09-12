@@ -380,6 +380,12 @@ impl CxTy<'_> {
         match cond {
             Cond::Or(cs) | Cond::And(cs) => cs.iter().try_for_each(|c| self.infer_cond(c)),
             Cond::Not(c) => self.infer_cond(c),
+            // C-стиль: число/арифметика/`true`/`false` годятся напрямую
+            // (ноль — ложь). Строки/словари/массивы — «забытое сравнение».
+            Cond::Truthy(e) => match self.infer(e)? {
+                Ty::Num | Ty::Dyn | Ty::Bool => Ok(()),
+                _ => Err(Error::type_mismatch()),
+            },
             Cond::Pred { name, args } => {
                 let arg = match args.as_slice() {
                     [a] => a,
@@ -856,6 +862,7 @@ fn has_cond_at(cond: &Cond) -> bool {
     match cond {
         Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_at),
         Cond::Not(c) => has_cond_at(c),
+        Cond::Truthy(e) => has_at(e),
         Cond::Pred { args, .. } => args.iter().any(has_at),
         Cond::Cmp { left, right, .. } => {
             has_at(left)
@@ -888,6 +895,7 @@ fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
     match cond {
         Cond::Or(cs) | Cond::And(cs) => cs.iter().any(|c| has_cond_param(c, cx)),
         Cond::Not(c) => has_cond_param(c, cx),
+        Cond::Truthy(e) => has_param(e, cx),
         Cond::Pred { args, .. } => args.iter().any(|a| has_param(a, cx)),
         Cond::Cmp { left, right, .. } => {
             has_param(left, cx)
@@ -979,6 +987,12 @@ impl CxEv<'_> {
                 Ok(true)
             }
             Cond::Not(c) => Ok(!self.eval_cond(c, at)?),
+            // C-стиль: 0/`false` — ложь, ненулевое/`true` — истина.
+            Cond::Truthy(e) => Ok(match eval_expr(e, at, self)? {
+                Value::Num(n) => n != 0,
+                Value::Bool(b) => b,
+                _ => return Err(Error::type_mismatch()),
+            }),
             Cond::Pred { name, args } => {
                 let arg = match args.as_slice() {
                     [a] => eval_expr(a, at, self)?,
@@ -1499,6 +1513,36 @@ mod tests {
         assert!(no("(at == 1 or at == 2) and at == 2", 1));
         assert!(yes("(at == 1 or at == 2) and at == 2", 2));
         assert!(yes("not (at == 1 or at == 2)", 3));
+    }
+
+    #[test]
+    fn truthy_numbers_as_conditions() {
+        // C-стиль: ненулевое/`true` — истина, ноль/`false` — ложь.
+        assert!(yes("5", 0));
+        assert!(no("0", 0));
+        assert!(yes("true", 0));
+        assert!(no("false", 0));
+        assert!(yes("1 + 2", 0));
+        assert!(no("at - at", 100));
+        assert!(yes("at", 100));
+        assert!(yes("not 0", 0));
+        assert!(yes("5 and at == at", 7));
+        // Скобочное условие как операнд: истина вносится как 1/0.
+        assert!(yes("(at == 1) == 1", 1));
+        assert!(no("(at == 1) == 1", 2));
+        assert!(yes("at == (1 and 2)", 1));
+        // Строки/словари/массивы в позиции условия — «забытое сравнение».
+        for bad in ["\"x\"", "{\"a\": 1}", "[1]"] {
+            let e = static_err(bad);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "type-mismatch",
+                    "type mismatch: cannot mix number and string"
+                ),
+                "для {bad}"
+            );
+        }
     }
 
     #[test]

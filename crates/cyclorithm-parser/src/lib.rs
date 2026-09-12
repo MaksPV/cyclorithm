@@ -490,6 +490,14 @@ fn build_not(pair: Pair<Rule>) -> Cond {
             let (name, args) = build_call_parts(atom);
             Cond::Pred { name, args }
         }
+        Rule::truthy => Cond::Truthy(Box::new(build_operand(
+            atom.into_inner()
+                .next()
+                .expect("truthy: cond_value")
+                .into_inner()
+                .next()
+                .expect("cond_value: содержимое"),
+        ))),
         r => unreachable!("not_expr: неожиданный операнд {r:?}"),
     };
     if negated {
@@ -555,12 +563,19 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
     Cond::Cmp { op, left, right }
 }
 
-/// Операнд сравнения: склейка или битовое выражение. Обёртки (`cmp_side`,
-/// `cmp_right`, `cond_arg`) снимает вызывающий.
+/// Операнд сравнения: склейка, битовое выражение или скобочное условие
+/// как значение 1/0. Обёртки (`cmp_side`, `cmp_right`, `cond_value`,
+/// `cond_arg`) снимает вызывающий.
 fn build_operand(pair: Pair<Rule>) -> Expr {
     match pair.as_rule() {
+        Rule::cond_value => {
+            build_operand(pair.into_inner().next().expect("cond_value: содержимое"))
+        }
         Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
         Rule::bitor => build_bitor(pair),
+        Rule::truth => Expr::Truth(Box::new(build_or(
+            pair.into_inner().next().expect("truth: or_expr"),
+        ))),
         r => unreachable!("операнд: неожиданное правило {r:?}"),
     }
 }
@@ -1041,7 +1056,7 @@ pub struct Stmt {
     pub invocation: Invocation,
 }
 
-/// Условие строки: логика над сравнениями.
+/// Условие строки: логика над сравнениями и C-выражения (ненулевое — истина).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cond {
     Or(Vec<Cond>),
@@ -1056,6 +1071,9 @@ pub enum Cond {
         left: Expr,
         right: CondRhs,
     },
+    /// Выражение как условие (C-стиль): число, арифметика, `true`/`false`.
+    /// Строки/словари/массивы здесь запрещает ядро (`type-mismatch`).
+    Truthy(Box<Expr>),
 }
 
 /// Правая часть сравнения: одиночное значение или альтернация `(a or b)`.
@@ -2053,19 +2071,75 @@ mod tests {
 
     #[test]
     fn rejects_bad_conditions() {
-        // Голое число, цепочка сравнений, `and` в альтернации — синтаксис.
-        for row in [
-            "[5] 6h: R();",
-            "[at < 1 < 2] 6h: R();",
-            "[at == (1 and 2)] 6h: R();",
-        ] {
+        // Цепочка сравнений — синтаксис (сравнения не левоассоциативны).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [at < 1 < 2] 6h: R(); } }";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn parses_truthy_conditions() {
+        // C-стиль: голое число/арифметика/`true` — Truthy; скобочное условие
+        // как операнд — Truth; `and` в скобках справа — условие, не альтернация.
+        let cond_of = |row: &str| {
             let src = format!(
                 "schedule \"T\" {{ point A {{ actions = [x]; }} \
                 cycle R duration = 1h {{ 0m: A.x(); }} \
-                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} 6h: R(); }} }}"
             );
-            assert!(parse(&src).is_err(), "для {row}");
-        }
+            parse(&src)
+                .expect("условие обязано разбираться")
+                .schedule
+                .root
+                .stmts
+                .into_iter()
+                .next()
+                .expect("строка есть")
+                .condition
+                .expect("условие есть")
+        };
+        assert_eq!(
+            cond_of("[5]"),
+            Cond::Truthy(Box::new(Expr::Num("5".to_owned())))
+        );
+        assert_eq!(
+            cond_of("[0]"),
+            Cond::Truthy(Box::new(Expr::Num("0".to_owned())))
+        );
+        assert_eq!(cond_of("[true]"), Cond::Truthy(Box::new(Expr::Bool(true))));
+        assert_eq!(
+            cond_of("[1 + 2]"),
+            Cond::Truthy(Box::new(Expr::Bin {
+                op: ArithOp::Add,
+                left: Box::new(Expr::Num("1".to_owned())),
+                right: Box::new(Expr::Num("2".to_owned())),
+            }))
+        );
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond_of("[(at == 1) == 1]"),
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::Truth(Box::new(cmp("1"))),
+                right: CondRhs::One(Expr::Num("1".to_owned())),
+            }
+        );
+        assert_eq!(
+            cond_of("[at == (1 and 2)]"),
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::At,
+                right: CondRhs::One(Expr::Truth(Box::new(Cond::And(vec![
+                    Cond::Truthy(Box::new(Expr::Num("1".to_owned()))),
+                    Cond::Truthy(Box::new(Expr::Num("2".to_owned()))),
+                ])))),
+            }
+        );
     }
 
     #[test]
