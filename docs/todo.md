@@ -80,3 +80,45 @@
 Довести WASM-плейграунд до публикации: деплой на GitHub Pages из своего
 репозитория, библиотеки `use` без вшивания в `app.js`, подсветка ошибок
 валидации (сейчас только синтаксис).
+
+## Fill gaps
+
+Добивка пустот между вложенными циклами вызовами циклов. Синтаксис —
+обычная строка со смещением (смещение = начало окна):
+
+```text
+0h: fill gaps BREAK_20();
+0h: fill gaps BREAK_5();
+2h: fill gaps until 8h BREAK();
+```
+
+Окно `fill gaps` — `[offset, until|D)`, `until` считается от старта родителя
+(как у `fill until`, `until -X` — от конца). Гэпы — свободные интервалы
+статически по `actual` длительностям (условия считаются истинными).
+Несколько `fill gaps` идут по порядку объявления, каждый видит `occupied`
+от обычных строк и предыдущих filler-ов: `20m` занимает часть дыры `30m`,
+второй `5m` добивает остаток `10m` двумя блоками. Хвост, куда filler не влез,
+молча пропускается.
+
+`[cond]` на самом `fill gaps` проверяется на каждый экземпляр filler-а
+в его старте (дыры, не сдвиг). Только циклы (как у `fill`).
+Ошибки как у `fill`: нулевой filler — `fill-zero-duration`,
+`offset/until` вне `[0,D]` или `offset > until` — `offset-out-of-bounds` /
+`until-out-of-bounds`, ноль влезших — не ошибка.
+
+Пример:
+
+```text
+cycle DAY duration = 8h {
+  0h: LESSON();      // 0:00-1:00
+  1h30m: LESSON();   // 1:30-2:30, gap 30m in between
+  0h: fill gaps BREAK_20();  // -> 1:00-1:20, 10m left
+  0h: fill gaps BREAK_5();   // -> 1:20-1:25, 1:25-1:30
+}
+```
+
+Тронуть: `fill_mod` (`grammar.pest`) + `gaps`, `RepeatMod` (`parser/lib.rs`),
+`check_bounds` (`validate.rs`), двухпроходный `unfold` (`expand.rs`:
+сначала fixed, потом filler-ы), доки (`concepts/syntax/semantics/errors/
+glossary`), примеры `gaps.cyclo + expected.json` + `bad_gaps_until` /
+`bad_gaps_fill0`, unit на стыки. Ветка — `feature/fill-gaps` от `dev`.
