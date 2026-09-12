@@ -227,7 +227,7 @@ pub fn expand(
     let t0 = parse_datetime(&schedule.root.start_time)?;
     let period = root_period_ms(&schedule.root)?;
     let horizon = root_actual_ms(schedule, tables)?;
-    // Атрибуты точек — после всех проверок §5, до первой строки.
+    // Атрибуты точек — после всех проверок главы ошибок, до первой строки.
     let point_attrs = resolve_point_attrs(schedule, defs)?;
 
     // i128: около лимита i64 разности платежа не должны паниковать.
@@ -377,7 +377,7 @@ fn unfold(
                     .cycles
                     .get(name.as_str())
                     .expect("имена уже проверены");
-                // Арность уже проверена (E12): длины совпадают.
+                // Арность уже проверена (wrong-arguments): длины совпадают.
                 debug_assert_eq!(cycle.params.len(), args.len());
                 let mut child = env.clone();
                 for (param, arg) in cycle.params.iter().zip(args.iter()) {
@@ -415,7 +415,7 @@ fn unfold(
 /// вызывающего плюс данные, пожары — в пустом окружении (данные рутины им
 /// недоступны статически, а чужое окружение затирало бы глобальные имена:
 /// резолв идёт `env` раньше `defs`).
-/// Табличный параметр из окружения затирается (в условиях он невидим — E11).
+/// Табличный параметр из окружения затирается (в условиях он невидим — unknown-name).
 /// Спан именуется рутиной (§6: в спанах светится её имя).
 fn unfold_routine(
     name: &str,
@@ -429,7 +429,7 @@ fn unfold_routine(
     let routine = ctx.tables.routines.get(name).expect("имена уже проверены");
     // Таблица — литеральная: пробросы подставлены при инстанцировании
     // родительской рутины, в циклах/корне — только литералы по валидации.
-    // Арность уже проверена (E12): длины совпадают.
+    // Арность уже проверена (wrong-arguments): длины совпадают.
     debug_assert_eq!(routine.params.len(), args.len());
     let table_name = match args.first() {
         Some(Expr::Name(t)) => t.as_str(),
@@ -742,8 +742,8 @@ schedule "Редкое" {
     }
 
     #[test]
-    fn unbound_param_is_runtime_e11() {
-        // Статика пропускает (имя — параметр LESSON), строка без связывания — E11.
+    fn unbound_param_is_runtime_unknown_name() {
+        // Статика пропускает (имя — параметр LESSON), строка без связывания — unknown-name.
         let src = "const LEC = {\"name\": \"БЖД\"}; \
             schedule \"T\" { point B { actions = [ring]; } \
             cycle LESSON(subj) duration = 1h { 0m: B.ring() { subject = subj.name }; } \
@@ -764,7 +764,7 @@ schedule "Редкое" {
         let err = expand(ast, &t, d, s, e).expect_err("несвязанный параметр — ошибка");
         assert_eq!(
             (err.code, err.message.as_str()),
-            ("E11", "unknown name 'subj'")
+            ("unknown-name", "unknown name 'subj'")
         );
     }
 
@@ -793,30 +793,30 @@ schedule "Редкое" {
 
     #[test]
     fn bad_point_attrs_fail_expand() {
-        // Ошибки атрибутов — в начале развёртки (после всех проверок §5).
+        // Ошибки атрибутов — в начале развёртки (после всех проверок главы ошибок).
         for (decls, point, code, message) in [
             (
                 "",
                 "point A { actions = [x]; attrs = {\"a\": 1, \"a\": 2}; }",
-                "E15",
+                "duplicate-attribute",
                 "duplicate attribute 'a'",
             ),
             (
                 "",
                 "point A { actions = [x]; attrs = NOPE; }",
-                "E11",
+                "unknown-name",
                 "unknown name 'NOPE'",
             ),
             (
                 "const N = 5;",
                 "point A { actions = [x]; attrs = N; }",
-                "E12",
+                "type-mismatch",
                 "type mismatch: cannot mix number and string",
             ),
             (
                 "fun f(t) = t;",
                 "point A { actions = [x]; attrs = f; }",
-                "E12",
+                "type-mismatch",
                 "type mismatch: cannot mix number and string",
             ),
         ] {

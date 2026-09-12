@@ -1,10 +1,12 @@
-schedule "E07-chain" {
+use "bad_import-cycle_a.cyclo";
+
+schedule "import-cycle" {
   point DEPOT {
     actions = [depart];
   }
 
   cycle R
-    duration = 1h20m
+    duration = 1h
   {
     0m: DEPOT.depart();
   }
@@ -13,6 +15,6 @@ schedule "E07-chain" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    23h: repeat 2 R();
+    6h: R();
   }
 }

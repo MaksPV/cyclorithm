@@ -1,12 +1,10 @@
-use "bad_e14_lib.cyclo";
-
-schedule "E14-schedule" {
+schedule "cycle-overruns-chain" {
   point DEPOT {
     actions = [depart];
   }
 
   cycle R
-    duration = 1h
+    duration = 1h20m
   {
     0m: DEPOT.depart();
   }
@@ -15,6 +13,6 @@ schedule "E14-schedule" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    23h: repeat 2 R();
   }
 }

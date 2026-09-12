@@ -1,6 +1,4 @@
-const M = {"a": 1, "a": 2};
-
-schedule "E15" {
+schedule "invalid-date" {
   point DEPOT {
     actions = [depart];
   }
@@ -15,6 +13,6 @@ schedule "E15" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    [at >= "2026-13-01"] 6h: R();
   }
 }

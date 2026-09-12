@@ -1,4 +1,4 @@
-schedule "E11-private" {
+schedule "invalid-datetime" {
   point DEPOT {
     actions = [depart];
   }
@@ -10,9 +10,9 @@ schedule "E11-private" {
   }
 
   root_cycle
-    start_time = "2026-01-01T00:00:00",
+    start_time = "not-a-datetime",
     duration = 24h
   {
-    [__z(at) == 1] 6h: R();
+    6h: R();
   }
 }

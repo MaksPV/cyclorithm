@@ -1,4 +1,6 @@
-schedule "E12" {
+use "bad_schedule-in-import-lib.cyclo";
+
+schedule "schedule-in-import" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +15,6 @@ schedule "E12" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [at + "x" == "y"] 6h: R();
+    6h: R();
   }
 }

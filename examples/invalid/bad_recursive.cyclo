@@ -1,18 +1,18 @@
-schedule "E01" {
+schedule "recursive" {
   point DEPOT {
     actions = [depart];
   }
 
-  cycle R
+  cycle A
     duration = 1h
   {
-    0m: PORT.depart();
+    0m: A();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    6h: A();
   }
 }

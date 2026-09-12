@@ -1,7 +1,4 @@
-fun a(t) = b(t);
-fun b(t) = a(t);
-
-schedule "E12-recursive" {
+schedule "division-by-zero" {
   point DEPOT {
     actions = [depart];
   }
@@ -16,6 +13,6 @@ schedule "E12-recursive" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [a(at) == 1] 6h: R();
+    [1 / (at - at) == 0] 6h: R();
   }
 }

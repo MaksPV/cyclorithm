@@ -1,8 +1,10 @@
-use "bad_e13_cycle_a.cyclo";
-
-schedule "E13-cycle" {
+schedule "duplicate" {
   point DEPOT {
     actions = [depart];
+  }
+
+  point DEPOT {
+    actions = [arrive];
   }
 
   cycle R

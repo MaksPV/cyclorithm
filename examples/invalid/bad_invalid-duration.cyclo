@@ -1,10 +1,10 @@
-schedule "E12-datestr" {
+schedule "invalid-duration" {
   point DEPOT {
     actions = [depart];
   }
 
   cycle R
-    duration = 1h
+    duration = 1h2h
   {
     0m: DEPOT.depart();
   }
@@ -13,6 +13,6 @@ schedule "E12-datestr" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [at >= "2026-13-01"] 6h: R();
+    6h: R();
   }
 }

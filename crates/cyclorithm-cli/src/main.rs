@@ -241,12 +241,12 @@ fn read_source(src: &Src) -> Result<(String, std::path::PathBuf), i32> {
     }
 }
 
-/// Общий setup `run`/`next`/`check`: разбор → импорты → объявления → решётка §5.
+/// Общий setup `run`/`next`/`check`: разбор → импорты → объявления → решётка главы ошибок.
 /// Продолжение `$then` выполняется в той же области видимости (таблицы
 /// заимствуют локальные данные — вернуть их наружу нельзя).
 macro_rules! setup {
     ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
-        // Ошибка парсера — без E-кода (§5): текст pest как есть.
+        // Ошибка парсера — без слага (глава ошибок): текст pest как есть.
         let __src = match cyclorithm_parser::parse(&$text) {
             Ok(src) => src,
             Err(e) => {
@@ -255,8 +255,8 @@ macro_rules! setup {
             }
         };
         let $ast = &__src.schedule;
-        // Объявления — сверху файла: их ошибки (E04/E11/E12) раньше проверок решётки.
-        // Импорты (E13/E14) — раньше объявлений: склейка «импорты → программа».
+        // Объявления — сверху файла: их ошибки (duplicate/unknown-name/wrong-arguments) раньше проверок решётки.
+        // Импорты (cannot-read-import/import-cycle/schedule-in-import) — раньше объявлений: склейка «импорты → программа».
         let mut __groups = match collect_units(&__src.uses, $base.as_path(), &mut |p| {
             std::fs::read_to_string(p)
         }) {
@@ -308,7 +308,7 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
     };
     setup!(text, base, ast, tables, defs, {
         // `--start`/`--end`: короткие формы (§1), якорь дельты `--end` — старт;
-        // битые значения — E08; в объекте — эхо как передали.
+        // битые значения — invalid-datetime; в объекте — эхо как передали.
         let now = now_ms();
         let start_ms = match parse_cli_datetime(start_raw, now) {
             Ok(v) => v,
@@ -361,7 +361,7 @@ fn cmd_next(
     };
     setup!(text, base, ast, tables, defs, {
         let now = now_ms();
-        // `--from` по умолчанию — now; битый — E08.
+        // `--from` по умолчанию — now; битый — invalid-datetime.
         let from_ms = match from_raw {
             None => now,
             Some(raw) => match parse_cli_datetime(raw, now) {

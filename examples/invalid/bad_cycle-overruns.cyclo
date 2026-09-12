@@ -1,18 +1,24 @@
-schedule "E06" {
+schedule "cycle-overruns" {
   point DEPOT {
     actions = [depart];
   }
 
-  cycle A
+  cycle CYCLE2
+    duration = 40m
+  {
+    0m: DEPOT.depart();
+  }
+
+  cycle CYCLE1
     duration = 1h
   {
-    0m: A();
+    40m: CYCLE2();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: A();
+    6h: CYCLE1();
   }
 }

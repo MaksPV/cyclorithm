@@ -1,11 +1,13 @@
 //! Тонкий фасад для встраивания (WASM-плейграунд): один вызов
 //! «исходник → JSON §6», без файловой системы.
 //!
-//! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по §5):
-//! разбор → импорты (`E13`/`E14`) → объявления → имена (`E04`/`E09`,
-//! затем `E01`/`E02`/`E03`) → рекурсия (`E06`) → таблицы (`E16`, границы
-//! таблиц и тел) → границы (`E05`/`E10`/`E07`)
-//! → условия (`E11`/`E12`) → даты окна (`E08`) → развёртка.
+//! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по главе ошибок):
+//! разбор → импорты (`cannot-read-import`/`schedule-in-import`) → объявления
+//! → имена (`duplicate`/`wrong-kind`, затем `unknown-point`/`action-not-allowed`/
+//! `unknown-cycle`) → рекурсия (`recursive`) → таблицы (`unknown-table`,
+//! границы таблиц и тел) → границы (`invalid-duration`/`invalid-repeat-count`/
+//! `cycle-overruns`) → условия (`unknown-name`/`type-mismatch`…) → даты окна
+//! (`invalid-datetime`) → развёртка.
 //! Тексты ошибок совпадают со stderr CLI дословно.
 
 use std::collections::HashMap;
@@ -22,13 +24,13 @@ use cyclorithm_parser::Schedule;
 /// Диагностика для редактора: что сломалось и где (если позиция известна).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diag {
-    /// `parse` — синтаксис (без E-кода), `import` — `E13`/`E14`,
-    /// `valid` — остальные коды §5.
+    /// `parse` — синтаксис (без слага), `import` — `cannot-read-import`/
+    /// `schedule-in-import`/`import-cycle`, `valid` — остальные слаги.
     pub kind: &'static str,
-    /// Код из §5; у синтаксиса — `None`.
+    /// Слаг ситуации; у синтаксиса — `None`.
     pub code: Option<&'static str>,
     /// 1-базные строка/колонка; только у синтаксиса
-    /// (позиций в AST нет, E-ошибки их не несут).
+    /// (позиций в AST нет, ошибки валидации их не несут).
     pub line: Option<usize>,
     pub col: Option<usize>,
     /// Текст как в stderr CLI.
@@ -60,7 +62,7 @@ impl Diag {
         match e {
             ImportError::Coded(e) => {
                 let kind = match e.code {
-                    "E13" | "E14" => "import",
+                    "cannot-read-import" | "import-cycle" | "schedule-in-import" => "import",
                     _ => "valid",
                 };
                 Self {
@@ -82,7 +84,7 @@ impl Diag {
     }
 }
 
-/// Общий setup фаз §5 для фасадов: разбор → импорты → объявления → решётка.
+/// Общий setup фаз главы ошибок для фасадов: разбор → импорты → объявления → решётка.
 /// Даты окон и развёртка — в замыкании вызывателя (заимствования живут
 /// внутри: вернуть их наружу нельзя, поэтому общий код — через замыкание).
 fn with_setup<R>(
@@ -121,7 +123,7 @@ fn with_setup<R>(
 }
 
 /// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
-/// Порядок фаз — как в `cyclo run` (§5).
+/// Порядок фаз — как в `cyclo run` (глава ошибок).
 fn pipeline(
     src: &str,
     start_raw: &str,
@@ -378,10 +380,10 @@ mod tests {
     }
 
     #[test]
-    fn facade_reports_e11() {
+    fn facade_reports_unknown_name() {
         let src = MINI.replace("[not weekend(at)]", "[banana(at)]");
         let d = run_schedule(&src, "2026-01-09T00:00:00", "2026-01-10T00:00:00", &[]).unwrap_err();
-        assert_eq!((d.kind, d.code), ("valid", Some("E11")));
+        assert_eq!((d.kind, d.code), ("valid", Some("unknown-name")));
     }
 
     #[test]
@@ -408,9 +410,9 @@ mod tests {
         let src =
             "use \"lib.cyclo\";\n".to_owned() + &MINI.replace("[not weekend(at)]", "[early(at)]");
         let lib = "pred early(at) = hour(at) < 12;";
-        // Без библиотеки — E13, с ней — успех.
+        // Без библиотеки — cannot-read-import, с ней — успех.
         let d = run_schedule(&src, "2026-01-09T00:00:00", "2026-01-10T00:00:00", &[]).unwrap_err();
-        assert_eq!((d.kind, d.code), ("import", Some("E13")));
+        assert_eq!((d.kind, d.code), ("import", Some("cannot-read-import")));
         let got = run_schedule(
             &src,
             "2026-01-09T00:00:00",

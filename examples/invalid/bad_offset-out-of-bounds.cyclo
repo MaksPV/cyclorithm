@@ -1,22 +1,19 @@
-schedule "E04" {
+schedule "offset-out-of-bounds" {
   point DEPOT {
     actions = [depart];
   }
 
-  point DEPOT {
-    actions = [arrive];
-  }
-
-  cycle R
-    duration = 1h
+  cycle CITY_ROUTE
+    duration = 1h20m
   {
     0m: DEPOT.depart();
+    -2h: DEPOT.depart();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    6h: CITY_ROUTE();
   }
 }

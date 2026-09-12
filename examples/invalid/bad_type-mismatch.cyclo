@@ -1,4 +1,4 @@
-schedule "E12-div" {
+schedule "type-mismatch" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +13,6 @@ schedule "E12-div" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [1 / (at - at) == 0] 6h: R();
+    [at + "x" == "y"] 6h: R();
   }
 }

@@ -1,19 +1,21 @@
-schedule "E07-neg" {
+fun a(t) = b(t);
+fun b(t) = a(t);
+
+schedule "recursive-definition" {
   point DEPOT {
     actions = [depart];
   }
 
-  cycle CITY_ROUTE
-    duration = 1h20m
+  cycle R
+    duration = 1h
   {
     0m: DEPOT.depart();
-    -2h: DEPOT.depart();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: CITY_ROUTE();
+    [a(at) == 1] 6h: R();
   }
 }

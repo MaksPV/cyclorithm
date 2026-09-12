@@ -1,4 +1,4 @@
-schedule "E03" {
+schedule "action-not-allowed" {
   point DEPOT {
     actions = [depart];
   }
@@ -6,13 +6,13 @@ schedule "E03" {
   cycle R
     duration = 1h
   {
-    0m: DEPOT.depart();
+    0m: DEPOT.arrive();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: NIGHT_ROUTE();
+    6h: R();
   }
 }

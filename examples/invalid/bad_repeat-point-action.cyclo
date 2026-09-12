@@ -1,18 +1,12 @@
-schedule "E05" {
+schedule "repeat-point-action" {
   point DEPOT {
     actions = [depart];
-  }
-
-  cycle R
-    duration = 1h2h
-  {
-    0m: DEPOT.depart();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    6h: repeat 3 DEPOT.depart();
   }
 }

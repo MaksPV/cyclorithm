@@ -9,8 +9,8 @@ use pest_derive::Parser;
 #[grammar = "grammar.pest"]
 pub struct CycloParser;
 
-/// Разбор исходника в AST. Ошибка — синтаксическая, без E-кода
-/// (коды E01–E16 — только валидация уже разобранного AST в ядре).
+/// Разбор исходника в AST. Ошибка — синтаксическая, без слага
+/// (коды слаги главы ошибок — только валидация уже разобранного AST в ядре).
 pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     let file = CycloParser::parse(Rule::file, src)?
         .next()
@@ -64,7 +64,7 @@ pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
 }
 
 /// Единица импорта: свои `use`, объявления, флаг наличия `schedule`
-/// (расписание внутри импорта запрещено кодом E14 — решает резолвер).
+/// (расписание внутри импорта запрещено (schedule-in-import) — решает резолвер).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitFile {
     pub uses: Vec<String>,
@@ -86,7 +86,7 @@ pub fn parse_unit(src: &str) -> Result<UnitFile, pest::error::Error<Rule>> {
             Rule::use_decl => uses.push(build_use(p)),
             Rule::decl => decls.push(build_decl(p)?),
             Rule::schedule => {
-                // Тело не строим: наличие расписания — уже E14.
+                // Тело не строим: наличие расписания — уже schedule-in-import.
                 has_schedule = true;
             }
             Rule::EOI => {}
@@ -775,7 +775,7 @@ fn build_postfix_base(pair: Pair<Rule>) -> Expr {
 }
 
 /// Мапа `{"k": v, ...}`: ключи — строки без кавычек, значения — литералы.
-/// Пары хранятся вектором как есть (дубли — E15 в ядре, не синтаксис).
+/// Пары хранятся вектором как есть (дубли — duplicate-attribute в ядре, не синтаксис).
 fn build_map_lit(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::map_lit);
     let pairs = pair
@@ -882,7 +882,7 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
 fn build_duration(pair: Pair<Rule>) -> Duration {
     // Спан повторения `duration_item+` иногда захватывает пробелы/перенос
     // перед следующим токеном (напр. `"24h\n  "` перед `{`). Семантику несут
-    // `items`, а `raw` идёт в сообщения E05 — висячий хвост срезаем.
+    // `items`, а `raw` идёт в сообщения invalid-duration — висячий хвост срезаем.
     let raw = pair.as_str().trim_end().to_owned();
     let items = pair
         .into_inner()
@@ -917,7 +917,7 @@ fn unquote(pair: Pair<Rule>) -> String {
 
 // ---------------------------------------------------------------------------
 // AST — строго по §3 спеки, без валидации.
-// Проверки E01–E16 — дело ядра над уже разобранным AST: парсер принимает
+// Проверки слаги главы ошибок — дело ядра над уже разобранным AST: парсер принимает
 // и `1h2h`, и переполнение, и `duration = 0`, ничего числового не решает.
 // Поэтому числа и сырой текст длительностей хранятся как есть.
 // ---------------------------------------------------------------------------
@@ -1025,7 +1025,7 @@ pub enum RoutineOffset {
 /// `root_cycle start_time = "...", duration = 24h { ... }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootCycle {
-    /// Сырая строка без кавычек; корректность дат — E08 в ядре.
+    /// Сырая строка без кавычек; корректность дат — invalid-datetime в ядре.
     pub start_time: String,
     pub duration: Duration,
     pub stmts: Vec<Stmt>,
@@ -1138,7 +1138,7 @@ pub enum BitOp {
 }
 
 impl Stmt {
-    /// Сырой текст смещения для сообщений E07: с минусом (`'-2h'`) или без.
+    /// Сырой текст смещения для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds): с минусом (`'-2h'`) или без.
     pub fn offset_raw(&self) -> String {
         if self.negative {
             format!("-{}", self.offset.raw)
@@ -1153,7 +1153,7 @@ impl Stmt {
 pub enum Repeat {
     /// Без модификатора: одиночный вызов.
     Once,
-    /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе E10).
+    /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе invalid-repeat-count).
     Times(String),
     /// `fill [until [−]T]`: мягкое заполнение до горизонта.
     Fill { until: Option<Until> },
@@ -1167,7 +1167,7 @@ pub struct Until {
 }
 
 impl Until {
-    /// Сырой текст горизонта для сообщений E07: с минусом (`'-2h'`) или без.
+    /// Сырой текст горизонта для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds): с минусом (`'-2h'`) или без.
     pub fn raw(&self) -> String {
         if self.negative {
             format!("-{}", self.duration.raw)
@@ -1193,14 +1193,14 @@ pub enum Invocation {
 }
 
 /// Длительность сырым списком компонентов (`1h20m` → `[1h, 20m]`).
-/// `raw` — точный срез исходника для сообщений `invalid duration '...'` (E05).
+/// `raw` — точный срез исходника для сообщений `invalid duration '...'` (invalid-duration).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Duration {
     pub raw: String,
     pub items: Vec<DurationItem>,
 }
 
-/// Один компонент: число — сырыми цифрами (переполнение различит ядро, E05).
+/// Один компонент: число — сырыми цифрами (переполнение различит ядро, invalid-duration).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DurationItem {
     pub number: String,
@@ -1649,7 +1649,7 @@ mod tests {
             );
             assert!(parse(&src).is_err(), "для {row:?}");
         }
-        // Слитный минус разбирается (границы — E12 в ядре, не синтаксис).
+        // Слитный минус разбирается (границы — integer-out-of-range в ядре, не синтаксис).
         let src = "schedule \"T\" { point A { actions = [x]; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [subj.tags[-1] == \"a\"] 0m: A.x(); } }";
         let cond = parse(src)
@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_missing_root_cycle() {
-        // bad_syntax.cyclo: нет root_cycle → ошибка парсера без E-кода.
+        // bad_syntax.cyclo: нет root_cycle → ошибка парсера без слага.
         let src = include_str!("../../../examples/invalid/bad_syntax.cyclo");
         assert!(parse(src).is_err());
     }
@@ -1689,30 +1689,30 @@ mod tests {
 
     #[test]
     fn parse_accepts_validation_fixtures() {
-        // Граница парсер/ядро: файлы bad_e01–e09 и bad_e15 синтаксически корректны,
-        // их ошибки — валидация (E01–E16), а не синтаксис.
+        // Граница парсер/ядро: файлы bad_unknown-point–e09 и bad_duplicate-attribute синтаксически корректны,
+        // их ошибки — валидация (слаги главы ошибок), а не синтаксис.
         for src in [
-            include_str!("../../../examples/invalid/bad_e01.cyclo"),
-            include_str!("../../../examples/invalid/bad_e02.cyclo"),
-            include_str!("../../../examples/invalid/bad_e03.cyclo"),
-            include_str!("../../../examples/invalid/bad_e04.cyclo"),
-            include_str!("../../../examples/invalid/bad_e05.cyclo"),
-            include_str!("../../../examples/invalid/bad_e06.cyclo"),
-            include_str!("../../../examples/invalid/bad_e07.cyclo"),
-            include_str!("../../../examples/invalid/bad_e08.cyclo"),
-            include_str!("../../../examples/invalid/bad_e09.cyclo"),
-            include_str!("../../../examples/invalid/bad_e07_neg.cyclo"),
-            include_str!("../../../examples/invalid/bad_e10_zero.cyclo"),
-            include_str!("../../../examples/invalid/bad_e10_fill0.cyclo"),
-            include_str!("../../../examples/invalid/bad_e10_action.cyclo"),
-            include_str!("../../../examples/invalid/bad_e07_chain.cyclo"),
-            include_str!("../../../examples/invalid/bad_e07_until.cyclo"),
-            include_str!("../../../examples/invalid/bad_e11.cyclo"),
-            include_str!("../../../examples/invalid/bad_e12.cyclo"),
-            include_str!("../../../examples/invalid/bad_e12_div.cyclo"),
-            include_str!("../../../examples/invalid/bad_e15.cyclo"),
+            include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
+            include_str!("../../../examples/invalid/bad_action-not-allowed.cyclo"),
+            include_str!("../../../examples/invalid/bad_unknown-cycle.cyclo"),
+            include_str!("../../../examples/invalid/bad_duplicate.cyclo"),
+            include_str!("../../../examples/invalid/bad_invalid-duration.cyclo"),
+            include_str!("../../../examples/invalid/bad_recursive.cyclo"),
+            include_str!("../../../examples/invalid/bad_cycle-overruns.cyclo"),
+            include_str!("../../../examples/invalid/bad_invalid-datetime.cyclo"),
+            include_str!("../../../examples/invalid/bad_wrong-kind.cyclo"),
+            include_str!("../../../examples/invalid/bad_offset-out-of-bounds.cyclo"),
+            include_str!("../../../examples/invalid/bad_invalid-repeat-count.cyclo"),
+            include_str!("../../../examples/invalid/bad_fill-zero-duration.cyclo"),
+            include_str!("../../../examples/invalid/bad_repeat-point-action.cyclo"),
+            include_str!("../../../examples/invalid/bad_cycle-overruns-chain.cyclo"),
+            include_str!("../../../examples/invalid/bad_until-out-of-bounds.cyclo"),
+            include_str!("../../../examples/invalid/bad_unknown-name.cyclo"),
+            include_str!("../../../examples/invalid/bad_type-mismatch.cyclo"),
+            include_str!("../../../examples/invalid/bad_division-by-zero.cyclo"),
+            include_str!("../../../examples/invalid/bad_duplicate-attribute.cyclo"),
         ] {
-            parse(src).expect("bad_e*.cyclo обязан разбираться грамматикой");
+            parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
     }
 
@@ -1926,7 +1926,7 @@ mod tests {
 
     #[test]
     fn rejects_space_after_minus() {
-        // Минус пишется слитно: `- 10m` — синтаксическая ошибка без E-кода.
+        // Минус пишется слитно: `- 10m` — синтаксическая ошибка без слага.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { - 10m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
@@ -1972,7 +1972,7 @@ mod tests {
             }
             r => panic!("ожидался fill until -2h, получено {r:?}"),
         }
-        // `repeat 0` — уровень парсера пропускает (валидация ядра, E10).
+        // `repeat 0` — уровень парсера пропускает (валидация ядра, invalid-repeat-count).
         let src0 = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: repeat 0 R(); } }";

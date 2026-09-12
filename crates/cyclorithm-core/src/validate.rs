@@ -1,17 +1,17 @@
-//! Проверка имён: дубликаты (E04) и разрешение вызовов (E01/E02/E03/E09).
+//! Проверка имён: дубликаты (duplicate) и разрешение вызовов (unknown-point/action-not-allowed/unknown-cycle/wrong-kind).
 //!
-//! Порядок проверок: сначала все объявления (E04, E09 на столкновение
-//! имён точки, рутины и цикла; E12 на пустые параметры рутины; E04 на дубли
+//! Порядок проверок: сначала все объявления (duplicate, wrong-kind на столкновение
+//! имён точки, рутины и цикла; wrong-arguments на пустые параметры рутины; duplicate на дубли
 //! меток таблиц), затем все вызовы в порядке объявления (циклы, рутины,
 //! `root_cycle`, пожары `->` таблиц). Первая ошибка побеждает.
 //!
 //! Правило общего пространства (§3): одно имя не может обозначать точку,
-//! рутину и цикл одновременно — нарушение E09. На вызове: точка как цикл —
+//! рутину и цикл одновременно — нарушение wrong-kind. На вызове: точка как цикл —
 //! `point 'X' is not a cycle`, цикл как точка — `cycle 'X' is not a point`,
 //! рутина как точка — `routine 'X' is not a point`.
 //! Вызов `NAME(...)` — это вызов рутины, если имя — рутина (первый аргумент
 //! обязателен и является таблицей: проброс своего параметра или литеральное
-//! имя из реестра, иначе E16); иначе — обычный вызов цикла.
+//! имя из реестра, иначе unknown-table); иначе — обычный вызов цикла.
 
 use std::collections::{HashMap, HashSet};
 
@@ -44,27 +44,27 @@ pub fn validate_names<'a>(
     let mut points = HashMap::new();
     for p in &schedule.points {
         if points.contains_key(p.name.as_str()) {
-            return Err(Error::e04("point", &p.name));
+            return Err(Error::duplicate("point", &p.name));
         }
         points.insert(p.name.as_str(), p);
     }
     let mut routines = HashMap::new();
     for r in &schedule.routines {
         if routines.contains_key(r.name.as_str()) {
-            return Err(Error::e04("routine", &r.name));
+            return Err(Error::duplicate("routine", &r.name));
         }
         if points.contains_key(r.name.as_str()) {
-            return Err(Error::e09_not_routine(&r.name));
+            return Err(Error::point_not_routine(&r.name));
         }
         // Первый параметр рутины — таблица: без него вызывать нечем.
         if r.params.is_empty() {
-            return Err(Error::e12_no_table_param(&r.name));
+            return Err(Error::no_table_parameter(&r.name));
         }
-        // Дубли параметров — E04, как у циклов.
+        // Дубли параметров — duplicate, как у циклов.
         let mut seen = HashSet::new();
         for p in &r.params {
             if !seen.insert(p) {
-                return Err(Error::e04("param", p));
+                return Err(Error::duplicate("param", p));
             }
         }
         routines.insert(r.name.as_str(), r);
@@ -72,30 +72,30 @@ pub fn validate_names<'a>(
     let mut cycles = HashMap::new();
     for c in &schedule.cycles {
         if cycles.contains_key(c.name.as_str()) {
-            return Err(Error::e04("cycle", &c.name));
+            return Err(Error::duplicate("cycle", &c.name));
         }
         if points.contains_key(c.name.as_str()) {
-            return Err(Error::e09_not_cycle(&c.name));
+            return Err(Error::point_not_cycle(&c.name));
         }
         if routines.contains_key(c.name.as_str()) {
-            return Err(Error::e09_routine_not_cycle(&c.name));
+            return Err(Error::routine_not_cycle(&c.name));
         }
-        // Дубли параметров (`cycle C(a, a)`) — E04, как дубли объявлений.
+        // Дубли параметров (`cycle C(a, a)`) — duplicate, как дубли объявлений.
         let mut seen = HashSet::new();
         for p in &c.params {
             if !seen.insert(p) {
-                return Err(Error::e04("param", p));
+                return Err(Error::duplicate("param", p));
             }
         }
         cycles.insert(c.name.as_str(), c);
     }
-    // Дубли меток таблицы — E04, как дубли объявлений.
+    // Дубли меток таблицы — duplicate, как дубли объявлений.
     for tname in &reg.order {
         let t = reg.get(tname.as_str()).expect("порядок — по реестру");
         let mut seen = HashSet::new();
         for row in &t.rows {
             if !seen.insert(row.label.as_str()) {
-                return Err(Error::e04("slot", &row.label));
+                return Err(Error::duplicate("slot", &row.label));
             }
         }
     }
@@ -147,39 +147,39 @@ where
             Invocation::PointAction { point, action, .. } => {
                 if let Some(p) = tables.points.get(point.as_str()) {
                     if !p.actions.iter().any(|a| a == action) {
-                        return Err(Error::e02(action, point));
+                        return Err(Error::action_not_allowed(action, point));
                     }
                 } else if tables.cycles.contains_key(point.as_str()) {
-                    return Err(Error::e09_not_point(point));
+                    return Err(Error::cycle_not_point(point));
                 } else if tables.routines.contains_key(point.as_str()) {
-                    return Err(Error::e09_routine_not_point(point));
+                    return Err(Error::routine_not_point(point));
                 } else {
-                    return Err(Error::e01(point));
+                    return Err(Error::unknown_point(point));
                 }
             }
             Invocation::CycleCall { name, args } => {
                 if let Some(routine) = tables.routines.get(name.as_str()) {
-                    // Арность — сразу за существованием (E12, прецедент
+                    // Арность — сразу за существованием (wrong-arguments, прецедент
                     // арности fun/pred); выражения аргументов — позже, со строками.
                     if routine.params.len() != args.len() {
-                        return Err(Error::e12_arity(name));
+                        return Err(Error::wrong_arguments(name));
                     }
                     match args.first() {
                         Some(Expr::Name(t)) if Some(t.as_str()) == scope => {}
                         Some(Expr::Name(t)) if tables.tables.get(t.as_str()).is_some() => {}
-                        Some(Expr::Name(t)) => return Err(Error::e16_table(t)),
-                        _ => return Err(Error::e16_table_arg(name)),
+                        Some(Expr::Name(t)) => return Err(Error::unknown_table(t)),
+                        _ => return Err(Error::invalid_table_argument(name)),
                     }
                 } else if let Some(callee) = tables.cycles.get(name.as_str()) {
-                    // Арность — сразу за существованием (E12, прецедент
+                    // Арность — сразу за существованием (wrong-arguments, прецедент
                     // арности fun/pred); выражения аргументов — позже, со строками.
                     if callee.params.len() != args.len() {
-                        return Err(Error::e12_arity(name));
+                        return Err(Error::wrong_arguments(name));
                     }
                 } else if tables.points.contains_key(name.as_str()) {
-                    return Err(Error::e09_not_cycle(name));
+                    return Err(Error::point_not_cycle(name));
                 } else {
-                    return Err(Error::e03(name));
+                    return Err(Error::unknown_cycle(name));
                 }
             }
         }
@@ -188,12 +188,12 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Рекурсия (E06) и границы циклов (E07).
+// Рекурсия (recursive) и границы циклов (cycle-overruns).
 // Вызывать после `validate_names`: обе функции предполагают, что все имена
 // разрешены (неизвестных циклов уже нет).
 // ---------------------------------------------------------------------------
 
-/// Запрет самовызовов — прямых и через цепочку (E06): циклы, рутины
+/// Запрет самовызовов — прямых и через цепочку (recursive): циклы, рутины
 /// и таблицы в одном графе. Пожары `->` таблицы — рёбра таблицы: срабатывают
 /// при каждом инстанцировании с ней. Обход в порядке объявления (циклы,
 /// рутины, таблицы); сообщается повторно вошедший узел своим сообщением
@@ -239,7 +239,7 @@ const KIND_CYCLE: u8 = 0;
 const KIND_ROUTINE: u8 = 1;
 const KIND_TABLE: u8 = 2;
 
-/// DFS по графу вызовов. Серая вершина при повторном входе — E06.
+/// DFS по графу вызовов. Серая вершина при повторном входе — recursive.
 fn visit<'a>(
     node: (u8, &'a str),
     tables: &NameTables<'a>,
@@ -252,9 +252,9 @@ fn visit<'a>(
     }
     if !gray.insert(node) {
         return Err(match node.0 {
-            KIND_ROUTINE => Error::e06_routine(node.1),
-            KIND_TABLE => Error::e06_table(node.1),
-            _ => Error::e06(node.1),
+            KIND_ROUTINE => Error::recursive_routine(node.1),
+            KIND_TABLE => Error::recursive_table(node.1),
+            _ => Error::recursive_cycle(node.1),
         });
     }
     for next in outgoing(node, tables, pairs) {
@@ -341,7 +341,7 @@ fn push_edge<'a>(out: &mut Vec<(u8, &'a str)>, kind: u8, name: &'a str) {
 /// Пары `(рутина, таблица)` инстанцирования в порядке первого использования:
 /// циклы, рутины, корень, пожары таблиц. Пробросы табличных параметров
 /// замыкаются fixpoint-ом (конечен: множество пар ограничено).
-/// Нужны E06 (рёбра пожаров) и `check_tables` (проверка каждой пары один раз).
+/// Нужны recursive (рёбра пожаров) и `check_tables` (проверка каждой пары один раз).
 pub fn instantiation_pairs<'a>(
     schedule: &'a Schedule,
     tables: &NameTables<'a>,
@@ -429,7 +429,7 @@ pub fn instantiation_pairs<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Таблицы и границы инстанцирований (E16/E05/E07/E10).
+// Таблицы и границы инстанцирований (unknown-table/invalid-duration/cycle-overruns/invalid-repeat-count).
 // Вызывать после `check_recursion` и до `check_bounds`: покрытие меток идёт
 // по парам инстанцирования, границы тел — в длительности их таблиц.
 // ---------------------------------------------------------------------------
@@ -456,7 +456,7 @@ pub struct Instance {
 
 /// Инстанцировать рутину с таблицей: метки → смещения слотов, проброс
 /// табличного параметра — в литеральное имя, пожары таблицы — отдельно.
-/// Неизвестная метка — E16.
+/// Неизвестная метка — unknown-slot.
 /// Вызывать после `validate_names` (форма вызовов уже проверена).
 pub fn instantiate(
     routine: &Routine,
@@ -474,7 +474,7 @@ pub fn instantiate(
             RoutineOffset::Duration(d) => d.clone(),
             RoutineOffset::Label(label) => match table.rows.iter().find(|r| &r.label == label) {
                 Some(slot) => slot.offset.clone(),
-                None => return Err(Error::e16_slot(label)),
+                None => return Err(Error::unknown_slot(label)),
             },
         };
         let invocation = match &st.invocation {
@@ -509,9 +509,9 @@ pub fn instantiate(
     Ok(Instance { body, firings })
 }
 
-/// Проверить таблицы и инстанцирования рутин: длительности таблиц (E05),
-/// строки таблиц в границах (E07/E10, вина — на таблице), покрытие меток
-/// каждой пары (E16) и границы тел (E07/E10, вина — на рутине).
+/// Проверить таблицы и инстанцирования рутин: длительности таблиц (invalid-duration),
+/// строки таблиц в границах (cycle-overruns/invalid-repeat-count, вина — на таблице), покрытие меток
+/// каждой пары (unknown-slot) и границы тел (cycle-overruns/invalid-repeat-count, вина — на рутине).
 /// Каждая пара `(рутина, таблица)` проверяется один раз, в порядке первого
 /// использования. Невызываемые рутины — только статика имён и условий
 /// (покрытие без таблицы проверить нечем).
@@ -553,9 +553,9 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
     }
     Ok(())
 }
-/// Граница циклов (E07, правило 8): `actual(C) ≤ duration(C)` для каждого
+/// Граница циклов (cycle-overruns, правило 8): `actual(C) ≤ duration(C)` для каждого
 /// цикла и `root_cycle`. Отрицательные смещения разрешены заранее
-/// (`duration(C) − X`); вылет ниже нуля — тоже E07
+/// (`duration(C) − X`); вылет ниже нуля — тоже cycle-overruns
 /// (`offset '-2h' out of bounds (duration 1h20m)`), проверяется в порядке
 /// объявления и побеждает сразу. В сообщении о переполнении — вызов
 /// со строки, давшей максимум (при равных концах — первая в порядке объявления).
@@ -632,7 +632,7 @@ fn stmts_end(
 }
 
 /// Конец одной строки: смещение + длина вызова или цепочки.
-/// Порядок проверок строки: E10, затем E07 (горизонт, конец цепочки).
+/// Порядок проверок строки: invalid-repeat-count, затем until-out-of-bounds/cycle-overruns (горизонт, конец цепочки).
 fn row_end(
     st: &Stmt,
     offset: i64,
@@ -663,9 +663,9 @@ pub fn chain(
             Ok((1, span))
         }
         Repeat::Times(raw) => {
-            let n: u64 = raw.parse().map_err(|_| Error::e10_repeat_count(raw))?;
+            let n: u64 = raw.parse().map_err(|_| Error::invalid_repeat_count(raw))?;
             if n == 0 {
-                return Err(Error::e10_repeat_count(raw));
+                return Err(Error::invalid_repeat_count(raw));
             }
             Ok((n, step_of(&st.invocation, tables)?))
         }
@@ -673,8 +673,8 @@ pub fn chain(
             let step = step_of(&st.invocation, tables)?;
             if step == 0 {
                 return Err(match &st.invocation {
-                    Invocation::CycleCall { name, .. } => Error::e10_fill_zero(name),
-                    Invocation::PointAction { action, .. } => Error::e10_repeat_action(action),
+                    Invocation::CycleCall { name, .. } => Error::fill_zero_duration(name),
+                    Invocation::PointAction { action, .. } => Error::repeat_point_action(action),
                 });
             }
             let horizon = match until {
@@ -683,14 +683,14 @@ pub fn chain(
                     let t = duration_ms(&u.duration)?;
                     let h = if u.negative {
                         if t > limit {
-                            return Err(Error::e07_until(&u.raw(), limit_raw));
+                            return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
                         }
                         limit - t
                     } else {
                         t
                     };
                     if h > limit {
-                        return Err(Error::e07_until(&u.raw(), limit_raw));
+                        return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
                     }
                     h
                 }
@@ -708,10 +708,10 @@ pub fn chain(
 /// Длительность шага цепочки: `0` для действия точки,
 /// объявленная длительность для вызова цикла,
 /// длительность таблицы для вызова рутины.
-/// Повтор действия точки — E10.
+/// Повтор действия точки — repeat-point-action.
 fn step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
     match invocation {
-        Invocation::PointAction { action, .. } => Err(Error::e10_repeat_action(action)),
+        Invocation::PointAction { action, .. } => Err(Error::repeat_point_action(action)),
         Invocation::CycleCall { name, args } => cycle_or_table_ms(name, args, tables),
     }
 }
@@ -747,7 +747,7 @@ fn saturating_add_mul(offset: i64, n: u64, d: i64) -> i64 {
     i64::try_from(end).unwrap_or(i64::MAX)
 }
 
-/// Ошибка E07 с виной на вызове строки: цикл — `cycle 'X' overruns ...`,
+/// Ошибка cycle-overruns с виной на вызове строки: цикл — `cycle 'X' overruns ...`,
 /// действие точки — симметричное `action 'a' overruns ...`.
 fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
     let excess = format_duration(end - limit);
@@ -755,10 +755,10 @@ fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
     let limit_s = format_duration(limit);
     match &stmt.invocation {
         Invocation::PointAction { action, .. } => {
-            Error::e07_action(action, outer, &excess, &end_s, &limit_s)
+            Error::action_overruns(action, outer, &excess, &end_s, &limit_s)
         }
         Invocation::CycleCall { name, .. } => {
-            Error::e07_cycle(name, outer, &excess, &end_s, &limit_s)
+            Error::cycle_overruns(name, outer, &excess, &end_s, &limit_s)
         }
     }
 }
@@ -791,36 +791,36 @@ mod tests {
 
     #[test]
     fn error_codes_match_fixtures() {
-        // (файл, код, сообщение) — дословно по §5.
+        // (файл, код, сообщение) — дословно по главе ошибок.
         for (file, src, code, message) in [
             (
-                "bad_e01",
-                include_str!("../../../examples/invalid/bad_e01.cyclo"),
-                "E01",
+                "bad_unknown-point",
+                include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
+                "unknown-point",
                 "unknown point 'PORT'",
             ),
             (
-                "bad_e02",
-                include_str!("../../../examples/invalid/bad_e02.cyclo"),
-                "E02",
+                "bad_action-not-allowed",
+                include_str!("../../../examples/invalid/bad_action-not-allowed.cyclo"),
+                "action-not-allowed",
                 "action 'arrive' not allowed for point 'DEPOT'",
             ),
             (
-                "bad_e03",
-                include_str!("../../../examples/invalid/bad_e03.cyclo"),
-                "E03",
+                "bad_unknown-cycle",
+                include_str!("../../../examples/invalid/bad_unknown-cycle.cyclo"),
+                "unknown-cycle",
                 "unknown cycle 'NIGHT_ROUTE'",
             ),
             (
-                "bad_e04",
-                include_str!("../../../examples/invalid/bad_e04.cyclo"),
-                "E04",
+                "bad_duplicate",
+                include_str!("../../../examples/invalid/bad_duplicate.cyclo"),
+                "duplicate",
                 "duplicate point 'DEPOT'",
             ),
             (
-                "bad_e09",
-                include_str!("../../../examples/invalid/bad_e09.cyclo"),
-                "E09",
+                "bad_wrong-kind",
+                include_str!("../../../examples/invalid/bad_wrong-kind.cyclo"),
+                "wrong-kind",
                 "point 'DEPOT' is not a cycle",
             ),
         ] {
@@ -832,17 +832,20 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_cycle_params() {
-        // Дубли параметров — E04, как дубли объявлений.
+        // Дубли параметров — duplicate, как дубли объявлений.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle C(a, a) duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(1, 2); } }";
         let e = err(src);
-        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate param 'a'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate", "duplicate param 'a'")
+        );
     }
 
     #[test]
     fn rejects_cycle_arity_mismatch() {
-        // Арность — сразу за существованием (E12, прецедент fun/pred).
+        // Арность — сразу за существованием (wrong-arguments, прецедент fun/pred).
         for (row, name) in [("6h: C();", "C"), ("6h: C(1, 2);", "C"), ("6h: R(1);", "R")] {
             let src = format!(
                 "schedule \"T\" {{ point A {{ actions = [x]; }} \
@@ -851,7 +854,7 @@ mod tests {
                 root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
             );
             let e = err(&src);
-            assert_eq!(e.code, "E12", "для {row}");
+            assert_eq!(e.code, "wrong-arguments", "для {row}");
             assert_eq!(
                 e.message,
                 format!("wrong arguments for '{name}'"),
@@ -867,7 +870,10 @@ mod tests {
             cycle R duration = 2h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         let e = err(src);
-        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate cycle 'R'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate", "duplicate cycle 'R'")
+        );
     }
 
     #[test]
@@ -879,7 +885,7 @@ mod tests {
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E09", "point 'R' is not a cycle")
+            ("wrong-kind", "point 'R' is not a cycle")
         );
     }
 
@@ -891,7 +897,7 @@ mod tests {
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E09", "cycle 'R' is not a point")
+            ("wrong-kind", "cycle 'R' is not a point")
         );
     }
 
@@ -929,14 +935,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_table() {
-        // Таблицы с таким именем нет — E16 (таблицы живут отдельно от циклов).
+        // Таблицы с таким именем нет — unknown-table (таблицы живут отдельно от циклов).
         let src = "schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(SHORT); } }";
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E16", "unknown table 'SHORT'")
+            ("unknown-table", "unknown table 'SHORT'")
         );
     }
 
@@ -949,13 +955,13 @@ mod tests {
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E16", "invalid table argument for 'M'")
+            ("invalid-table-argument", "invalid table argument for 'M'")
         );
     }
 
     #[test]
     fn rejects_routine_arity_mismatch() {
-        // Арность — сразу за существованием (E12, как у циклов).
+        // Арность — сразу за существованием (wrong-arguments, как у циклов).
         for row in ["0h: M();", "0h: M(D, 1, 2);"] {
             let src = format!(
                 "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
@@ -963,7 +969,7 @@ mod tests {
                 root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
             );
             let e = full_err(&src);
-            assert_eq!(e.code, "E12", "для {row}");
+            assert_eq!(e.code, "wrong-arguments", "для {row}");
             assert_eq!(e.message, "wrong arguments for 'M'", "для {row}");
         }
     }
@@ -974,22 +980,22 @@ mod tests {
         for (src, code, message) in [
             (
                 "routine M(TC) { 0m: A.x(); } routine M(TC) { 0m: A.x(); }",
-                "E04",
+                "duplicate",
                 "duplicate routine 'M'",
             ),
             (
                 "point M { actions = [x]; } routine M(TC) { 0m: M.x(); }",
-                "E09",
+                "wrong-kind",
                 "point 'M' is not a routine",
             ),
             (
                 "routine M(TC) { 0m: A.x(); } cycle M duration = 1h { 0m: A.x(); }",
-                "E09",
+                "wrong-kind",
                 "routine 'M' is not a cycle",
             ),
             (
                 "routine M(TC) { 0m: A.x(); } cycle C duration = 1h { 0m: M.x(); }",
-                "E09",
+                "wrong-kind",
                 "routine 'M' is not a point",
             ),
         ] {
@@ -1011,7 +1017,7 @@ mod tests {
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "routine 'M' has no table parameter")
+            ("no-table-parameter", "routine 'M' has no table parameter")
         );
     }
 
@@ -1023,20 +1029,20 @@ mod tests {
         let e = err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E04", "duplicate param 'TC'")
+            ("duplicate", "duplicate param 'TC'")
         );
     }
 
     #[test]
     fn rejects_duplicate_slot() {
-        // Дубли меток таблицы — E04.
+        // Дубли меток таблицы — duplicate.
         let src = "time_const D duration = 2h { 1st: 0m; 1st: 1h; } \
             schedule \"T\" { point A { actions = [x]; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: A.x(); } }";
         let e = full_err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E04", "duplicate slot '1st'")
+            ("duplicate", "duplicate slot '1st'")
         );
     }
 
@@ -1059,7 +1065,7 @@ mod tests {
 
     #[test]
     fn rejects_routine_cycle_recursion() {
-        // Цикл через рутину и обратно — E06; сообщается повторно вошедший узел.
+        // Цикл через рутину и обратно — recursive; сообщается повторно вошедший узел.
         let src = format!(
             "{DAY} schedule \"T\" {{ point A {{ actions = [x]; }} \
             routine M(TC) {{ 0m: C(); }} \
@@ -1069,7 +1075,10 @@ mod tests {
         let (ast, t) = full(&src);
         let e = check_recursion(ast, &t).expect_err("цикл через рутину");
         // Обход от циклов: C → M → C, повторно вошёл C.
-        assert_eq!((e.code, e.message.as_str()), ("E06", "recursive cycle 'C'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("recursive", "recursive cycle 'C'")
+        );
     }
 
     #[test]
@@ -1083,20 +1092,23 @@ mod tests {
         let e = check_recursion(ast, &t).expect_err("самовызов рутины");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E06", "recursive routine 'M'")
+            ("recursive", "recursive routine 'M'")
         );
     }
 
     #[test]
     fn rejects_table_self_fire_recursion() {
-        // Пожар `->`, инстанцирующий рутину с той же таблицей, — E06 таблицы.
+        // Пожар `->`, инстанцирующий рутину с той же таблицей, — recursive таблицы.
         let src = "time_const D duration = 2h { tick: 0m -> M(D); } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
         let (ast, t) = full(src);
         let e = check_recursion(ast, &t).expect_err("пожар по кругу");
-        assert_eq!((e.code, e.message.as_str()), ("E06", "recursive table 'D'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("recursive", "recursive table 'D'")
+        );
     }
 
     #[test]
@@ -1135,18 +1147,21 @@ mod tests {
 
     #[test]
     fn rejects_unknown_slot() {
-        // Метки нет в таблице вызова — E16 (строгость: не молчаливый пропуск).
+        // Метки нет в таблице вызова — unknown-slot (строгость: не молчаливый пропуск).
         let src = "time_const DAY duration = 24h { 1st: 9h; } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 8th: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY); } }";
         let e = tables_err(src);
-        assert_eq!((e.code, e.message.as_str()), ("E16", "unknown slot '8th'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-slot", "unknown slot '8th'")
+        );
     }
 
     #[test]
     fn rejects_table_row_overrun() {
-        // Пожар за длительностью таблицы — E07 с виной на таблице.
+        // Пожар за длительностью таблицы — cycle-overruns с виной на таблице.
         let src = "time_const DAY duration = 1h { 1st: 0m; late: 2h -> A.x(); } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 1st: A.x(); } \
@@ -1154,13 +1169,16 @@ mod tests {
         let e = tables_err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "action 'x' overruns 'DAY' by 60m (120m > 60m)")
+            (
+                "action-overruns",
+                "action 'x' overruns 'DAY' by 60m (120m > 60m)"
+            )
         );
     }
 
     #[test]
     fn rejects_routine_body_overrun() {
-        // Тело вылезает из таблицы — E07 с виной на рутине (светится её имя).
+        // Тело вылезает из таблицы — cycle-overruns с виной на рутине (светится её имя).
         let src = "time_const DAY duration = 1h { 1st: 0m; } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 1st: C(); } \
@@ -1169,7 +1187,10 @@ mod tests {
         let e = tables_err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "cycle 'C' overruns 'M' by 60m (120m > 60m)")
+            (
+                "cycle-overruns",
+                "cycle 'C' overruns 'M' by 60m (120m > 60m)"
+            )
         );
     }
 
@@ -1185,7 +1206,7 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             (
-                "E07",
+                "cycle-overruns",
                 "cycle 'M' overruns 'root_cycle' by 1440m (2880m > 1440m)"
             )
         );
@@ -1193,7 +1214,7 @@ mod tests {
 
     #[test]
     fn rejects_repeat_zero_in_routine() {
-        // Повторы тела проверяются в длительности таблицы (E10).
+        // Повторы тела проверяются в длительности таблицы (invalid-repeat-count).
         let src = "time_const DAY duration = 24h { 1st: 0m; } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 1st: repeat 0 C(); } \
@@ -1202,7 +1223,7 @@ mod tests {
         let e = tables_err(src);
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E10", "invalid repeat count '0'")
+            ("invalid-repeat-count", "invalid repeat count '0'")
         );
     }
 
@@ -1264,22 +1285,22 @@ mod tests {
     fn recursion_and_bounds_match_fixtures() {
         for (file, src, code, message) in [
             (
-                "bad_e06",
-                include_str!("../../../examples/invalid/bad_e06.cyclo"),
-                "E06",
+                "bad_recursive",
+                include_str!("../../../examples/invalid/bad_recursive.cyclo"),
+                "recursive",
                 "recursive cycle 'A'",
             ),
             (
-                "bad_e07",
-                include_str!("../../../examples/invalid/bad_e07.cyclo"),
-                "E07",
+                "bad_cycle-overruns",
+                include_str!("../../../examples/invalid/bad_cycle-overruns.cyclo"),
+                "cycle-overruns",
                 "cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)",
             ),
         ] {
             let (ast, t) = tables(src);
             let e = check_recursion(ast, &t)
                 .and_then(|()| check_bounds(ast, &t))
-                .expect_err("ожидалась E06/E07");
+                .expect_err("ожидалась recursive/cycle-overruns");
             assert_eq!(e.code, code, "для {file}");
             assert_eq!(e.message, message, "для {file}");
         }
@@ -1303,7 +1324,7 @@ mod tests {
         let e = check_recursion(ast, &t).expect_err("цепочка — тоже рекурсия");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E06", "recursive cycle 'A1'")
+            ("recursive", "recursive cycle 'A1'")
         );
     }
 
@@ -1321,7 +1342,7 @@ mod tests {
 
     #[test]
     fn rejects_point_action_overrun() {
-        // Мгновенное событие за границей периода — тоже E07.
+        // Мгновенное событие за границей периода — тоже cycle-overruns.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { 61m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
@@ -1330,7 +1351,10 @@ mod tests {
         let e = check_bounds(ast, &t).expect_err("событие за границей");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "action 'x' overruns 'R' by 1m (61m > 60m)")
+            (
+                "action-overruns",
+                "action 'x' overruns 'R' by 1m (61m > 60m)"
+            )
         );
     }
 
@@ -1344,7 +1368,10 @@ mod tests {
         let e = check_bounds(ast, &t).expect_err("вылез за период");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "cycle 'R' overruns 'root_cycle' by 30m (90m > 60m)")
+            (
+                "cycle-overruns",
+                "cycle 'R' overruns 'root_cycle' by 30m (90m > 60m)"
+            )
         );
     }
 
@@ -1375,14 +1402,14 @@ mod tests {
 
     #[test]
     fn rejects_negative_out_of_bounds() {
-        // -2h при duration = 1h20m → эффективное -40m: E07, сообщение по §5.
+        // -2h при duration = 1h20m → эффективное -40m: offset-out-of-bounds, сообщение по главе ошибок.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h20m { 0m: A.x(); -2h: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         let (ast, t) = tables(src);
         check_recursion(ast, &t).expect("рекурсии нет");
         let e = check_bounds(ast, &t).expect_err("вылет ниже нуля");
-        assert_eq!(e.code, "E07");
+        assert_eq!(e.code, "offset-out-of-bounds");
         assert_eq!(
             e.message.as_str(),
             "offset '-2h' out of bounds (duration 1h20m)"
@@ -1415,7 +1442,7 @@ mod tests {
 
     #[test]
     fn negative_overrun_still_blamed() {
-        // Эффективное смещение + длина вызова за границей — обычный E07.
+        // Эффективное смещение + длина вызова за границей — обычный cycle-overruns.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle INNER duration = 40m { 0m: A.x(); } \
             cycle OUTER duration = 1h { -10m: INNER(); } \
@@ -1425,7 +1452,10 @@ mod tests {
         let e = check_bounds(ast, &t).expect_err("50m + 40m = 90m > 60m");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "cycle 'INNER' overruns 'OUTER' by 30m (90m > 60m)")
+            (
+                "cycle-overruns",
+                "cycle 'INNER' overruns 'OUTER' by 30m (90m > 60m)"
+            )
         );
     }
 
@@ -1443,7 +1473,10 @@ mod tests {
         // Концы: 0+120m=120m и 10m+120m=130m; вина на B1.
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "cycle 'B1' overruns 'OUTER' by 70m (130m > 60m)")
+            (
+                "cycle-overruns",
+                "cycle 'B1' overruns 'OUTER' by 70m (130m > 60m)"
+            )
         );
     }
 
@@ -1462,7 +1495,7 @@ mod tests {
         );
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E10", "invalid repeat count '0'")
+            ("invalid-repeat-count", "invalid repeat count '0'")
         );
     }
 
@@ -1474,7 +1507,10 @@ mod tests {
         );
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E10", "repeat of point action 'x' not allowed")
+            (
+                "repeat-point-action",
+                "repeat of point action 'x' not allowed"
+            )
         );
     }
 
@@ -1487,7 +1523,7 @@ mod tests {
         );
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E10", "fill of zero-duration cycle 'EMPTY'")
+            ("fill-zero-duration", "fill of zero-duration cycle 'EMPTY'")
         );
     }
 
@@ -1502,7 +1538,7 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             (
-                "E07",
+                "cycle-overruns",
                 "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)"
             )
         );
@@ -1517,7 +1553,10 @@ mod tests {
         );
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "until '30h' out of bounds (duration 24h)")
+            (
+                "until-out-of-bounds",
+                "until '30h' out of bounds (duration 24h)"
+            )
         );
     }
 
@@ -1530,7 +1569,10 @@ mod tests {
         );
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E07", "until '-30h' out of bounds (duration 24h)")
+            (
+                "until-out-of-bounds",
+                "until '-30h' out of bounds (duration 24h)"
+            )
         );
     }
 

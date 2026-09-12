@@ -1,6 +1,6 @@
-use "no_such_lib.cyclo";
+const M = {"a": 1, "a": 2};
 
-schedule "E13-missing" {
+schedule "duplicate-attribute" {
   point DEPOT {
     actions = [depart];
   }

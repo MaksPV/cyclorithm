@@ -1,4 +1,4 @@
-schedule "E09" {
+schedule "unknown-name-private" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +13,6 @@ schedule "E09" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: DEPOT();
+    [__z(at) == 1] 6h: R();
   }
 }

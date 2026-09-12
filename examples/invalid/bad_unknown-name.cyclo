@@ -1,4 +1,4 @@
-schedule "E10-zero" {
+schedule "unknown-name" {
   point DEPOT {
     actions = [depart];
   }
@@ -13,6 +13,6 @@ schedule "E10-zero" {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: repeat 0 R();
+    [banana(at) == 6] 6h: R();
   }
 }

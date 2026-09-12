@@ -1,4 +1,4 @@
-schedule "E10-fill0" {
+schedule "fill-zero-duration" {
   point DEPOT {
     actions = [depart];
   }

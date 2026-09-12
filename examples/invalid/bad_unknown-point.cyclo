@@ -1,7 +1,4 @@
-const K = 1;
-const K = 2;
-
-schedule "E04-dup" {
+schedule "unknown-point" {
   point DEPOT {
     actions = [depart];
   }
@@ -9,13 +6,13 @@ schedule "E04-dup" {
   cycle R
     duration = 1h
   {
-    0m: DEPOT.depart();
+    0m: PORT.depart();
   }
 
   root_cycle
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [at >= K] 6h: R();
+    6h: R();
   }
 }

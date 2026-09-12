@@ -1,4 +1,6 @@
-schedule "E02" {
+use "no_such_lib.cyclo";
+
+schedule "cannot-read-import" {
   point DEPOT {
     actions = [depart];
   }
@@ -6,7 +8,7 @@ schedule "E02" {
   cycle R
     duration = 1h
   {
-    0m: DEPOT.arrive();
+    0m: DEPOT.depart();
   }
 
   root_cycle

@@ -1,4 +1,4 @@
-schedule "E08" {
+schedule "invalid-repeat-count" {
   point DEPOT {
     actions = [depart];
   }
@@ -10,9 +10,9 @@ schedule "E08" {
   }
 
   root_cycle
-    start_time = "not-a-datetime",
+    start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    6h: R();
+    6h: repeat 0 R();
   }
 }
