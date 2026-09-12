@@ -552,9 +552,16 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
         .expect("cmp_right: содержимое");
     let right = if right.as_rule() == Rule::alternation {
         let mut alts = right.into_inner();
-        let mut values = vec![build_bitor(alts.next().expect("alternation: ветка"))];
+        let branch = |p: Pair<Rule>| {
+            build_operand(
+                p.into_inner()
+                    .next()
+                    .expect("alternation: cond_value"),
+            )
+        };
+        let mut values = vec![branch(alts.next().expect("alternation: ветка"))];
         while alts.next().is_some() {
-            values.push(build_bitor(alts.next().expect("alternation: ветка")));
+            values.push(branch(alts.next().expect("alternation: ветка")));
         }
         CondRhs::Alt(values)
     } else {
@@ -708,7 +715,6 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     };
     let expr = match value.as_rule() {
         Rule::postfix => build_postfix(value),
-        Rule::bitor => build_bitor(value),
         r => unreachable!("factor: неожиданное правило {r:?}"),
     };
     if negated {
@@ -1423,6 +1429,30 @@ mod tests {
                 right: CondRhs::Alt(vec![Expr::Num("1".to_owned()), Expr::Num("2".to_owned())]),
             }
         );
+    }
+
+    #[test]
+    fn parses_concat_branch_in_alternation() {
+        // Ветки альтернации — те же значения, что в операндах: склейка валидна.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [datestr(at) == (\"2026-11\" ++ \"-04\" or \"2026-12-31\")] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("склейка в ветке обязана разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        match cond {
+            Cond::Cmp {
+                right: CondRhs::Alt(alts),
+                ..
+            } => assert_eq!(alts.len(), 2),
+            c => panic!("ожидалась альтернация, получено {c:?}"),
+        }
     }
 
     #[test]

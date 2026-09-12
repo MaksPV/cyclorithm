@@ -90,7 +90,9 @@ cond_value  = { concat | bitor }
 // Слева альтернации нет (только справа).
 cmp_side    = { cond_value }
 cmp_right   = { alternation | cond_value }
-alternation = { "(" ~ bitor ~ (kw_or ~ bitor)+ ~ ")" }
+alternation = { "(" ~ cond_value ~ (kw_or ~ cond_value)+ ~ ")" }
+// Ветки — те же значения, что в операндах (включая склейку):
+// `("a" ++ "b" or "c")` валидно, как снаружи.
 // Битовые уровни (слабее сложения, сильнее сравнения; внутри — как в Python:
 // `|` слабее `^`, `^` слабее `&`, сдвиги сильнее всех трёх).
 bitor       = { bitxor ~ ("|" ~ bitxor)* }
@@ -102,7 +104,9 @@ arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { neg_sign? ~ (postfix | "(" ~ bitor ~ ")") }
+factor      = { neg_sign? ~ postfix }
+// Скобка только в `postfix_base`: дубль `"(" ~ bitor ~ ")"` здесь был бы
+// мёртвым (всё, что берёт он, берёт и `postfix`, а `postfix` пробуется раньше).
 // Мостик булева в арифметику (как в C: истина — 1, ложь — 0):
 // внутри скобок полное условие, а не одно сравнение.
 truth       = { "(" ~ or_expr ~ ")" }
