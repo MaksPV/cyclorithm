@@ -442,7 +442,8 @@ impl CxTy<'_> {
                             }
                             (a, b) if a == b => Ok(()),
                             _ => {
-                                if date_cmp_ok(left, r)? {
+                                if let Some((_, lit)) = date_sides(left, r) {
+                                    normalize_date_literal(lit)?;
                                     Ok(())
                                 } else {
                                     Err(Error::type_mismatch())
@@ -790,13 +791,17 @@ fn eval_attr_pairs(
 
 /// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
 /// Остальное смешение — ложь, вызыватель даст `type-mismatch`.
-fn date_cmp_ok(left: &Expr, right: &Expr) -> Result<bool, Error> {
-    let lit = match (left, right) {
-        (Expr::At, Expr::Str(s)) | (Expr::Str(s), Expr::At) => s,
-        _ => return Ok(false),
-    };
-    normalize_date_literal(lit)?;
-    Ok(true)
+/// Date-сравнение: одна сторона — голый `at`, другая — строковый литерал.
+/// Возвращает `(at_слева, литерал)`. Единственное место, знающее правило;
+/// зовут и статика (проверить литерал), и вычисление (привести `at`).
+/// Алиасы/арифметика над `at` (`K`, `at+0`) сюда не попадают — только
+/// синтаксически голый `at` (иначе `hour(at) == "дата"` приняла бы мусор).
+fn date_sides<'a>(left: &'a Expr, right: &'a Expr) -> Option<(bool, &'a str)> {
+    match (left, right) {
+        (Expr::At, Expr::Str(s)) => Some((true, s)),
+        (Expr::Str(s), Expr::At) => Some((false, s)),
+        _ => None,
+    }
 }
 
 /// Строковый литерал даты к канонической форме `YYYY-MM-DDTHH:MM:SS.mmm`.
@@ -1044,23 +1049,26 @@ impl CxEv<'_> {
                 match right {
                     CondRhs::One(rexpr) => {
                         let r = eval_expr(rexpr, at, self)?;
-                        // Голый `at` рядом со строкой: проверка уже пропустила
-                        // только эту форму смешения — приводим здесь.
+                        // Date-сравнение — то же правило, что в статике
+                        // (`date_sides`): голый `at` приводим к канонике.
                         let canonical = || {
                             crate::datetime::format_datetime_full(at).ok_or_else(|| {
                                 Error::invalid_date(&crate::datetime::format_datetime(at))
                             })
                         };
-                        match (&l, &r, left, rexpr) {
-                            (Value::Num(_), Value::Str(_), Expr::At, Expr::Str(lit)) => {
+                        match date_sides(left, rexpr) {
+                            Some((at_left, lit)) => {
                                 let norm = normalize_date_literal(lit)?;
-                                cmp_values(*op, &Value::Str(canonical()?), &Value::Str(norm))
+                                let canon = Value::Str(canonical()?);
+                                let norm = Value::Str(norm);
+                                let (l, r) = if at_left {
+                                    (canon, norm)
+                                } else {
+                                    (norm, canon)
+                                };
+                                cmp_values(*op, &l, &r)
                             }
-                            (Value::Str(_), Value::Num(_), Expr::Str(lit), Expr::At) => {
-                                let norm = normalize_date_literal(lit)?;
-                                cmp_values(*op, &Value::Str(norm), &Value::Str(canonical()?))
-                            }
-                            _ => cmp_values(*op, &l, &r),
+                            None => cmp_values(*op, &l, &r),
                         }
                     }
                     CondRhs::Alt(alts) => {
