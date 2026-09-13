@@ -4,7 +4,7 @@
 
 ## Будни и выходные разными рейсами
 
-```text
+```cyclo
 root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
   [not weekend(at)] 6h: CITY_ROUTE();
   [weekend(at)] 12h: CITY_ROUTE();
@@ -13,7 +13,7 @@ root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
 
 ## Повторы `repeat` и `fill`
 
-```text
+```cyclo
 [hour(at) >= 7 and not weekend(at)] 10h: repeat 2 SHUTTLE();
 [not weekend(at)] 14h: fill until 15h SHUTTLE();
 ```
@@ -23,7 +23,7 @@ root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
 
 ## Завершение в границу цикла
 
-```text
+```cyclo
 cycle CITY_ROUTE duration = 1h20m {
   0m: DEPOT.depart();
   -0m: DEPOT.arrive();
@@ -34,7 +34,7 @@ cycle CITY_ROUTE duration = 1h20m {
 
 ## Расписание по звонкам
 
-```text
+```cyclo
 time_const DAY duration = 24h {
   1st: 9h;
   [workday(at)] lunch: 12h -> LUNCH();
@@ -53,7 +53,7 @@ root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
 
 ## Праздники одной строкой
 
-```text
+```cyclo
 pred holiday(at) = datestr(at) == ("2026-11-04" or "2026-12-31");
 ```
 

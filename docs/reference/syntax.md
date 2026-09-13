@@ -8,7 +8,7 @@ EBNF-грамматика — в `crates/cyclorithm-parser/src/grammar.pest`.
 
 Файл — это шапка импортов, объявления и одно расписание:
 
-```text
+```cyclo
 use "libs/route_lib.cyclo";
 
 const MORNING = 6;
@@ -21,7 +21,7 @@ schedule "Автобусный парк" {
 Порядок членов расписания строгий: точки, затем рутины, затем циклы,
 затем корневой цикл (ровно один):
 
-```text
+```cyclo
 schedule "Автобусный парк" {
   point DEPOT { ... }  // сначала точки
   routine MONDAY(TC) { ... }  // затем рутины
@@ -43,7 +43,7 @@ schedule "Автобусный парк" {
 Слова `repeat`, `fill`, `gaps`, `until` в строках распознаются по месту —
 циклам и действиям такие имена не давать:
 
-```text
+```cyclo
 point DEPOT { actions = [depart]; }
 point AIRPORT { actions = [depart]; }  // можно: разные точки
 
@@ -63,7 +63,7 @@ cycle X duration = 1h { ... }  // ошибка wrong-kind: имя занято
 
 Строка — условие, смещение, необязательный повтор и вызов:
 
-```text
+```cyclo
 [not weekend(at)] 10h: repeat 2 SHUTTLE();  // условие + смещение + повтор + вызов
 14h: fill until 15h SHUTTLE();
 0h: fill gaps BREAK_20();  // добивка пустот, без until — до конца цикла
@@ -79,7 +79,7 @@ cycle X duration = 1h { ... }  // ошибка wrong-kind: имя занято
 
 Производный цикл — зеркало имеющегося:
 
-```text
+```cyclo
 cycle KULICHKI_TAMBOV reverse TAMBOV_KULICHKI;
 ```
 
@@ -98,7 +98,7 @@ cycle KULICHKI_TAMBOV reverse TAMBOV_KULICHKI;
 вызов предиката, остальное — сравнения с логикой. Как в C, годится и голое
 число: ноль — ложь, ненулевое — истина:
 
-```text
+```cyclo
 [weekend(at)] 12h: CITY_ROUTE();  // голый предикат
 [hour(at) >= 7 and not weekend(at)] 10h: SHUTTLE();  // сравнение и логика
 [5] 6h: CITY_ROUTE();  // всегда истина
@@ -138,7 +138,7 @@ cycle KULICHKI_TAMBOV reverse TAMBOV_KULICHKI;
 областью видимости, что и везде: параметр цикла перекрывает `const` с тем же
 именем.
 
-```text
+```cyclo
 const ROOM = "233/А";
 const LEC = {"subject": "БЖД", "room": ROOM, "label": ROOM ++ ", корпус Л"};
 ```
@@ -158,7 +158,7 @@ const LEC = {"subject": "БЖД", "room": ROOM, "label": ROOM ++ ", корпус
 (имена, арифметика, `at`), пробелы внутри допустимы; вне границ —
 `index-out-of-bounds`:
 
-```text
+```cyclo
 subj.subject  // поле словаря
 tags[0]  // первый элемент массива
 tags[-1]  // последний элемент

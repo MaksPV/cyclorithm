@@ -37,7 +37,7 @@ $$
 выход — ошибка. Цикл `C1` длительностью 1h вызывает на `40m` цикл `C2`
 длительностью 40m — конец на `40m + 40m = 80m` вылезает на 20m:
 
-```text
+```cyclo
 cycle C1 duration = 1h {
   40m: C2();  // конец на 80m — за границей
 }
@@ -95,7 +95,7 @@ cycle 'C2' overruns 'C1' by 20m (80m > 60m)
 `at` означает время места вызова: предикат ниже в строке `[commute(at)] 18h`
 вычисляется для момента строки — старта плюс 18h.
 
-```text
+```cyclo
 root_cycle start_time = "2026-01-09T02:00:00", duration = 24h {
   [commute(at)] 18h: CITY_ROUTE();  // сработает в 20:00, а не в 18:00
 }
@@ -114,7 +114,7 @@ root_cycle start_time = "2026-01-09T02:00:00", duration = 24h {
 вызовов вместе с окружением. Область видимости динамическая: вызванный цикл
 видит параметры вызывающего, даже если своих у него нет.
 
-```text
+```cyclo
 root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
   9h: LESSON({"subject": "БЖД"});
 }
@@ -123,7 +123,7 @@ root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
 Вызов на `9h`, внутри два смещения `0m`: `LESSON` зовёт безаргументный
 `INNER`, тот звонит — и `subj` на месте, хотя у `INNER` параметров нет:
 
-```text
+```cyclo
 cycle LESSON(subj) duration = 1h35m {
   0m: INNER();
 }
@@ -147,7 +147,7 @@ cycle INNER duration = 10m {
 таблицы добавляются после строк тела; длительность вызова равна длительности
 таблицы. Рутина ниже на таблице `SHORT_DAY` даёт звонки в 9:00 и 10:30:
 
-```text
+```cyclo
 time_const SHORT_DAY duration = 14h35m {
   1st: 9h;
   2nd: 10h30m;
@@ -159,7 +159,7 @@ routine MONDAY(TC) {
 }
 ```
 
-```text
+```cyclo
 0h: MONDAY(SHORT_DAY);  // 1st → 9h, 2nd → 10h30m
 ```
 
@@ -169,7 +169,7 @@ routine MONDAY(TC) {
 Метки, которой нет в таблице, — ошибка. Рутина требует `4th`, в таблице его
 нет:
 
-```text
+```cyclo
 routine WED(TC) {
   4th: BELL.ring();
 }
