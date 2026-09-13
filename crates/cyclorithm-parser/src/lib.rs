@@ -277,7 +277,26 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     let kw = inner.next().expect("cycle: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_cycle);
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
-    let mut next = inner.next().expect("cycle: параметры или duration");
+    let mut next = inner
+        .next()
+        .expect("cycle: параметры, duration или reverse");
+    if next.as_rule() == Rule::kw_reverse {
+        let source = inner
+            .next()
+            .expect("cycle: имя источника")
+            .as_str()
+            .to_owned();
+        return Ok(Cycle {
+            name,
+            params: Vec::new(),
+            duration: Duration {
+                raw: String::new(),
+                items: Vec::new(),
+            },
+            stmts: Vec::new(),
+            reverse_from: Some(source),
+        });
+    }
     let params = if next.as_rule() == Rule::cycle_params {
         let ps = next.into_inner().map(|p| p.as_str().to_owned()).collect();
         next = inner.next().expect("cycle: duration");
@@ -294,6 +313,7 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
         params,
         duration,
         stmts,
+        reverse_from: None,
     })
 }
 
@@ -1049,12 +1069,16 @@ pub struct Point {
 
 /// `cycle CITY_ROUTE duration = 1h20m { ... }`
 /// (`LESSON(subj)` — параметры для данных строк).
+/// `reverse_from` — имя зеркалируемого цикла (`cycle BACK reverse FWD;`):
+/// тело и длительность наследуются десугаром ядра, до валидации.
+/// Инвариант (проверяет десугар): либо тело (`reverse_from` пуст), либо источник.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cycle {
     pub name: String,
     pub params: Vec<String>,
     pub duration: Duration,
     pub stmts: Vec<Stmt>,
+    pub reverse_from: Option<String>,
 }
 
 /// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня.
@@ -1987,6 +2011,7 @@ mod tests {
                             },
                         },
                     ],
+                    reverse_from: None,
                 },
                 Cycle {
                     name: "SHUTTLE".to_owned(),
@@ -2004,6 +2029,7 @@ mod tests {
                             "arrive",
                         ),
                     ],
+                    reverse_from: None,
                 },
             ],
             root: RootCycle {
@@ -2461,6 +2487,29 @@ mod tests {
                 r => panic!("ожидался fill gaps until, получено {r:?}"),
             }
         }
+    }
+
+    #[test]
+    fn parses_reverse_decl() {
+        // `cycle BACK reverse FWD;` — тела нет, источник именем; граница слова держится.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            cycle BACK reverse R; \
+            cycle reversex reverse R; \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: BACK(); } }";
+        let s = parse(src).expect("reverse-объявление обязано разбираться");
+        assert_eq!(s.schedule.cycles.len(), 3);
+        assert_eq!(s.schedule.cycles[1].reverse_from, Some("R".to_owned()));
+        assert_eq!(s.schedule.cycles[1].stmts.len(), 0);
+        assert_eq!(s.schedule.cycles[2].name, "reversex");
+        assert_eq!(s.schedule.cycles[2].reverse_from, Some("R".to_owned()));
+        // Без источника и без `;` — синтаксические ошибки.
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } ";
+        let tail =
+            " root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        assert!(parse(&format!("{head} cycle BACK reverse; {tail}")).is_err());
+        assert!(parse(&format!("{head} cycle BACK reverse R {tail}")).is_err());
     }
 
     #[test]
