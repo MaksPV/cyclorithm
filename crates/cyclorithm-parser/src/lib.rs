@@ -851,7 +851,7 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
         Rule::repeat_n => {
             let count = kind
                 .into_inner()
-                .next()
+                .find(|p| p.as_rule() == Rule::repeat_count)
                 .expect("repeat: число")
                 .as_str()
                 .to_owned();
@@ -859,6 +859,8 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
         }
         Rule::fill_mod => {
             let mut finner = kind.into_inner();
+            let fill_kw = finner.next().expect("fill_mod: ключевое слово");
+            debug_assert_eq!(fill_kw.as_rule(), Rule::fill_kw);
             match finner.next() {
                 None => Ok(Repeat::Fill { until: None }),
                 Some(p) if p.as_rule() == Rule::gaps_mod => {
@@ -881,16 +883,20 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
     }
 }
 
-/// Хвост `until [−]duration`: первый пункт уже прочитан, остальное — в `rest`.
+/// Хвост `until [−]duration`: первый пункт — `until_kw`, остальное — в `rest`.
+/// Длительность — `until_dur` (тот же набор `duration_item`, плюс граница слова).
 /// Минус слитно (`-2h` ок, `- 2h` — ошибка), как у смещений.
 fn build_until_from(
     first: Pair<Rule>,
     rest: &mut pest::iterators::Pairs<'_, Rule>,
     span: pest::Span<'_>,
 ) -> Result<Until, pest::error::Error<Rule>> {
-    if first.as_rule() == Rule::neg_sign {
+    debug_assert_eq!(first.as_rule(), Rule::until_kw);
+    let second = rest.next().expect("until: длительность или минус");
+    if second.as_rule() == Rule::neg_sign {
         let dur = rest.next().expect("until: длительность после минуса");
-        if first.as_span().end() != dur.as_span().start() {
+        debug_assert_eq!(dur.as_rule(), Rule::until_dur);
+        if second.as_span().end() != dur.as_span().start() {
             return Err(pest::error::Error::new_from_span(
                 pest::error::ErrorVariant::CustomError {
                     message: "minus in until must be glued to duration ('-2h')".to_owned(),
@@ -903,10 +909,10 @@ fn build_until_from(
             duration: build_duration(dur),
         })
     } else {
-        debug_assert_eq!(first.as_rule(), Rule::duration);
+        debug_assert_eq!(second.as_rule(), Rule::until_dur);
         Ok(Until {
             negative: false,
-            duration: build_duration(first),
+            duration: build_duration(second),
         })
     }
 }
