@@ -28,7 +28,6 @@ class CycloLexer(RegexLexer):
     DECLARATION_KEYWORDS = (
         "schedule",
         "use",
-        "as",
         "const",
         "fun",
         "pred",
