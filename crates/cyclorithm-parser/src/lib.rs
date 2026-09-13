@@ -2412,6 +2412,33 @@ mod tests {
     }
 
     #[test]
+    fn duration_keyword_needs_word_boundary() {
+        // `cycle duration duration = 1h {}` — цикл с именем `duration` валиден,
+        // а склейка поля (`durationx`) и пропущенное имя — синтаксические ошибки.
+        let head = "schedule \"T\" { point A { actions = [x]; } ";
+        let tail =
+            " root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let s = parse(&format!(
+            "{head} cycle R duration = 1h {{ 0m: A.x(); }} \
+            cycle duration duration = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .expect("цикл с именем duration обязан разбираться");
+        assert_eq!(s.schedule.cycles[1].name, "duration");
+        assert!(parse(&format!(
+            "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .is_err());
+        assert!(parse(&format!(
+            "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .is_err());
+        assert!(
+            parse_decls("time_const T durationx = 1h { a: 1m; };").is_err(),
+            "склейка поля duration обязана быть ошибкой"
+        );
+    }
+
+    #[test]
     fn until_dur_matches_duration_units() {
         // Паритет `until_dur` и `duration`: все юниты и составные длительности
         // доходят через `fill until` без потерь (дрейф двух копий ловится здесь).
