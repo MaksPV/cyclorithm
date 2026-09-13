@@ -9,8 +9,8 @@ use pest_derive::Parser;
 #[grammar = "grammar.pest"]
 pub struct CycloParser;
 
-/// Разбор исходника в AST. Ошибка — синтаксическая, без слага
-/// (коды слаги главы ошибок — только валидация уже разобранного AST в ядре).
+/// Ошибка — синтаксическая, без слага
+/// (слаги главы ошибок — только валидация уже разобранного AST в ядре).
 pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     let file = CycloParser::parse(Rule::file, src)?
         .next()
@@ -66,12 +66,11 @@ pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
         .collect()
 }
 
-/// Единица импорта: свои `use`, объявления, флаг наличия `schedule`
-/// (расписание внутри импорта запрещено (schedule-in-import) — решает резолвер).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitFile {
     pub uses: Vec<String>,
     pub decls: Vec<Decl>,
+    /// Расписание внутри импорта запрещено — решает резолвер (schedule-in-import).
     pub has_schedule: bool,
 }
 
@@ -425,8 +424,7 @@ fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Erro
     })
 }
 
-/// Тело строки (`stmt_body`): опциональный модификатор повторов и вызов.
-/// Общее для `stmt` и `routine_stmt`.
+/// Общее для `stmt` и `routine_stmt`: опциональный модификатор повторов и вызов.
 fn build_row_body(body: Pair<Rule>) -> Result<(Repeat, Invocation), pest::error::Error<Rule>> {
     debug_assert_eq!(body.as_rule(), Rule::stmt_body);
     let mut binner = body.into_inner();
@@ -446,8 +444,8 @@ fn build_row_body(body: Pair<Rule>) -> Result<(Repeat, Invocation), pest::error:
     }
 }
 
-/// Вызов: действие точки или вызов цикла/routine
-/// (`MONDAY(DAY)` от вызова цикла отличит валидация по имени).
+/// `MONDAY(DAY)` от вызова цикла отличит валидация по имени
+/// (вызов routine — тот же `CycleCall`).
 fn build_invocation(call: Pair<Rule>) -> Invocation {
     match call.as_rule() {
         Rule::point_action => {
@@ -979,8 +977,7 @@ fn build_duration(pair: Pair<Rule>) -> Duration {
     Duration { raw, items }
 }
 
-/// Снять кавычки `"..."`. Экранирования в строках нет, кавычка внутри
-/// непредставима — среза достаточно.
+/// Экранирования в строках нет — среза кавычек достаточно.
 fn unquote(pair: Pair<Rule>) -> String {
     let s = pair.as_str();
     s[1..s.len() - 1].to_owned()
@@ -993,7 +990,6 @@ fn unquote(pair: Pair<Rule>) -> String {
 // Поэтому числа и сырой текст длительностей хранятся как есть.
 // ---------------------------------------------------------------------------
 
-/// Корень файла: импорты, объявления и `schedule`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     pub uses: Vec<String>,
@@ -1035,7 +1031,6 @@ pub struct SlotRow {
     pub firing: Option<Invocation>,
 }
 
-/// Корень расписания: `schedule "имя" { point* routine* cycle* root_cycle }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub name: String,
@@ -1086,14 +1081,12 @@ pub struct RoutineStmt {
     pub invocation: Invocation,
 }
 
-/// Смещение строки routine: обычная длительность или метка таблицы.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoutineOffset {
     Duration(Duration),
     Label(String),
 }
 
-/// `root_cycle start_time = "...", duration = 24h { ... }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootCycle {
     /// Сырая строка без кавычек; корректность дат — invalid-datetime в ядре.
@@ -1137,7 +1130,6 @@ pub enum Cond {
     Truthy(Box<Expr>),
 }
 
-/// Правая часть сравнения: одиночное значение или альтернация `(a or b)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CondRhs {
     One(Expr),
@@ -1187,7 +1179,6 @@ pub enum Expr {
     },
 }
 
-/// Оператор сравнения.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -1198,7 +1189,6 @@ pub enum CmpOp {
     Ge,
 }
 
-/// Арифметический оператор.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {
     Add,
@@ -1234,7 +1224,6 @@ impl Stmt {
 /// Модификатор повторов строки (см. docs/reference/semantics.md): `repeat N` / `fill` / `fill until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repeat {
-    /// Без модификатора: одиночный вызов.
     Once,
     /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе invalid-repeat-count).
     Times(String),
@@ -1295,7 +1284,7 @@ pub struct DurationItem {
     pub unit: DurationUnit,
 }
 
-/// Единицы в порядке убывания из спеки: `w > d > h > m > s > ms`.
+/// Единицы в порядке убывания (см. docs/reference/syntax.md): `w > d > h > m > s > ms`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DurationUnit {
     Week,
