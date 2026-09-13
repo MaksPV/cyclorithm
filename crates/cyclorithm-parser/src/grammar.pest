@@ -22,7 +22,7 @@ fun_decl    = { kw_fun ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { kw_pred ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
 // Таблица слотов (§3): именованные смещения для routine; `->` — слот
 // и собственный вызов в одном лице (пожар при каждом инстанцировании).
-time_const_decl = { kw_time_const ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
+time_const_decl = { kw_time_const ~ IDENT ~ kw_duration ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
 slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
 slot_fire   = { "->" ~ invocation }
 // Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
@@ -31,6 +31,8 @@ slot_fire   = { "->" ~ invocation }
 label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
 // Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
+// Дублирует `cond_value` осознанно (единый верхний уровень выражений):
+// при новом операторе править оба, чтобы не разъезжаться.
 decl_value  = { concat | bitor }
 point       = { kw_point ~ IDENT ~ "{" ~ kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
@@ -38,11 +40,15 @@ action_list = { IDENT ~ ("," ~ IDENT)* }
 // строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
 point_attrs = { kw_attrs ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
-cycle       = { kw_cycle ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Цикл можно назвать `duration` (`cycle duration duration = 1h {}` валиден:
+// первый `duration` съедает `IDENT` как имя). А `cycle duration = 1h {}` —
+// синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
+// Неоднозначность разрешается в пользу имени — осознанно.
+cycle       = { kw_cycle ~ IDENT ~ cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 // Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
-root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 // Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
@@ -94,6 +100,7 @@ kw_cycle      = @{ "cycle" ~ !word_tail }
 kw_routine    = @{ "routine" ~ !word_tail }
 kw_root_cycle = @{ "root_cycle" ~ !word_tail }
 kw_start_time = @{ "start_time" ~ !word_tail }
+kw_duration   = @{ "duration" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
@@ -201,7 +208,8 @@ gaps_mod    = { kw_gaps ~ !"(" ~ (until_kw ~ neg_sign? ~ until_dur)? }
 // (`gaps X` — модификатор, `gapsX` — имя цикла).
 kw_gaps     = @{ "gaps" ~ !word_tail }
 // Минус смещения — именованное правило, чтобы парсер его видел; слитность
-// (`-10m` ок, `- 10m` — ошибка) проверяется в `build_stmt` по спанам:
+// (`-10m` ок, `- 10m` — ошибка) проверяется в сборке по спанам: `build_stmt`,
+// `build_routine_stmt` и `build_until_from` (обе ветки `fill until`);
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
 invocation  = { point_action | cycle_call }
@@ -214,6 +222,9 @@ duration     = { duration_item+ }
 // между компонентами разрешены (`1h 20m` ок).
 duration_item = ${ number ~ duration_unit }
 duration_unit = { "ms" | "w" | "d" | "h" | "m" | "s" }
+// Голые цифры без границы слова осознанно: `!word_tail` здесь развалил бы
+// `duration_item` (`1h` резалось бы на `1` + `h`). Граница нужна только
+// в `repeat_count`, где число стоит перед вызовом.
 number        = @{ ASCII_DIGIT+ }
 // Атомарное: комментарии `//` и пробелы внутрь строк не проникают.
 string      = @{ "\"" ~ string_char* ~ "\"" }
