@@ -163,6 +163,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
             let kw = inner.next().expect("time_const: ключевое слово");
             debug_assert_eq!(kw.as_rule(), Rule::kw_time_const);
             let name = inner.next().expect("time_const: имя").as_str().to_owned();
+            let kw_duration = inner.next().expect("time_const: duration");
+            debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
             let duration = build_duration(inner.next().expect("time_const: duration"));
             let rows = inner.map(build_slot_row).collect::<Result<_, _>>()?;
             Ok(Decl::TimeConst {
@@ -285,7 +287,9 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     } else {
         Vec::new()
     };
-    let duration = build_duration(next);
+    let kw_duration = next;
+    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
+    let duration = build_duration(inner.next().expect("cycle: duration"));
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
     Ok(Cycle {
         name,
@@ -302,6 +306,8 @@ fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Ru
     let kw_start = inner.next().expect("root_cycle: start_time");
     debug_assert_eq!(kw_start.as_rule(), Rule::kw_start_time);
     let start_time = unquote(inner.next().expect("root_cycle: start_time"));
+    let kw_duration = inner.next().expect("root_cycle: duration");
+    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
     let duration = build_duration(inner.next().expect("root_cycle: duration"));
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
     Ok(RootCycle {
