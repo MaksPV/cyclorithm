@@ -247,13 +247,17 @@ fn read_source(src: &Src) -> Result<(String, std::path::PathBuf), i32> {
 macro_rules! setup {
     ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
         // Ошибка парсера — без слага (глава ошибок): текст pest как есть.
-        let __src = match cyclorithm_parser::parse(&$text) {
+        let mut __src = match cyclorithm_parser::parse(&$text) {
             Ok(src) => src,
             Err(e) => {
                 eprintln!("{e}");
                 return 1;
             }
         };
+        if let Err(e) = cyclorithm_core::reverse::materialize_reverse(&mut __src.schedule) {
+            eprintln!("{e}");
+            return 1;
+        }
         let $ast = &__src.schedule;
         // Объявления — сверху файла: их ошибки (duplicate/unknown-name/wrong-arguments) раньше проверок решётки.
         // Импорты (cannot-read-import/import-cycle/schedule-in-import) — раньше объявлений: склейка «импорты → программа».
