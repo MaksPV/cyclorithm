@@ -1,0 +1,14 @@
+const M = {"a": NOPE};
+
+schedule "unknown-name" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    0m: DEPOT.depart();
+  }
+}

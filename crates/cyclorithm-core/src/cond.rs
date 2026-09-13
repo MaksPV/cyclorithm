@@ -441,10 +441,11 @@ fn check_row(
     match invocation {
         Invocation::PointAction { block, .. } => {
             // Блок — литерал мапы (дубли ловит `infer`/`check_map_dupes`) или
-            // ссылка на константу-мапу; в обоих случаях обязана выйти мапа.
+            // ссылка на константу/параметр-мапу; параметр статически `Dyn`,
+            // форму (`Value::Map`) добьёт момент строки.
             if let Some(b) = block {
                 match cx.infer(b)? {
-                    Ty::Map => {}
+                    Ty::Map | Ty::Dyn => {}
                     _ => return Err(Error::type_mismatch()),
                 }
             }
@@ -567,7 +568,7 @@ impl CxTy<'_> {
             Expr::Bool(_) => Ok(Ty::Bool),
             Expr::Map(pairs) => {
                 check_map_dupes(pairs)?;
-                // Значения — литералы данных или выражения блока действия;
+                // Значения — выражения (имена/`at`, арифметика, вложенность);
                 // типы выводим, дубли и кривые числа ловятся здесь же.
                 for (_, v) in pairs {
                     self.infer(v)?;
@@ -788,8 +789,8 @@ fn check_map_dupes(pairs: &[(String, cyclorithm_parser::Expr)]) -> Result<(), Er
 /// Разрешить атрибуты точек: `attrs` каждой точки в готовый словарь.
 /// Без `attrs` — пустой. Литерал — как есть (дубли — duplicate-attribute); ссылка —
 /// тело константы-мапы (неизвестное имя — unknown-name, не мапа — type-mismatch).
-/// Значения — литералы по грамматике, вычисляются с `at = 0` без окружения.
-/// Вызывать после всех проверок главы ошибок, в начале развёртки.
+/// Значения — выражения; вычисляются с `at = 0` без окружения (доступны только
+/// константы, параметров у точки нет). Вызывать после проверок, в начале развёртки.
 pub fn resolve_point_attrs(
     schedule: &Schedule,
     defs: &Defs,
@@ -822,7 +823,7 @@ pub fn resolve_point_attrs(
     Ok(out)
 }
 
-/// Вычислить пары литерала атрибутов (значения — литералы, `at` нет).
+/// Вычислить пары литерала атрибутов (значения — выражения, окружение пусто).
 fn eval_attr_pairs(
     pairs: &[(String, Expr)],
     defs: &Defs,
@@ -2112,6 +2113,38 @@ mod tests {
             .expect("мапа обязана проверяться");
         defs_of("const M = {\"n\": 1}; const A = M;").expect("алиас мапы обязан проверяться");
         defs_of("const A = [1, {\"k\": false}];").expect("массив обязан проверяться");
+    }
+
+    #[test]
+    fn names_and_exprs_inside_literals() {
+        // Имя/выражение внутри словаря — обычное выражение в позиции данных.
+        defs_of(
+            "const ROOM = \"233/А\"; const N = 2; \
+            const LEC = {\"room\": ROOM, \"n\": N + 1, \"tags\": [ROOM, N]};",
+        )
+        .expect("имена и арифметика в словаре обязаны проходить");
+        // Неизвестное имя — unknown-name (не ошибка парсера).
+        let e = defs_of("const M = {\"a\": NOPE};").expect_err("неизвестное имя — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-name", "unknown name 'NOPE'")
+        );
+        // Кривой делитель ловится статически, как и везде.
+        let e = defs_of("const M = {\"a\": 1 / 0};").expect_err("деление на ноль — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
+        // Голое fun-имя в значении — не значение.
+        let e =
+            defs_of("fun f(t) = t; const M = {\"a\": f};").expect_err("fun как значение — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
     }
 
     #[test]

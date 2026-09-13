@@ -214,6 +214,25 @@ fn action_attrs_matches_expected_json() {
 }
 
 #[test]
+fn dict_names_matches_expected_json() {
+    // Имена/выражения в словарях: const-словарь, инлайновый литерал и
+    // аргумент-литерал с параметром.
+    let out = run(&[
+        "run",
+        "../../examples/valid/dict_names.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/dict_names.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn routines_matches_expected_json() {
     // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
     // суббота — тишина (пустая рутина, обед только по будням).
@@ -323,6 +342,11 @@ fn validation_errors_go_to_stderr() {
             "repeat of point action 'depart' not allowed",
         ),
         ("bad_unknown-name", "unknown-name", "unknown name 'banana'"),
+        (
+            "bad_unknown-name-dict",
+            "unknown-name",
+            "unknown name 'NOPE'",
+        ),
         (
             "bad_unknown-name-private",
             "unknown-name",

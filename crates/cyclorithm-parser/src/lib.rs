@@ -422,17 +422,7 @@ fn build_invocation(call: Pair<Rule>) -> Invocation {
             let point = parts.next().expect("вызов: точка").as_str().to_owned();
             let action = parts.next().expect("вызов: действие").as_str().to_owned();
             let block = parts.next().map(|b| match b.as_rule() {
-                Rule::action_block => Expr::Map(
-                    b.into_inner()
-                        .map(|p| {
-                            debug_assert_eq!(p.as_rule(), Rule::block_pair);
-                            let mut kv = p.into_inner();
-                            let key = unquote(kv.next().expect("block_pair: ключ"));
-                            let value = build_call_arg(kv.next().expect("block_pair: значение"));
-                            (key, value)
-                        })
-                        .collect(),
-                ),
+                Rule::map_lit => build_map_lit(b),
                 Rule::IDENT => Expr::Name(b.as_str().to_owned()),
                 r => unreachable!("point_action: неожиданный блок {r:?}"),
             });
@@ -816,7 +806,8 @@ fn build_postfix_base(pair: Pair<Rule>) -> Expr {
     }
 }
 
-/// Мапа `{"k": v, ...}`: ключи — строки без кавычек, значения — литералы.
+/// Мапа `{"k": v, ...}`: ключи — строки без кавычек, значения — выражения
+/// уровня `cond_arg` (литералы, имена/`at`, арифметика, вложенные значения).
 /// Пары хранятся вектором как есть (дубли — duplicate-attribute в ядре, не синтаксис).
 fn build_map_lit(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::map_lit);
@@ -826,7 +817,7 @@ fn build_map_lit(pair: Pair<Rule>) -> Expr {
             debug_assert_eq!(p.as_rule(), Rule::map_pair);
             let mut kv = p.into_inner();
             let key = unquote(kv.next().expect("map_pair: ключ"));
-            let value = build_literal_value(kv.next().expect("map_pair: значение"));
+            let value = build_call_arg(kv.next().expect("map_pair: значение"));
             (key, value)
         })
         .collect();
@@ -835,23 +826,7 @@ fn build_map_lit(pair: Pair<Rule>) -> Expr {
 
 fn build_array_lit(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::array_lit);
-    Expr::Array(pair.into_inner().map(build_literal_value).collect())
-}
-
-fn build_literal_value(pair: Pair<Rule>) -> Expr {
-    debug_assert_eq!(pair.as_rule(), Rule::literal_value);
-    let inner = pair.into_inner().next().expect("literal_value: литерал");
-    match inner.as_rule() {
-        Rule::number => Expr::Num(inner.as_str().to_owned()),
-        Rule::string => {
-            let s = inner.as_str();
-            Expr::Str(s[1..s.len() - 1].to_owned())
-        }
-        Rule::bool_lit => Expr::Bool(inner.as_str() == "true"),
-        Rule::map_lit => build_map_lit(inner),
-        Rule::array_lit => build_array_lit(inner),
-        r => unreachable!("literal_value: неожиданное правило {r:?}"),
-    }
+    Expr::Array(pair.into_inner().map(build_call_arg).collect())
 }
 
 fn build_call_parts(pair: Pair<Rule>) -> (String, Vec<Expr>) {
@@ -1558,7 +1533,7 @@ mod tests {
 
     #[test]
     fn parses_json_literals_in_const() {
-        // Мапы/массивы/bool — литералы; содержимое — только литералы.
+        // Мапы/массивы/bool — литералы; простое содержимое остаётся литералами.
         let src = "const M = {\"name\": \"БЖД\", \"n\": 1, \"ok\": true, \
             \"tags\": [\"a\", 2], \"meta\": {\"k\": false}, \"empty\": {}, \"arr\": []}; \
             schedule \"T\" { point A { actions = [x]; } \
@@ -1586,6 +1561,46 @@ mod tests {
                 ),
                 ("empty".to_owned(), Expr::Map(vec![])),
                 ("arr".to_owned(), Expr::Array(vec![])),
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_names_and_exprs_in_literals() {
+        // Значения словарей/массивов — выражения: имена, `at`, арифметика,
+        // склейка, вложенность.
+        let src = "const M = {\"room\": ROOM, \"n\": x + 1, \"t\": at, \
+            \"label\": \"a\" ++ \"b\", \"nested\": {\"k\": [ROOM, 2]}}; \
+            schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
+        let f = parse(src).expect("выражения в словаре обязаны разбираться");
+        let body = match &f.decls[..] {
+            [Decl::Const { body, .. }] => body.clone(),
+            d => panic!("ожидалась одна const, получено {d:?}"),
+        };
+        let name = |s: &str| Expr::Name(s.to_owned());
+        let str_ = |s: &str| Expr::Str(s.to_owned());
+        assert_eq!(
+            body,
+            Expr::Map(vec![
+                ("room".to_owned(), name("ROOM")),
+                (
+                    "n".to_owned(),
+                    Expr::Bin {
+                        op: ArithOp::Add,
+                        left: Box::new(name("x")),
+                        right: Box::new(Expr::Num("1".to_owned())),
+                    }
+                ),
+                ("t".to_owned(), Expr::At),
+                ("label".to_owned(), Expr::Concat(vec![str_("a"), str_("b")])),
+                (
+                    "nested".to_owned(),
+                    Expr::Map(vec![(
+                        "k".to_owned(),
+                        Expr::Array(vec![name("ROOM"), Expr::Num("2".to_owned())])
+                    )])
+                ),
             ])
         );
     }

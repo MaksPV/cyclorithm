@@ -704,6 +704,44 @@ schedule "Редкое" {
     }
 
     #[test]
+    fn names_in_literals_expand_dynamically() {
+        // Имена/выражения внутри словарей считаются в момент использования:
+        // const-словарь ссылается на другие const, инлайновый литерал видит
+        // параметр, а блок-ссылка на параметр-мапу едет целиком.
+        let src = "const BASE = \"БЖД\"; const ROOM = \"233/А\"; \
+            const LEC = {\"subject\": BASE, \"room\": ROOM, \"label\": BASE ++ \"-\" ++ ROOM}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle LESSON(subj) duration = 1h { 0m: B.ring() subj; } \
+            cycle WRAP(name) duration = 1h { 0m: LESSON({\"subject\": name, \"room\": ROOM}); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            9h: LESSON(LEC); 11h: WRAP(BASE); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        assert_eq!(
+            times(&events),
+            vec!["2026-01-01T09:00:00", "2026-01-01T11:00:00"]
+        );
+        let str_ = |s: &str| crate::cond::Value::Str(s.to_owned());
+        assert_eq!(
+            events[0].action_attrs,
+            vec![
+                ("subject".to_owned(), str_("БЖД")),
+                ("room".to_owned(), str_("233/А")),
+                ("label".to_owned(), str_("БЖД-233/А")),
+            ]
+        );
+        // Инлайновый литерал: `name` — параметр WRAP, `ROOM` — константа.
+        assert_eq!(
+            events[1].action_attrs,
+            vec![
+                ("subject".to_owned(), str_("БЖД")),
+                ("room".to_owned(), str_("233/А")),
+            ]
+        );
+    }
+
+    #[test]
     fn inner_cycle_sees_outer_params() {
         // Динамический скоуп: безаргументный INNER видит subj вызывающего.
         let src = "const LEC = {\"name\": \"БЖД\", \"type\": \"лек\"}; \
