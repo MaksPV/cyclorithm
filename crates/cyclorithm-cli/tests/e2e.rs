@@ -196,6 +196,24 @@ fn attrs_matches_expected_json() {
 }
 
 #[test]
+fn action_attrs_matches_expected_json() {
+    // Блок вызова: JSON-литерал, ссылка на const-мапу и пустой `{}`.
+    let out = run(&[
+        "run",
+        "../../examples/valid/action_attrs.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/action_attrs.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn routines_matches_expected_json() {
     // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
     // суббота — тишина (пустая рутина, обед только по будням).
@@ -358,6 +376,11 @@ fn validation_errors_go_to_stderr() {
         ),
         (
             "bad_duplicate-attribute",
+            "duplicate-attribute",
+            "duplicate attribute 'a'",
+        ),
+        (
+            "bad_duplicate-attribute-block",
             "duplicate-attribute",
             "duplicate attribute 'a'",
         ),

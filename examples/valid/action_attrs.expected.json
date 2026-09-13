@@ -1,0 +1,10 @@
+{
+  "schedule": "Атрибуты вызова",
+  "start": "2026-01-01T00:00:00",
+  "end": "2026-01-02T00:00:00",
+  "events": [
+    {"time": "2026-01-01T00:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {"event": "literal"}},
+    {"time": "2026-01-01T00:01:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {"event": "start"}},
+    {"time": "2026-01-01T00:02:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}}
+  ]
+}
