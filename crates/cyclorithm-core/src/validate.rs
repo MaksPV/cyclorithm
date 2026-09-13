@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cyclorithm_parser::{
-    Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt,
+    Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
 };
 
 use crate::cond::{check_reserved, TableReg};
@@ -614,6 +614,14 @@ pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i6
     .0)
 }
 
+/// Размещение экземпляров строки: старты относительно базы родителя
+/// и конец самого позднего экземпляра (`None` — строка ничего не заняла).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub starts: Vec<i64>,
+    pub end: Option<i64>,
+}
+
 /// Конец занятого отрезка списка строк и индекс строки-аргмакса
 /// (при равных концах — первой). Пустой список — `(0, None)`.
 /// `limit`/`limit_raw` — объявленная длительность непосредственно объемлющего
@@ -624,34 +632,154 @@ fn stmts_end(
     limit_raw: &str,
     tables: &NameTables<'_>,
 ) -> Result<(i64, Option<usize>), Error> {
+    let plans = plan_stmts(stmts, limit, limit_raw, tables)?;
     let mut best: (i64, Option<usize>) = (0, None);
-    for (i, st) in stmts.iter().enumerate() {
-        let offset = effective_offset_ms(st, limit, limit_raw)?;
-        let end = row_end(st, offset, limit, limit_raw, tables)?;
-        if best.1.is_none() || end > best.0 {
-            best = (end, Some(i));
+    for (i, pl) in plans.iter().enumerate() {
+        if let Some(end) = pl.end {
+            if best.1.is_none() || end > best.0 {
+                best = (end, Some(i));
+            }
         }
     }
     Ok(best)
 }
 
-/// Конец одной строки: смещение + длина вызова или цепочки.
-/// Порядок проверок строки: invalid-repeat-count, затем until-out-of-bounds/cycle-overruns (горизонт, конец цепочки).
-fn row_end(
-    st: &Stmt,
-    offset: i64,
+/// План экземпляров списка строк: для каждой строки — старты (относительно
+/// базы родителя). Два прохода в порядке объявления:
+/// 1. обычные строки — валидация (`chain`) и занятые интервалы;
+/// 2. `fill gaps` — упаковка в свободные отрезки окна `[offset, until|limit)`,
+///    каждый filler видит занятость обычных строк и предыдущих filler-ов.
+pub fn plan_stmts(
+    stmts: &[Stmt],
     limit: i64,
     limit_raw: &str,
     tables: &NameTables<'_>,
-) -> Result<i64, Error> {
-    let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
-    Ok(saturating_add_mul(offset, count, step))
+) -> Result<Vec<Placement>, Error> {
+    let mut occupied: Vec<(i64, i64)> = Vec::new();
+    plan_stmts_with(stmts, limit, limit_raw, tables, &mut occupied)
+}
+
+/// Как [`plan_stmts`], но занятость может прийти извне и продолжиться:
+/// тело и пожары рутины делят один таймлайн (как в `check_tables`).
+pub(crate) fn plan_stmts_with(
+    stmts: &[Stmt],
+    limit: i64,
+    limit_raw: &str,
+    tables: &NameTables<'_>,
+    occupied: &mut Vec<(i64, i64)>,
+) -> Result<Vec<Placement>, Error> {
+    let mut plans: Vec<Placement> = Vec::with_capacity(stmts.len());
+    // (индекс строки, начало окна, горизонт, шаг filler-а) — второй проход.
+    let mut fillers: Vec<(usize, i64, i64, i64)> = Vec::new();
+    for (i, st) in stmts.iter().enumerate() {
+        let offset = effective_offset_ms(st, limit, limit_raw)?;
+        match &st.repeat {
+            Repeat::FillGaps { until } => {
+                let step = gaps_step_of(&st.invocation, tables)?;
+                let horizon = fill_horizon(until, limit, limit_raw)?;
+                if offset > horizon {
+                    let u = until.as_ref().expect("until объявлен: offset > horizon");
+                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                }
+                plans.push(Placement {
+                    starts: Vec::new(),
+                    end: None,
+                });
+                fillers.push((i, offset, horizon, step));
+            }
+            _ => {
+                let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
+                let starts: Vec<i64> = (0..count).map(|j| offset + j as i64 * step).collect();
+                let end = saturating_add_mul(offset, count, step);
+                if count > 0 && step > 0 {
+                    occupied.push((offset, end));
+                }
+                plans.push(Placement {
+                    starts,
+                    end: Some(end),
+                });
+            }
+        }
+    }
+    for (i, from, to, step) in fillers {
+        let mut starts = Vec::new();
+        for (a, b) in free_segments(occupied, from, to) {
+            let n = (b - a) / step;
+            for j in 0..n {
+                starts.push(a + j * step);
+            }
+            if n > 0 {
+                occupied.push((a, a + n * step));
+            }
+        }
+        let end = starts.last().map(|s| s + step);
+        plans[i] = Placement { starts, end };
+    }
+    Ok(plans)
+}
+
+/// Шаг filler-а `fill gaps`: цикл (или рутина) ненулевой длительности.
+fn gaps_step_of(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
+    let step = step_of(invocation, tables)?;
+    if step == 0 {
+        return Err(match invocation {
+            Invocation::CycleCall { name, .. } => Error::fill_zero_duration(name),
+            Invocation::PointAction { action, .. } => Error::repeat_point_action(action),
+        });
+    }
+    Ok(step)
+}
+
+/// Свободные отрезки `[from, to)` за вычетом занятого, слева направо.
+fn free_segments(occupied: &[(i64, i64)], from: i64, to: i64) -> Vec<(i64, i64)> {
+    let mut blockers: Vec<(i64, i64)> = occupied
+        .iter()
+        .copied()
+        .filter(|(a, b)| b > a)
+        .map(|(a, b)| (a.max(from), b.min(to)))
+        .filter(|(a, b)| b > a)
+        .collect();
+    blockers.sort_unstable();
+    let mut segs = Vec::new();
+    let mut cur = from;
+    for (a, b) in blockers {
+        if a > cur {
+            segs.push((cur, a));
+        }
+        cur = cur.max(b);
+    }
+    if cur < to {
+        segs.push((cur, to));
+    }
+    segs
+}
+
+/// Горизонт `fill`/`fill gaps`: конец родителя по умолчанию, иначе `until`
+/// (отрицательный — от конца). Вне `[0, limit]` — until-out-of-bounds.
+fn fill_horizon(until: &Option<Until>, limit: i64, limit_raw: &str) -> Result<i64, Error> {
+    match until {
+        None => Ok(limit),
+        Some(u) => {
+            let t = duration_ms(&u.duration)?;
+            let h = if u.negative {
+                if t > limit {
+                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                }
+                limit - t
+            } else {
+                t
+            };
+            if h > limit {
+                return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+            }
+            Ok(h)
+        }
+    }
 }
 
 /// Параметры цепочки строки: число экземпляров и шаг стыковки.
 /// `Once` — `(1, длина вызова)`; дальше всё считается одинаково.
-/// Та же функция кормит развёртку (`expand`).
-pub fn chain(
+fn chain(
     st: &Stmt,
     offset: i64,
     limit: i64,
@@ -681,24 +809,7 @@ pub fn chain(
                     Invocation::PointAction { action, .. } => Error::repeat_point_action(action),
                 });
             }
-            let horizon = match until {
-                None => limit,
-                Some(u) => {
-                    let t = duration_ms(&u.duration)?;
-                    let h = if u.negative {
-                        if t > limit {
-                            return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
-                        }
-                        limit - t
-                    } else {
-                        t
-                    };
-                    if h > limit {
-                        return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
-                    }
-                    h
-                }
-            };
+            let horizon = fill_horizon(until, limit, limit_raw)?;
             let n = if horizon - offset >= step {
                 ((horizon - offset) / step) as u64
             } else {
@@ -706,6 +817,7 @@ pub fn chain(
             };
             Ok((n, step))
         }
+        Repeat::FillGaps { .. } => unreachable!("fill gaps разбирается в plan_stmts"),
     }
 }
 
@@ -1597,6 +1709,65 @@ mod tests {
                 "until '-30h' out of bounds (duration 24h)"
             )
         );
+    }
+
+    #[test]
+    fn rejects_gaps_until_beyond_parent() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill gaps until 30h R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "until-out-of-bounds",
+                "until '30h' out of bounds (duration 24h)"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_gaps_offset_after_until() {
+        // Окно пустое: смещение 6h за горизонтом 2h — until-out-of-bounds.
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill gaps until 2h R(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "until-out-of-bounds",
+                "until '2h' out of bounds (duration 24h)"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_gaps_zero_duration_filler() {
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle EMPTY duration = 0m {} \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: fill gaps EMPTY(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("fill-zero-duration", "fill of zero-duration cycle 'EMPTY'")
+        );
+    }
+
+    #[test]
+    fn gaps_stretch_root_actual() {
+        // Фактическая длительность учитывает упакованный filler: конец 5h.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: R(); 0h: fill gaps until 5h R(); } }";
+        let (ast, t) = tables(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_bounds(ast, &t).expect("filler в границах");
+        assert_eq!(root_actual_ms(ast, &t), Ok(18_000_000));
     }
 
     #[test]

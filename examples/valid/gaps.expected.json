@@ -1,0 +1,23 @@
+{
+  "schedule": "Fill gaps",
+  "start": "2026-01-01T00:00:00",
+  "end": "2026-01-02T00:00:00",
+  "events": [
+    {"time": "2026-01-01T00:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T01:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T01:20:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T01:25:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T01:30:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T02:30:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T02:50:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T03:10:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T03:30:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T03:50:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T03:55:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T06:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T07:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T07:20:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T07:25:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T07:30:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {}}
+  ]
+}
