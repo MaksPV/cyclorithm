@@ -1,4 +1,4 @@
-//! Наивное время — §4 спеки («Время и арифметика»).
+//! Наивное время без таймзон (см. docs/reference/expressions.md).
 //!
 //! Внутри — `i64` миллисекунд от unix epoch. Строки без таймзоны трактуются
 //! 1:1, без сдвигов; таймзоны и DST не учитываются, сутки всегда 24h.
@@ -113,7 +113,7 @@ pub fn parse_cli_duration(s: &str) -> Option<i64> {
     i64::try_from(total).ok()
 }
 
-/// Миллисекунды epoch обратно в наивную ISO-строку (см. §6 вывода).
+/// Миллисекунды epoch обратно в наивную ISO-строку (см. docs/reference/output.md).
 /// `.mmm` — только при ненулевых миллисекундах.
 pub fn format_datetime(ms: i64) -> String {
     let days = ms.div_euclid(MS_PER_DAY);
@@ -130,7 +130,7 @@ pub fn format_datetime(ms: i64) -> String {
     }
 }
 
-/// Каноническая форма для сравнения дат как строк (§4.13): всегда 23 символа
+/// Каноническая форма для сравнения дат как строк (см. docs/reference/expressions.md): всегда 23 символа
 /// `YYYY-MM-DDTHH:MM:SS.mmm`. Вне годов `0000…9999` формы нет — `None`.
 pub fn format_datetime_full(ms: i64) -> Option<String> {
     let days = ms.div_euclid(MS_PER_DAY);
@@ -179,7 +179,7 @@ pub(crate) fn days_in_month(y: i64, m: i64) -> i64 {
     }
 }
 
-/// Ошибка сборки даты из компонентов (`mkdate`, §4.13 спеки).
+/// Ошибка сборки даты из компонентов (`mkdate`, см. docs/reference/expressions.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DateBuildErr {
     /// Кривые компоненты: месяц вне 1..12, день вне месяца (високосный

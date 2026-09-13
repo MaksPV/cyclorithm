@@ -135,7 +135,8 @@ impl Error {
         )
     }
 
-    /// `offset-out-of-bounds` для отрицательного смещения ниже нуля (§4 спеки):
+    /// `offset-out-of-bounds` для отрицательного смещения ниже нуля
+    /// (см. docs/reference/semantics.md):
     /// `offset '-2h' out of bounds (duration 1h20m)`.
     /// `offset_raw` — сырой текст со знаком (`'-2h'`), `duration_raw` — сырой
     /// текст объявленной длительности объемлющего цикла.
@@ -259,7 +260,7 @@ impl Error {
         )
     }
 
-    /// `maps-not-comparable`: сравнение мап/массивов (`==`/`!=` между ними — «пока», см. черновик).
+    /// `maps-not-comparable`: сравнение мап/массивов (`==`/`!=` между ними запрещены).
     pub fn maps_not_comparable() -> Self {
         Self::coded(
             "maps-not-comparable",

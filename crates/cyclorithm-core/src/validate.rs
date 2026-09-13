@@ -5,7 +5,7 @@
 //! меток таблиц), затем все вызовы в порядке объявления (циклы, рутины,
 //! `root_cycle`, пожары `->` таблиц). Первая ошибка побеждает.
 //!
-//! Правило общего пространства (§3): одно имя не может обозначать точку,
+//! Правило общего пространства имён (см. docs/reference/syntax.md): одно имя не может обозначать точку,
 //! рутину и цикл одновременно — нарушение wrong-kind. На вызове: точка как цикл —
 //! `point 'X' is not a cycle`, цикл как точка — `cycle 'X' is not a point`,
 //! рутина как точка — `routine 'X' is not a point`.
@@ -589,12 +589,12 @@ pub fn check_bounds(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
     Ok(())
 }
 
-/// Фактическая длительность именованного цикла (§2):
+/// Фактическая длительность именованного цикла:
 /// `max(o + длина вызова)` по строкам, где `o` — эффективное смещение
 /// (отрицательные уже разрешены через длительность цикла); длина — `0`
 /// для действия точки, объявленная длительность для вызова цикла;
 /// пустой цикл — `0`.
-/// Нужна решётке (§4) как горизонт занятости `S`.
+/// Нужна решётке (см. docs/reference/semantics.md) как горизонт занятости `S`.
 /// Рекурсии здесь нет: берутся только объявленные длительности.
 pub fn actual_ms(name: &str, tables: &NameTables<'_>) -> Result<i64, Error> {
     let cycle = tables.cycles.get(name).expect("имена уже проверены");
@@ -602,7 +602,8 @@ pub fn actual_ms(name: &str, tables: &NameTables<'_>) -> Result<i64, Error> {
     Ok(stmts_end(&cycle.stmts, limit, &cycle.duration.raw, tables)?.0)
 }
 
-/// Фактическая длительность `root_cycle` — горизонт занятости `S` (§4).
+/// Фактическая длительность `root_cycle` — горизонт занятости `S`
+/// (см. docs/reference/semantics.md).
 pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i64, Error> {
     let period = duration_ms(&schedule.root.duration)?;
     Ok(stmts_end(
@@ -1013,7 +1014,7 @@ mod tests {
 
     #[test]
     fn rejects_point_cycle_name_clash() {
-        // Общее пространство имён (§3): имя не может быть и точкой, и циклом.
+        // Общее пространство имён (см. docs/reference/syntax.md): имя не может быть и точкой, и циклом.
         let src = "schedule \"T\" { point R { actions = [x]; } \
             cycle R duration = 1h { 0m: R.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";

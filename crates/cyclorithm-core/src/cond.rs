@@ -1,4 +1,4 @@
-//! Условия строк (§3–§4 спеки и главы ошибок): объявления, подстановка, вычисление.
+//! Условия строк (семантика — docs/reference/semantics.md, слаги — глава ошибок): объявления, подстановка, вычисление.
 //!
 //! Определения (`const`/`fun`/`pred` + системный файл) раскрываются
 //! через окружение — для чистых выражений это та же подстановка.
@@ -32,7 +32,7 @@ enum Ty {
     Num,
     Str,
     /// Динамическое данное: параметр цикла или поле/индекс. Статика пропускает
-    /// любые операции, ошибки — в момент строки (type-mismatch). См. черновик `attrs.md`.
+    /// любые операции, ошибки — в момент строки (type-mismatch).
     Dyn,
     Map,
     Array,
@@ -508,8 +508,8 @@ impl CxTy<'_> {
                         match (lt, rt) {
                             // Динамика: статика пропускает, разберётся строка.
                             (Ty::Dyn, _) | (_, Ty::Dyn) => Ok(()),
-                            // Мапа/массив с мапой/массивом — «пока»
-                            // (глубокое сравнение — будущее решение).
+                            // Мапа/массив с мапой/массивом — глубокое сравнение
+                            // не поддерживается (maps-not-comparable).
                             (a, b) if collection(a) && collection(b) => {
                                 Err(Error::maps_not_comparable())
                             }
@@ -683,7 +683,7 @@ impl CxTy<'_> {
                 }
                 return Ok(Ty::Num);
             }
-            // Конструктор даты — встроенная функция (§4.13): ровно 7 чисел.
+            // Конструктор даты — встроенная функция (см. docs/reference/expressions.md): ровно 7 чисел.
             // Все-константа проверяется сразу (как константный ноль у деления),
             // иначе — в момент строки.
             if name == "mkdate" {
@@ -850,7 +850,7 @@ fn eval_attr_pairs(
         .collect()
 }
 
-/// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
+/// Голый `at` рядом со строковым литералом (см. docs/reference/expressions.md): проверить литерал.
 /// Остальное смешение — ложь, вызыватель даст `type-mismatch`.
 /// Date-сравнение: одна сторона — голый `at`, другая — строковый литерал.
 /// Возвращает `(at_слева, литерал)`. Единственное место, знающее правило;
@@ -1158,7 +1158,7 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
             CmpOp::Gt => a > b,
             CmpOp::Ge => a >= b,
         }),
-        // Мапы/массивы не сравниваются («пока», см. черновик) — даже между собой.
+        // Мапы/массивы не сравниваются даже между собой (maps-not-comparable).
         (Value::Map(_) | Value::Array(_), _) | (_, Value::Map(_) | Value::Array(_)) => {
             Err(Error::maps_not_comparable())
         }
@@ -1274,7 +1274,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             v.map(Value::Num)
                 .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
         }
-        // Битовые (§4.13): two's complement с wrap'ом, ошибок нет по построению.
+        // Битовые (см. docs/reference/expressions.md): two's complement с wrap'ом, ошибок нет по построению.
         // `>>` — логический (добивка нулями), величина сдвига — по модулю 64.
         Expr::Bit { op, left, right } => {
             let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
@@ -1377,7 +1377,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
     }
 }
 
-/// Собрать дату из 7 чисел (§4.13): кривые компоненты — `invalid date`,
+/// Собрать дату из 7 чисел (см. docs/reference/expressions.md): кривые компоненты — `invalid date`,
 /// переполнение сборки — `integer out of range`. Сырь — числа как даны.
 fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
     let [y, mo, d, h, mi, s, ms] = v else {
@@ -2079,7 +2079,7 @@ mod tests {
 
     #[test]
     fn prelude_matches_control_points() {
-        // at = 0 — четверг 1970-01-01 (контрольная точка черновика).
+        // at = 0 — четверг 1970-01-01 (контрольная дата прелюдии).
         assert!(eval_with("", "dow(at) == 3", 0).unwrap());
         assert!(eval_with(
             "",
@@ -2219,7 +2219,7 @@ mod tests {
 
     #[test]
     fn map_comparison_is_e12() {
-        // Мапа с мапой — maps-not-comparable «пока» (глубокое сравнение — будущее).
+        // Мапа с мапой — maps-not-comparable (глубокое сравнение не поддерживается).
         let e = static_err("{\"a\": 1} == {\"a\": 1}");
         assert_eq!(
             (e.code, e.message.as_str()),
