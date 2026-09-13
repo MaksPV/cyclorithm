@@ -127,6 +127,24 @@ fn rand_matches_expected_json() {
 }
 
 #[test]
+fn reverse_matches_expected_json() {
+    // Зеркало FWD (0/20/50 при 1h) едет как 60/40/10: параметры и условие — с ним.
+    let out = run(&[
+        "run",
+        "../../examples/valid/reverse.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/reverse.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn mkdate_matches_expected_json() {
     let out = run(&[
         "run",
@@ -331,6 +349,11 @@ fn validation_errors_go_to_stderr() {
         ),
         (
             "bad_unknown-cycle",
+            "unknown-cycle",
+            "unknown cycle 'NIGHT_ROUTE'",
+        ),
+        (
+            "bad_reverse-unknown",
             "unknown-cycle",
             "unknown cycle 'NIGHT_ROUTE'",
         ),

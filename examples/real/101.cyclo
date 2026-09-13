@@ -1,26 +1,19 @@
 schedule "101 Кулички - Тамбов" {
-  point KULICHKI {actions = [depart, arrive];}
-  point TAMBOV {actions = [depart, arrive];}
-  point TATANOVO {actions = [depart, arrive];}
-  point DONSKOYE {actions = [depart, arrive];}
+  point KULICHKI {actions = [stop];}
+  point TAMBOV {actions = [stop];}
+  point TATANOVO {actions = [stop];}
+  point DONSKOYE {actions = [stop];}
 
   cycle TAMBOV_KULICHKI
-    duration = 1h
+    duration = 50m
   {
-    0m: TAMBOV.depart();
-    10m: DONSKOYE.arrive();
-    30m: TATANOVO.arrive();
-    50m: KULICHKI.arrive();
+    0m: TAMBOV.stop();
+    10m: DONSKOYE.stop();
+    30m: TATANOVO.stop();
+    50m: KULICHKI.stop();
   }
 
-  cycle KULICHKI_TAMBOV
-    duration = 1h
-  {
-    0m: KULICHKI.depart();
-    20m: TATANOVO.arrive();
-    30m: DONSKOYE.arrive();
-    50m: TAMBOV.arrive();
-  }
+  cycle KULICHKI_TAMBOV reverse TAMBOV_KULICHKI;
 
 
   root_cycle
