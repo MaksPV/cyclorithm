@@ -23,7 +23,7 @@ decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
 const_decl  = { kw_const ~ IDENT ~ "=" ~ decl_value ~ ";" }
 fun_decl    = { kw_fun ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { kw_pred ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
-// Таблица слотов (§3): именованные смещения для routine; `->` — слот
+// Таблица слотов: именованные смещения для routine; `->` — слот
 // и собственный вызов в одном лице (пожар при каждом инстанцировании).
 time_const_decl = { kw_time_const ~ IDENT ~ kw_duration ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
 slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
@@ -39,7 +39,7 @@ label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 decl_value  = { concat | bitor }
 point       = { kw_point ~ IDENT ~ "{" ~ kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
-// Атрибуты точки (§3 спеки): только литерал или ссылка на константу-мапу,
+// Атрибуты точки: только литерал или ссылка на константу-мапу,
 // строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
 point_attrs = { kw_attrs ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
@@ -48,11 +48,11 @@ attrs_src   = { map_lit | IDENT }
 // синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
 // Неоднозначность разрешается в пользу имени — осознанно.
 cycle       = { kw_cycle ~ IDENT ~ cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-// Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (duplicate).
+// Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
 root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-// Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
+// Шаблон дня: первый параметр — таблица (`time_const`), остальные —
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
 routine     = { kw_routine ~ IDENT ~ cycle_params? ~ "{" ~ routine_stmt* ~ "}" }
@@ -63,7 +63,7 @@ routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
 // Минус — только у длительности (`-10m` от конца таблицы; `-1st` нет).
 routine_offset = { neg_sign? ~ duration ~ !word_tail | label }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
-// Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
+// Условия. `concat` раньше `bitor`: иначе `bitor` съедает
 // строковый префикс. Смешение типов разбирается, бракуется валидацией (type-mismatch).
 condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
@@ -147,7 +147,7 @@ concat      = { concat_term ~ ("++" ~ concat_term)+ }
 // Скобка раньше `postfix`: иначе `("a" ++ "b")` съедается `postfix` через
 // `truth` и правый операнд `"x" ++ ("a" ++ "b")` строится как `Truth`, а не `Concat`.
 concat_term = { "(" ~ concat ~ ")" | postfix }
-// Постфикс (§3): доступ к полю мапы (`.name`, цепочки) и индекс массива
+// Постфикс: доступ к полю мапы (`.name`, цепочки) и индекс массива
 // (`[0]`). `BELL.ring()` остаётся вызовом: различие по скобке —
 // `IDENT.IDENT(` разбирает `point_action` на уровне строк, а не выражение.
 // Индекс — выражение уровня `cond_arg` (имена, `at`, арифметика, вызовы);
@@ -216,7 +216,7 @@ kw_gaps     = @{ "gaps" ~ !word_tail }
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
 invocation  = { point_action | cycle_call }
-// Вызов точки (§3): блок атрибутов — тот же JSON-словарь `map_lit`, либо
+// Вызов точки: блок атрибутов — тот же JSON-словарь `map_lit`, либо
 // ссылка на константу-мапу (`BELL.ring() CORPUS;`). У цикла после `)` блока нет.
 point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | IDENT)? }
 cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
