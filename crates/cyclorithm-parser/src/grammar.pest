@@ -154,11 +154,14 @@ fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
 invocation  = { point_action | cycle_call }
-// Блок действий (§3): только у вызова точки; у цикла после `)` блока нет
-// (иначе синтаксис). Ключи — IDENT, значения — выражения уровня условий.
-point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ action_block? }
+// Блок атрибутов действия (§3): только у вызова точки; у цикла после `)`
+// блока нет (иначе синтаксис). JSON-стиль: ключи — строки в кавычках,
+// значения — выражения уровня условий. Вместо литерала можно сослаться
+// на константу-мапу (`BELL.ring() CORPUS;`) — динамика (`subj.…`) доступна
+// только в литерале.
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (action_block | IDENT)? }
 action_block = { "{" ~ (block_pair ~ ("," ~ block_pair)*)? ~ "}" }
-block_pair   = { IDENT ~ "=" ~ cond_arg }
+block_pair   = { map_key ~ ":" ~ cond_arg }
 cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 duration     = { duration_item+ }
 // Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),
