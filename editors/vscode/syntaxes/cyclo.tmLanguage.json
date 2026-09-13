@@ -1,0 +1,72 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "cyclo",
+  "scopeName": "source.cyclo",
+  "fileTypes": ["cyclo"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#declarationKeyword" },
+    { "include": "#modifierKeyword" },
+    { "include": "#boolean" },
+    { "include": "#slotLabel" },
+    { "include": "#duration" },
+    { "include": "#number" },
+    { "include": "#call" },
+    { "include": "#upperName" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.double-slash.cyclo",
+      "match": "//.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.cyclo",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.cyclo",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "declarationKeyword": {
+      "name": "keyword.declaration.cyclo",
+      "match": "\\b(schedule|use|const|fun|pred|time_const|point|actions|attrs|cycle|routine|root_cycle|start_time|duration|reverse)\\b"
+    },
+    "modifierKeyword": {
+      "name": "keyword.control.cyclo",
+      "match": "\\b(repeat|fill|until|gaps|and|or|not|floordiv|floormod)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.cyclo",
+      "match": "\\b(true|false)\\b"
+    },
+    "slotLabel": {
+      "name": "entity.name.label.cyclo",
+      "match": "\\b\\d+(st|nd|rd|th)\\b"
+    },
+    "duration": {
+      "name": "constant.numeric.duration.cyclo",
+      "match": "-?\\d+(\\.\\d+)?(ms|[smhdw])"
+    },
+    "number": {
+      "name": "constant.numeric.cyclo",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "call": {
+      "name": "entity.name.function.cyclo",
+      "match": "(\\.)?\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "upperName": {
+      "name": "entity.name.type.cyclo",
+      "match": "\\b[A-Z_][A-Z0-9_]*\\b"
+    },
+    "operator": {
+      "name": "keyword.operator.cyclo",
+      "match": "==|!=|<=|>=|<<|>>|[-+*/%<>|&^!=]"
+    }
+  }
+}

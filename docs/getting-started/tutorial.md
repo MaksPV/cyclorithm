@@ -7,7 +7,7 @@
 
 Точка — место, где происходят действия:
 
-```text
+```cyclo
 point DEPOT {
   actions = [depart, arrive];
 }
@@ -17,7 +17,7 @@ point DEPOT {
 
 Цикл — именованная цепочка строк со смещениями от старта:
 
-```text
+```cyclo
 cycle CITY_ROUTE duration = 1h20m {
   0m: DEPOT.depart();
   40m: DEPOT.arrive();
@@ -29,7 +29,7 @@ cycle CITY_ROUTE duration = 1h20m {
 Корневой цикл задаёт, когда запускать циклы. Период — `24h`,
 опорная точка — `start_time`:
 
-```text
+```cyclo
 schedule "Мой парк" {
   point DEPOT {
     actions = [depart, arrive];

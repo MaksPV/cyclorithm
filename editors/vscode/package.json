@@ -1,0 +1,27 @@
+{
+  "name": "cyclo",
+  "displayName": "Cyclo",
+  "description": "Подсветка DSL Cyclorithm (.cyclo)",
+  "version": "0.1.0",
+  "publisher": "MaksPV",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.0.0"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "cyclo",
+        "aliases": ["cyclo", "Cyclorithm"],
+        "extensions": [".cyclo"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cyclo",
+        "scopeName": "source.cyclo",
+        "path": "./syntaxes/cyclo.tmLanguage.json"
+      }
+    ]
+  }
+}

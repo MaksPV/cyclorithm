@@ -9,7 +9,7 @@
 Место, где происходят действия: парк, аэропорт, звонок. Самый простой
 вариант — только список допустимых действий `actions`:
 
-```text
+```cyclo
 point DEPOT {
   actions = [depart, arrive];
 }
@@ -20,7 +20,7 @@ point DEPOT {
 Дополнительно точка может нести атрибуты `attrs` — словарь, который
 копируется в каждое событие точки:
 
-```text
+```cyclo
 point BELL {
   actions = [ring];
   attrs = {"building": "Л"};
@@ -43,14 +43,14 @@ point BELL {
 То, что происходит в точке. В выводе — поле `action` события.
 Вызывается как `<ТОЧКА>.<действие>()`:
 
-```text
+```cyclo
 0m: BELL.ring();
 ```
 
 Вызов может нести атрибуты `{"k": v, …}` — они попадают в событие полем
 `action_attrs`:
 
-```text
+```cyclo
 5m: BELL.ring() {"event": "start"};
 ```
 
@@ -83,7 +83,7 @@ point BELL {
 То, что стоит справа от двоеточия в строке. Два вида: действие точки даёт
 событие, вызов цикла или рутины раскрывается в строки. Все возможные формы:
 
-```text
+```cyclo
 0m: DEPOT.depart();  // действие точки — даёт событие
 5m: DEPOT.depart() {"fuel_used": 25};  // действие с атрибутами
 6h: CITY_ROUTE();  // цикл без аргументов
@@ -99,14 +99,14 @@ point BELL {
 к мелким: недели `w`, сутки `d`, часы `h`, минуты `m`, секунды `s`,
 миллисекунды `ms`. Каждый компонент не более раза:
 
-```text
+```cyclo
 cycle CITY_ROUTE duration = 1h20m {
 ```
 
 Смещение — когда внутри цикла срабатывает строка: старт объемлющего цикла
 плюс смещение. Отрицательное считается от конца, `-0m` — ровно конец:
 
-```text
+```cyclo
 0m: DEPOT.depart();  // старт цикла
 40m: AIRPORT.arrive();  // через 40 минут
 -0m: DEPOT.arrive();  // встык к концу
@@ -120,7 +120,7 @@ cycle CITY_ROUTE duration = 1h20m {
 влезать в длительность: конец самой поздней строки не дальше `duration`,
 иначе ошибка `cycle-overruns`.
 
-```text
+```cyclo
 cycle CITY_ROUTE duration = 1h20m {
   0m: DEPOT.depart();
   40m: AIRPORT.arrive();
@@ -129,7 +129,7 @@ cycle CITY_ROUTE duration = 1h20m {
 
 Параметры принимают данные вызова и видны в теле цикла:
 
-```text
+```cyclo
 cycle LESSON(subj) duration = 1h35m {
   0m: BELL.ring() {"subject": subj.subject};
 }
@@ -140,13 +140,13 @@ cycle LESSON(subj) duration = 1h35m {
 В языке реализованы условия. Если оно выполняется, то вызовы выполняются. 
 Простейшее — один предикат:
 
-```text
+```cyclo
 [weekend(at)] 12h: CITY_ROUTE(); // выполняется только по выходным
 ```
 
 Условия могут комбинируются.
 
-```text
+```cyclo
 [hour(at) >= 7 and not weekend(at)] 10h: SHUTTLE();
 ```
 
@@ -158,7 +158,7 @@ cycle LESSON(subj) duration = 1h35m {
 Одна строка запускает цикл несколько раз подряд. Сколько раз — задаёт
 модификатор между `:` и вызовом:
 
-```text
+```cyclo
 10h: repeat 2 SHUTTLE();  // ровно два запуска
 14h: fill until 15h SHUTTLE();  // пока помещается до 15h
 19h: fill SHUTTLE();  // пока помещается до конца цикла
@@ -173,7 +173,7 @@ cycle LESSON(subj) duration = 1h35m {
 20 минут, запуски стартуют в 10:30, 10:50 и 11:10 — третий не подходит
 под условие и выпадает, первые два стоят на местах:
 
-```text
+```cyclo
 [hour(at) < 11] 10h30m: repeat 3 SHUTTLE();
 ```
 
@@ -190,7 +190,7 @@ cycle LESSON(subj) duration = 1h35m {
 Окно — `[смещение, until|duration)`; без `until` добивается всё до конца
 цикла. Заполненное видит следующий `fill gaps` (порядок объявления):
 
-```text
+```cyclo
 cycle DAY duration = 4h {
   0h: LESSON();              // 0:00-1:00
   1h30m: LESSON();           // 1:30-2:30, дыра 30m
@@ -208,7 +208,7 @@ cycle DAY duration = 4h {
 Именованные кирпичики файла. `const` — значение: число, строка или
 словарь/массив. Строки и словари живут здесь:
 
-```text
+```cyclo
 const MORNING = 6;
 const ROOM = "233/А";
 const LEC = {"subject": "БЖД", "room": ROOM};
@@ -220,12 +220,12 @@ const LEC = {"subject": "БЖД", "room": ROOM};
 `fun` — число от аргумента, `pred` — условие от момента времени. Оба
 вызываются там, где нужно вычисление вместо литерала:
 
-```text
+```cyclo
 fun rush_top(x) = x + 1;
 pred commute(at) = morning(at) or evening(at);
 ```
 
-```text
+```cyclo
 [hour(at) >= rush_top(MORNING)] 10h: SHUTTLE();
 [commute(at)] 18h: SHUTTLE();
 ```
@@ -237,7 +237,7 @@ pred commute(at) = morning(at) or evening(at);
 
 Чужие объявления подключаются первой строкой файла:
 
-```text
+```cyclo
 use "libs/route_lib.cyclo";
 ```
 
@@ -250,7 +250,7 @@ use "libs/route_lib.cyclo";
 пришлось бы писать в каждом дне; с таблицей слоты объявляются один раз,
 а дни ссылаются метками:
 
-```text
+```cyclo
 time_const UNIVERSITY_DAY duration = 21h35m {
   1st: 9h;
   2nd: 10h45m;
@@ -267,7 +267,7 @@ time_const UNIVERSITY_DAY duration = 21h35m {
 дня, объявленное один раз на таблицу, а не на каждый день. Такая строка
 выполняется при каждом применении таблицы, может иметь собственное условие:
 
-```text
+```cyclo
 time_const UNIVERSITY_DAY duration = 21h35m {
   [workday(at)] lunch: 12h20m -> LUNCH();
 }
@@ -276,7 +276,7 @@ time_const UNIVERSITY_DAY duration = 21h35m {
 Цикл на метках — рутина, шаблон дня. Тело записывает метки вместо смещений,
 первый параметр — всегда таблица времени, остальные — данные, как у цикла:
 
-```text
+```cyclo
 routine MONDAY(TC) {
   1st: LESSON(LEC);
 }
@@ -290,7 +290,7 @@ routine MONDAY(TC) {
 другая таблица. Одна строка вместо переписанного дня, пары едут по новой
 сетке — 9:00 и 10:30:
 
-```text
+```cyclo
 time_const SHORT_DAY duration = 14h35m {
   1st: 9h;
   2nd: 10h30m;
@@ -304,7 +304,7 @@ time_const SHORT_DAY duration = 14h35m {
 период решётки. Команда `run` берёт окно `--start/--end` и накладывает
 на эту решётку.
 
-```text
+```cyclo
 root_cycle start_time = "2026-01-09T00:00:00", duration = 24h {
   6h: CITY_ROUTE();
 }
@@ -315,7 +315,7 @@ root_cycle start_time = "2026-01-09T00:00:00", duration = 24h {
 Корень файла. Связывает точки, шаблоны и корневой цикл в одно целое.
 Имя попадает в поле `schedule` вывода. Запись: `schedule "Имя" { … }`.
 
-```text
+```cyclo
 schedule "Автобусный парк" {
   point DEPOT {
     actions = [depart, arrive];
