@@ -59,10 +59,16 @@ condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
 or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
 and_expr    = { not_expr ~ (kw_and ~ not_expr)* }
-not_expr    = { kw_not? ~ (bool_group | comparison | call) }
+not_expr    = { kw_not? ~ (comparison | bool_group | call | truthy) }
 // Скобочная группа — прозрачный атом уровня условий (как в C/Python):
 // приоритет задаёт пользователь, узла в AST нет (сборка вернёт внутреннее).
+// `comparison` раньше группы: `(a==1)==1` читается как сравнение с
+// `truth`-операндом, а не как группа с мусором после скобки.
 bool_group  = { "(" ~ or_expr ~ ")" }
+// Скобка с условием как значение (`(a==1)==1`): строится в `Truth`.
+// В `not_expr` идёт последней — после `call`, иначе вызовы предикатов
+// уехали бы в выражения вместо условий.
+truthy      = { cond_value }
 // `notx == 1` не должно читаться как `not (x == 1)`.
 // Атомарные: пробел между словом и границей запрещён, иначе lookahead
 // смотрел бы символ после пробелов, а не сразу за словом.
@@ -73,9 +79,20 @@ word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
 cmp_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
-cmp_side    = { concat | bitor }
-cmp_right   = { concat | bitor | alternation }
-alternation = { "(" ~ bitor ~ (kw_or ~ bitor)+ ~ ")" }
+// Общее значение-операнд (склейка или битовое): один раз здесь,
+// переиспользуется в `truthy`, чтобы не разъезжаться.
+cond_value  = { concat | bitor }
+// Операнды сравнения — та же арифметика, что везде: `(1 << 63) + ...`
+// обязана разбираться как число, а не как условие. Скобочное условие
+// (`(a==1)`) доходит до `truth` через `postfix_base` само; отдельный
+// `truth` здесь не нужен. Справа `alternation` раньше всего: `(1 or 2)` —
+// числовая альтернация, а не условие (иначе сломается `at == (1 or 2)`).
+// Слева альтернации нет (только справа).
+cmp_side    = { cond_value }
+cmp_right   = { alternation | cond_value }
+alternation = { "(" ~ cond_value ~ (kw_or ~ cond_value)+ ~ ")" }
+// Ветки — те же значения, что в операндах (включая склейку):
+// `("a" ++ "b" or "c")` валидно, как снаружи.
 // Битовые уровни (слабее сложения, сильнее сравнения; внутри — как в Python:
 // `|` слабее `^`, `^` слабее `&`, сдвиги сильнее всех трёх).
 bitor       = { bitxor ~ ("|" ~ bitxor)* }
@@ -87,7 +104,9 @@ arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
 mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { neg_sign? ~ (postfix | "(" ~ bitor ~ ")") }
+factor      = { neg_sign? ~ postfix }
+// Скобка только в `postfix_base`: дубль `"(" ~ bitor ~ ")"` здесь был бы
+// мёртвым (всё, что берёт он, берёт и `postfix`, а `postfix` пробуется раньше).
 // Мостик булева в арифметику (как в C: истина — 1, ложь — 0):
 // внутри скобок полное условие, а не одно сравнение.
 truth       = { "(" ~ or_expr ~ ")" }
@@ -101,8 +120,10 @@ concat_term = { postfix | "(" ~ concat ~ ")" }
 postfix     = { postfix_base ~ postfix_suffix* }
 // Порядок как у операндов: `call` раньше `bool_lit`, иначе `true(x)`
 // режется на литерал + мусор; `bool_lit` раньше `IDENT`, иначе `true`
-// читается именем. `truth` раньше скобок — как было в `factor`.
-postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | truth | "(" ~ bitor ~ ")" }
+// читается именем. Арифметическая скобка раньше `truth`: `(2+3)` — число 5,
+// а не истина от `5`; условие в скобках (`(at>=K)`) не разбирается как
+// `bitor` и падает в `truth` как раньше.
+postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
 postfix_suffix = { field_access | index_access }
 field_access = { "." ~ IDENT }
 // Атомарное: пробелы внутри скобок запрещены (`m[0]` ок, `m[ 0]` — ошибка),

@@ -262,6 +262,7 @@ fn validation_errors_go_to_stderr() {
             "unknown cycle 'NIGHT_ROUTE'",
         ),
         ("bad_duplicate", "duplicate", "duplicate point 'DEPOT'"),
+        ("bad_reserved-name", "reserved-name", "reserved name 'at'"),
         (
             "bad_invalid-duration",
             "invalid-duration",

@@ -64,6 +64,12 @@ impl Error {
         Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
+    /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
+    /// ничего нельзя, иначе момент молча затенит объявление.
+    pub fn reserved_name(name: &str) -> Self {
+        Self::coded("reserved-name", format!("reserved name '{name}'"))
+    }
+
     /// `wrong-kind`: `point 'DEPOT' is not a cycle` (точку вызвали как цикл).
     pub fn point_not_cycle(name: &str) -> Self {
         Self::coded("wrong-kind", format!("point '{name}' is not a cycle"))
@@ -258,6 +264,12 @@ impl Error {
             "maps-not-comparable",
             "cannot compare maps or arrays".to_owned(),
         )
+    }
+
+    /// `broken-prelude`: встроенная прелюдия не разобралась (битый `std.cyclo`
+    /// в сборке — вместо паники аккуратная ошибка).
+    pub fn broken_prelude(details: &str) -> Self {
+        Self::coded("broken-prelude", format!("broken prelude '{details}'"))
     }
 
     /// `cannot-read-import`: импорт не читается.

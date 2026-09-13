@@ -461,15 +461,28 @@ fn build_or(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::or_expr);
     let mut inner = pair.into_inner();
     let mut acc = build_and(inner.next().expect("or_expr: левый операнд"));
-    while inner.next().is_some() {
-        let rhs = build_and(inner.next().expect("or_expr: правый операнд"));
-        acc = match acc {
-            Cond::Or(mut all) => {
-                all.push(rhs);
+    // Прозрачная группа даёт вложенный Or — вжимаем (один уровень логики —
+    // один узел, `a or (b or c)` ≡ `a or b or c`).
+    let push = |acc: Cond, rhs: Cond| match acc {
+        Cond::Or(mut all) => {
+            match rhs {
+                Cond::Or(more) => all.extend(more),
+                r => all.push(r),
+            }
+            Cond::Or(all)
+        }
+        other => match rhs {
+            Cond::Or(mut more) => {
+                let mut all = vec![other];
+                all.append(&mut more);
                 Cond::Or(all)
             }
-            other => Cond::Or(vec![other, rhs]),
-        };
+            r => Cond::Or(vec![other, r]),
+        },
+    };
+    while inner.next().is_some() {
+        let rhs = build_and(inner.next().expect("or_expr: правый операнд"));
+        acc = push(acc, rhs);
     }
     acc
 }
@@ -490,6 +503,14 @@ fn build_not(pair: Pair<Rule>) -> Cond {
             let (name, args) = build_call_parts(atom);
             Cond::Pred { name, args }
         }
+        Rule::truthy => Cond::Truthy(Box::new(build_operand(
+            atom.into_inner()
+                .next()
+                .expect("truthy: cond_value")
+                .into_inner()
+                .next()
+                .expect("cond_value: содержимое"),
+        ))),
         r => unreachable!("not_expr: неожиданный операнд {r:?}"),
     };
     if negated {
@@ -503,15 +524,27 @@ fn build_and(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::and_expr);
     let mut inner = pair.into_inner();
     let mut acc = build_not(inner.next().expect("and_expr: левый операнд"));
-    while inner.next().is_some() {
-        let rhs = build_not(inner.next().expect("and_expr: правый операнд"));
-        acc = match acc {
-            Cond::And(mut all) => {
-                all.push(rhs);
+    // Как в `build_or`: вложенный And вжимается в плоский вектор.
+    let push = |acc: Cond, rhs: Cond| match acc {
+        Cond::And(mut all) => {
+            match rhs {
+                Cond::And(more) => all.extend(more),
+                r => all.push(r),
+            }
+            Cond::And(all)
+        }
+        other => match rhs {
+            Cond::And(mut more) => {
+                let mut all = vec![other];
+                all.append(&mut more);
                 Cond::And(all)
             }
-            other => Cond::And(vec![other, rhs]),
-        };
+            r => Cond::And(vec![other, r]),
+        },
+    };
+    while inner.next().is_some() {
+        let rhs = build_not(inner.next().expect("and_expr: правый операнд"));
+        acc = push(acc, rhs);
     }
     acc
 }
@@ -544,9 +577,11 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
         .expect("cmp_right: содержимое");
     let right = if right.as_rule() == Rule::alternation {
         let mut alts = right.into_inner();
-        let mut values = vec![build_bitor(alts.next().expect("alternation: ветка"))];
+        let branch =
+            |p: Pair<Rule>| build_operand(p.into_inner().next().expect("alternation: cond_value"));
+        let mut values = vec![branch(alts.next().expect("alternation: ветка"))];
         while alts.next().is_some() {
-            values.push(build_bitor(alts.next().expect("alternation: ветка")));
+            values.push(branch(alts.next().expect("alternation: ветка")));
         }
         CondRhs::Alt(values)
     } else {
@@ -555,12 +590,19 @@ fn build_comparison(pair: Pair<Rule>) -> Cond {
     Cond::Cmp { op, left, right }
 }
 
-/// Операнд сравнения: склейка или битовое выражение. Обёртки (`cmp_side`,
-/// `cmp_right`, `cond_arg`) снимает вызывающий.
+/// Операнд сравнения: склейка, битовое выражение или скобочное условие
+/// как значение 1/0. Обёртки (`cmp_side`, `cmp_right`, `cond_value`,
+/// `cond_arg`) снимает вызывающий.
 fn build_operand(pair: Pair<Rule>) -> Expr {
     match pair.as_rule() {
+        Rule::cond_value => {
+            build_operand(pair.into_inner().next().expect("cond_value: содержимое"))
+        }
         Rule::concat => Expr::Concat(pair.into_inner().map(build_concat_term).collect()),
         Rule::bitor => build_bitor(pair),
+        Rule::truth => Expr::Truth(Box::new(build_or(
+            pair.into_inner().next().expect("truth: or_expr"),
+        ))),
         r => unreachable!("операнд: неожиданное правило {r:?}"),
     }
 }
@@ -693,7 +735,6 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     };
     let expr = match value.as_rule() {
         Rule::postfix => build_postfix(value),
-        Rule::bitor => build_bitor(value),
         r => unreachable!("factor: неожиданное правило {r:?}"),
     };
     if negated {
@@ -1041,7 +1082,12 @@ pub struct Stmt {
     pub invocation: Invocation,
 }
 
-/// Условие строки: логика над сравнениями.
+/// Условие строки: логика над сравнениями и C-выражения (ненулевое — истина).
+///
+/// Зеркальные пары с выражениями (один синтаксис — два узла, различает позиция):
+/// `Pred` (условие) ↔ `Call` (значение), `Truthy(Expr)` (значение как условие)
+/// ↔ `Truth(Cond)` (условие как значение 1/0). Порядок в `not_expr` решает:
+/// вызов без продолжения — `Pred`, иначе — `Call` внутри `Truthy`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cond {
     Or(Vec<Cond>),
@@ -1056,6 +1102,9 @@ pub enum Cond {
         left: Expr,
         right: CondRhs,
     },
+    /// Выражение как условие (C-стиль): число, арифметика, `true`/`false`.
+    /// Строки/словари/массивы здесь запрещает ядро (`type-mismatch`).
+    Truthy(Box<Expr>),
 }
 
 /// Правая часть сравнения: одиночное значение или альтернация `(a or b)`.
@@ -1068,6 +1117,9 @@ pub enum CondRhs {
 /// Выражение условия: числа — сырым текстом, `at` — время строки.
 /// `Bool`/`Map`/`Array` — JSON-значения (черновик `attrs.md`): литералы
 /// и доступ `.поле` / `[n]`; вычисляются в момент строки.
+/// `Bool` в сравнениях запрещён (`type-mismatch`): живёт только ради
+/// `Truthy(true/false)` и литералов в мапах. `Truth` — обратный мостик
+/// к `Truthy`: условие как число 1/0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Num(String),
@@ -1332,6 +1384,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_bool_group_flattens_same_op() {
+        // Прозрачная группа не плодит вложенность: один уровень — один узел.
+        let cond_of = |row: &str| {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                cycle R duration = 1h {{ 0m: A.x(); }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} 0m: A.x(); }} }}"
+            );
+            parse(&src)
+                .expect("условие обязано разбираться")
+                .schedule
+                .root
+                .stmts
+                .into_iter()
+                .next()
+                .expect("строка есть")
+                .condition
+                .expect("условие есть")
+        };
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond_of("[(at == 1 or at == 2) or at == 3]"),
+            Cond::Or(vec![cmp("1"), cmp("2"), cmp("3")])
+        );
+        assert_eq!(
+            cond_of("[(at == 1 and at == 2) and at == 3]"),
+            Cond::And(vec![cmp("1"), cmp("2"), cmp("3")])
+        );
+    }
+
+    #[test]
     fn parse_bool_group_overrides_precedence() {
         // `(a or b) and c`: группа связывает or раньше and.
         let src = "schedule \"T\" { point A { actions = [x]; } \
@@ -1405,6 +1492,30 @@ mod tests {
                 right: CondRhs::Alt(vec![Expr::Num("1".to_owned()), Expr::Num("2".to_owned())]),
             }
         );
+    }
+
+    #[test]
+    fn parses_concat_branch_in_alternation() {
+        // Ветки альтернации — те же значения, что в операндах: склейка валидна.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [datestr(at) == (\"2026-11\" ++ \"-04\" or \"2026-12-31\")] 0m: A.x(); } }";
+        let cond = parse(src)
+            .expect("склейка в ветке обязана разбираться")
+            .schedule
+            .root
+            .stmts
+            .into_iter()
+            .next()
+            .expect("строка есть")
+            .condition
+            .expect("условие есть");
+        match cond {
+            Cond::Cmp {
+                right: CondRhs::Alt(alts),
+                ..
+            } => assert_eq!(alts.len(), 2),
+            c => panic!("ожидалась альтернация, получено {c:?}"),
+        }
     }
 
     #[test]
@@ -1689,7 +1800,7 @@ mod tests {
 
     #[test]
     fn parse_accepts_validation_fixtures() {
-        // Граница парсер/ядро: файлы bad_unknown-point–e09 и bad_duplicate-attribute синтаксически корректны,
+        // Граница парсер/ядро: негативные файлы синтаксически корректны,
         // их ошибки — валидация (слаги главы ошибок), а не синтаксис.
         for src in [
             include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
@@ -1711,6 +1822,7 @@ mod tests {
             include_str!("../../../examples/invalid/bad_type-mismatch.cyclo"),
             include_str!("../../../examples/invalid/bad_division-by-zero.cyclo"),
             include_str!("../../../examples/invalid/bad_duplicate-attribute.cyclo"),
+            include_str!("../../../examples/invalid/bad_reserved-name.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
@@ -2053,19 +2165,75 @@ mod tests {
 
     #[test]
     fn rejects_bad_conditions() {
-        // Голое число, цепочка сравнений, `and` в альтернации — синтаксис.
-        for row in [
-            "[5] 6h: R();",
-            "[at < 1 < 2] 6h: R();",
-            "[at == (1 and 2)] 6h: R();",
-        ] {
+        // Цепочка сравнений — синтаксис (сравнения не левоассоциативны).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [at < 1 < 2] 6h: R(); } }";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn parses_truthy_conditions() {
+        // C-стиль: голое число/арифметика/`true` — Truthy; скобочное условие
+        // как операнд — Truth; `and` в скобках справа — условие, не альтернация.
+        let cond_of = |row: &str| {
             let src = format!(
                 "schedule \"T\" {{ point A {{ actions = [x]; }} \
                 cycle R duration = 1h {{ 0m: A.x(); }} \
-                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} }} }}"
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ {row} 6h: R(); }} }}"
             );
-            assert!(parse(&src).is_err(), "для {row}");
-        }
+            parse(&src)
+                .expect("условие обязано разбираться")
+                .schedule
+                .root
+                .stmts
+                .into_iter()
+                .next()
+                .expect("строка есть")
+                .condition
+                .expect("условие есть")
+        };
+        assert_eq!(
+            cond_of("[5]"),
+            Cond::Truthy(Box::new(Expr::Num("5".to_owned())))
+        );
+        assert_eq!(
+            cond_of("[0]"),
+            Cond::Truthy(Box::new(Expr::Num("0".to_owned())))
+        );
+        assert_eq!(cond_of("[true]"), Cond::Truthy(Box::new(Expr::Bool(true))));
+        assert_eq!(
+            cond_of("[1 + 2]"),
+            Cond::Truthy(Box::new(Expr::Bin {
+                op: ArithOp::Add,
+                left: Box::new(Expr::Num("1".to_owned())),
+                right: Box::new(Expr::Num("2".to_owned())),
+            }))
+        );
+        let cmp = |n: &str| Cond::Cmp {
+            op: CmpOp::Eq,
+            left: Expr::At,
+            right: CondRhs::One(Expr::Num(n.to_owned())),
+        };
+        assert_eq!(
+            cond_of("[(at == 1) == 1]"),
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::Truth(Box::new(cmp("1"))),
+                right: CondRhs::One(Expr::Num("1".to_owned())),
+            }
+        );
+        assert_eq!(
+            cond_of("[at == (1 and 2)]"),
+            Cond::Cmp {
+                op: CmpOp::Eq,
+                left: Expr::At,
+                right: CondRhs::One(Expr::Truth(Box::new(Cond::And(vec![
+                    Cond::Truthy(Box::new(Expr::Num("1".to_owned()))),
+                    Cond::Truthy(Box::new(Expr::Num("2".to_owned()))),
+                ])))),
+            }
+        );
     }
 
     #[test]
