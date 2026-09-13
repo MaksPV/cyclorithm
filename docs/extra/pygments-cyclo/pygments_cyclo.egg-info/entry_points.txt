@@ -1,2 +1,0 @@
-[pygments.lexers]
-cyclo = cyclo_lexer:CycloLexer

@@ -1,8 +1,0 @@
-cyclo_lexer.py
-pyproject.toml
-pygments_cyclo.egg-info/PKG-INFO
-pygments_cyclo.egg-info/SOURCES.txt
-pygments_cyclo.egg-info/dependency_links.txt
-pygments_cyclo.egg-info/entry_points.txt
-pygments_cyclo.egg-info/requires.txt
-pygments_cyclo.egg-info/top_level.txt
