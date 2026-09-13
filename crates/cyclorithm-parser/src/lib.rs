@@ -47,7 +47,10 @@ pub fn error_position(e: &pest::error::Error<Rule>) -> (usize, usize) {
 /// Путь из `use "path";` — без кавычек (строки без escapes, как везде).
 fn build_use(pair: Pair<Rule>) -> String {
     debug_assert_eq!(pair.as_rule(), Rule::use_decl);
-    let s = pair.into_inner().next().expect("use: путь").as_str();
+    let mut inner = pair.into_inner();
+    let kw = inner.next().expect("use: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_use);
+    let s = inner.next().expect("use: путь").as_str();
     s[1..s.len() - 1].to_owned()
 }
 
@@ -108,6 +111,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
     match kind.as_rule() {
         Rule::const_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("const: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_const);
             let name = inner.next().expect("const: имя").as_str().to_owned();
             let body = build_operand(
                 inner
@@ -121,6 +126,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         }
         Rule::fun_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("fun: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_fun);
             let name = inner.next().expect("fun: имя").as_str().to_owned();
             let param = inner.next().expect("fun: параметр").as_str().to_owned();
             let body = build_operand(
@@ -136,6 +143,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         Rule::pred_decl => {
             let span = kind.as_span();
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("pred: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_pred);
             let name = inner.next().expect("pred: имя").as_str().to_owned();
             let param = inner.next().expect("pred: параметр");
             if param.as_str() != "at" {
@@ -151,7 +160,11 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         }
         Rule::time_const_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("time_const: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_time_const);
             let name = inner.next().expect("time_const: имя").as_str().to_owned();
+            let kw_duration = inner.next().expect("time_const: duration");
+            debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
             let duration = build_duration(inner.next().expect("time_const: duration"));
             let rows = inner.map(build_slot_row).collect::<Result<_, _>>()?;
             Ok(Decl::TimeConst {
@@ -199,6 +212,8 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
 fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::schedule);
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("schedule: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_schedule);
     let name = unquote(inner.next().expect("schedule: имя"));
     let mut points = Vec::new();
     let mut routines = Vec::new();
@@ -224,7 +239,11 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
 
 fn build_point(pair: Pair<Rule>) -> Point {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("point: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_point);
     let name = inner.next().expect("point: имя").as_str().to_owned();
+    let kw_actions = inner.next().expect("point: actions");
+    debug_assert_eq!(kw_actions.as_rule(), Rule::kw_actions);
     let actions = inner
         .next()
         .expect("point: actions")
@@ -233,8 +252,10 @@ fn build_point(pair: Pair<Rule>) -> Point {
         .collect();
     let attrs = inner.next().map(|p| {
         debug_assert_eq!(p.as_rule(), Rule::point_attrs);
-        let src = p
-            .into_inner()
+        let mut attr_inner = p.into_inner();
+        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
+        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
+        let src = attr_inner
             .next()
             .expect("point_attrs: источник")
             .into_inner()
@@ -255,6 +276,8 @@ fn build_point(pair: Pair<Rule>) -> Point {
 
 fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("cycle: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_cycle);
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
     let mut next = inner.next().expect("cycle: параметры или duration");
     let params = if next.as_rule() == Rule::cycle_params {
@@ -264,7 +287,9 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     } else {
         Vec::new()
     };
-    let duration = build_duration(next);
+    let kw_duration = next;
+    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
+    let duration = build_duration(inner.next().expect("cycle: duration"));
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
     Ok(Cycle {
         name,
@@ -276,7 +301,13 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
 
 fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("root_cycle: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_root_cycle);
+    let kw_start = inner.next().expect("root_cycle: start_time");
+    debug_assert_eq!(kw_start.as_rule(), Rule::kw_start_time);
     let start_time = unquote(inner.next().expect("root_cycle: start_time"));
+    let kw_duration = inner.next().expect("root_cycle: duration");
+    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
     let duration = build_duration(inner.next().expect("root_cycle: duration"));
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
     Ok(RootCycle {
@@ -290,6 +321,8 @@ fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Ru
 fn build_routine(pair: Pair<Rule>) -> Result<Routine, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::routine);
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("routine: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_routine);
     let name = inner.next().expect("routine: имя").as_str().to_owned();
     let mut params = Vec::new();
     let mut stmts = Vec::new();
@@ -2343,6 +2376,100 @@ mod tests {
                 body: Expr::Concat(vec![str("x"), Expr::Concat(vec![str("a"), str("b")]),]),
             }]
         );
+    }
+
+    #[test]
+    fn glued_keywords_are_not_split() {
+        // Склейка ключевого слова с именем — синтаксическая ошибка,
+        // а не ключевое слово + укороченное имя (`constx` ≠ `const x`).
+        let schedule_tail = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        // Объявления без расписания — через parse_decls.
+        for src in [
+            "constx = 5;",
+            "funx(a) = a;",
+            "predx(at) = at == 1;",
+            "time_constx duration = 1h { a: 1m; };",
+        ] {
+            assert!(parse_decls(src).is_err(), "обязана быть ошибка: {src}");
+        }
+        // Конструкции с расписанием — через parse.
+        for src in [
+            format!("pointfoo {{ actions = [x]; }} {schedule_tail}"),
+            schedule_tail.replace("cycle R", "cycleabc"),
+            schedule_tail.replace("point A", "pointA"),
+        ] {
+            assert!(parse(&src).is_err(), "обязана быть ошибка: {src}");
+        }
+        // А правильные формы с пробелом разбираются (регрессия сборки kw_*).
+        let s = parse(schedule_tail).expect("эталонное расписание обязано разбираться");
+        assert_eq!(s.schedule.points[0].name, "A");
+        assert_eq!(s.schedule.cycles[0].name, "R");
+        let decls = parse_decls("const C = 5; fun F(a) = a; pred P(at) = at == 1;")
+            .expect("эталонные объявления обязаны разбираться");
+        assert_eq!(decls.len(), 3);
+    }
+
+    #[test]
+    fn duration_keyword_needs_word_boundary() {
+        // `cycle duration duration = 1h {}` — цикл с именем `duration` валиден,
+        // а склейка поля (`durationx`) и пропущенное имя — синтаксические ошибки.
+        let head = "schedule \"T\" { point A { actions = [x]; } ";
+        let tail =
+            " root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let s = parse(&format!(
+            "{head} cycle R duration = 1h {{ 0m: A.x(); }} \
+            cycle duration duration = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .expect("цикл с именем duration обязан разбираться");
+        assert_eq!(s.schedule.cycles[1].name, "duration");
+        assert!(parse(&format!(
+            "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .is_err());
+        assert!(parse(&format!(
+            "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
+        ))
+        .is_err());
+        assert!(
+            parse_decls("time_const T durationx = 1h { a: 1m; };").is_err(),
+            "склейка поля duration обязана быть ошибкой"
+        );
+    }
+
+    #[test]
+    fn until_dur_matches_duration_units() {
+        // Паритет `until_dur` и `duration`: все юниты и составные длительности
+        // доходят через `fill until` без потерь (дрейф двух копий ловится здесь).
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        for dur in [
+            "1w",
+            "2d",
+            "3h",
+            "4m",
+            "5s",
+            "6ms",
+            "1h 20m",
+            "21h35m",
+            "1w2d3h4m5s6ms",
+        ] {
+            let src = format!("{head} 6h: fill until {dur} R(); {tail}");
+            let s = parse(&src).expect("горизонт обязан разбираться: {dur}");
+            match &s.schedule.root.stmts[0].repeat {
+                Repeat::Fill { until: Some(u) } => assert_eq!(u.raw(), dur),
+                r => panic!("ожидался fill until, получено {r:?}"),
+            }
+            let src_gaps = format!("{head} 6h: fill gaps until {dur} R(); {tail}");
+            let g = parse(&src_gaps).expect("gaps-горизонт обязан разбираться: {dur}");
+            match &g.schedule.root.stmts[0].repeat {
+                Repeat::FillGaps { until: Some(u) } => assert_eq!(u.raw(), dur),
+                r => panic!("ожидался fill gaps until, получено {r:?}"),
+            }
+        }
     }
 
     #[test]
