@@ -8,7 +8,7 @@ schedule "Рутины" {
   point B { actions = [y]; }
 
   routine M(TC, subj) {
-    [subj == 1] 1st: A.x() { n = subj };
+    [subj == 1] 1st: A.x() {"n": subj};
   }
   routine REST(TC) {}
 

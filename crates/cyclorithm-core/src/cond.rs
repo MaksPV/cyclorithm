@@ -440,15 +440,13 @@ fn check_row(
     cx.data = true;
     match invocation {
         Invocation::PointAction { block, .. } => {
-            // Дубли ключей блока — duplicate-attribute (порядок объявления).
-            let mut seen = HashSet::new();
-            for (k, _) in block {
-                if !seen.insert(k) {
-                    return Err(Error::duplicate_attribute(k));
+            // Блок — литерал мапы (дубли ловит `infer`/`check_map_dupes`) или
+            // ссылка на константу-мапу; в обоих случаях обязана выйти мапа.
+            if let Some(b) = block {
+                match cx.infer(b)? {
+                    Ty::Map => {}
+                    _ => return Err(Error::type_mismatch()),
                 }
-            }
-            for (_, v) in block {
-                cx.infer(v)?;
             }
         }
         Invocation::CycleCall { name, args } => {
@@ -569,8 +567,8 @@ impl CxTy<'_> {
             Expr::Bool(_) => Ok(Ty::Bool),
             Expr::Map(pairs) => {
                 check_map_dupes(pairs)?;
-                // Значения — литералы по грамматике; типы всё равно выводим
-                // (дубли и кривые числа ловятся здесь же).
+                // Значения — литералы данных или выражения блока действия;
+                // типы выводим, дубли и кривые числа ловятся здесь же.
                 for (_, v) in pairs {
                     self.infer(v)?;
                 }
@@ -2202,13 +2200,37 @@ mod tests {
         // Дубль ключей блока — duplicate-attribute в фазе строк.
         let e = check_rows(
             "schedule \"T\" { point A { actions = [x]; } \
-            cycle R duration = 1h { 0m: A.x() { a = 1, a = 2 }; } \
+            cycle R duration = 1h { 0m: A.x() {\"a\": 1, \"a\": 2}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
         )
         .expect_err("дубль в блоке — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("duplicate-attribute", "duplicate attribute 'a'")
+        );
+    }
+
+    #[test]
+    fn block_const_must_be_map() {
+        // Ссылка на const-мапу в блоке проходит; const-число — type-mismatch.
+        check_rows(
+            "const ATTRS = {\"n\": 1}; schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x() ATTRS; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
+        )
+        .expect("const-мапа в блоке обязана проходить");
+        let e = check_rows(
+            "const N = 1; schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x() N; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
+        )
+        .expect_err("const-число в блоке — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 

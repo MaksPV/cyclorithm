@@ -421,20 +421,21 @@ fn build_invocation(call: Pair<Rule>) -> Invocation {
             let mut parts = call.into_inner();
             let point = parts.next().expect("вызов: точка").as_str().to_owned();
             let action = parts.next().expect("вызов: действие").as_str().to_owned();
-            let block = parts
-                .next()
-                .map(|b| {
-                    debug_assert_eq!(b.as_rule(), Rule::action_block);
-                    b.into_inner().map(|p| {
-                        debug_assert_eq!(p.as_rule(), Rule::block_pair);
-                        let mut kv = p.into_inner();
-                        let key = kv.next().expect("block_pair: ключ").as_str().to_owned();
-                        let value = build_call_arg(kv.next().expect("block_pair: значение"));
-                        (key, value)
-                    })
-                })
-                .map(|it| it.collect::<Vec<_>>())
-                .unwrap_or_default();
+            let block = parts.next().map(|b| match b.as_rule() {
+                Rule::action_block => Expr::Map(
+                    b.into_inner()
+                        .map(|p| {
+                            debug_assert_eq!(p.as_rule(), Rule::block_pair);
+                            let mut kv = p.into_inner();
+                            let key = unquote(kv.next().expect("block_pair: ключ"));
+                            let value = build_call_arg(kv.next().expect("block_pair: значение"));
+                            (key, value)
+                        })
+                        .collect(),
+                ),
+                Rule::IDENT => Expr::Name(b.as_str().to_owned()),
+                r => unreachable!("point_action: неожиданный блок {r:?}"),
+            });
             Invocation::PointAction {
                 point,
                 action,
@@ -1229,14 +1230,17 @@ impl Until {
     }
 }
 /// Вызов: `DEPOT.depart()` — действие точки (с опциональным блоком
-/// `{k = v, ...}` — данные события), `CITY_ROUTE()` — вызов цикла
-/// (с опциональными аргументами — значениями параметров).
+/// `{"k": v, ...}` — данные события, либо ссылкой на константу-мапу),
+/// `CITY_ROUTE()` — вызов цикла (с опциональными аргументами — значениями
+/// параметров).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invocation {
     PointAction {
         point: String,
         action: String,
-        block: Vec<(String, Expr)>,
+        /// `None` — без блока; `Expr::Map` — литерал, `Expr::Name` — ссылка
+        /// на константу-мапу (зеркалит `Point.attrs`).
+        block: Option<Expr>,
     },
     CycleCall {
         name: String,
@@ -1653,10 +1657,12 @@ mod tests {
 
     #[test]
     fn parses_cycle_params_args_and_blocks() {
-        // Параметры, аргументы (мапа и имя), блоки (полный и пустой).
+        // Параметры, аргументы (мапа и имя), блоки: JSON-литерал, пустой,
+        // ссылка на константу и отсутствие блока.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle L(subj) duration = 1h { \
-            0m: A.x() { subject = subj.name, event = \"start\" }; 45m: A.x() {}; } \
+            0m: A.x() {\"subject\": subj.name, \"event\": \"start\"}; 45m: A.x() {}; \
+            46m: A.x() CORPUS; 47m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
             { 9h: L({\"name\": \"БЖД\"}); 13h: L(M); } }";
         let s = parse(src).expect("параметры обязаны разбираться").schedule;
@@ -1667,7 +1673,7 @@ mod tests {
         };
         assert_eq!(
             block,
-            vec![
+            Some(Expr::Map(vec![
                 (
                     "subject".to_owned(),
                     Expr::Field {
@@ -1676,10 +1682,20 @@ mod tests {
                     }
                 ),
                 ("event".to_owned(), Expr::Str("start".to_owned())),
-            ]
+            ]))
         );
         match &s.cycles[0].stmts[1].invocation {
-            Invocation::PointAction { block, .. } => assert!(block.is_empty()),
+            Invocation::PointAction { block, .. } => assert_eq!(block, &Some(Expr::Map(vec![]))),
+            r => panic!("ожидалось действие точки, получено {r:?}"),
+        }
+        match &s.cycles[0].stmts[2].invocation {
+            Invocation::PointAction { block, .. } => {
+                assert_eq!(block, &Some(Expr::Name("CORPUS".to_owned())))
+            }
+            r => panic!("ожидалось действие точки, получено {r:?}"),
+        }
+        match &s.cycles[0].stmts[3].invocation {
+            Invocation::PointAction { block, .. } => assert_eq!(block, &None),
             r => panic!("ожидалось действие точки, получено {r:?}"),
         }
         let args: Vec<Vec<Expr>> = s
@@ -1701,6 +1717,15 @@ mod tests {
                 vec![Expr::Name("M".to_owned())],
             ]
         );
+    }
+
+    #[test]
+    fn rejects_old_assignment_block_syntax() {
+        // Старый `{k = v}` больше не синтаксис: ключ блока — строка с `:`.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 0m: A.x() {k = 1}; } }";
+        assert!(parse(src).is_err());
     }
 
     #[test]
@@ -1849,7 +1874,7 @@ mod tests {
             invocation: Invocation::PointAction {
                 point: point.to_owned(),
                 action: action.to_owned(),
-                block: Vec::new(),
+                block: None,
             },
         };
         Schedule {
@@ -1899,7 +1924,7 @@ mod tests {
                             invocation: Invocation::PointAction {
                                 point: "DEPOT".to_owned(),
                                 action: "arrive".to_owned(),
-                                block: Vec::new(),
+                                block: None,
                             },
                         },
                     ],

@@ -350,10 +350,15 @@ fn unfold(
             action,
             block,
         } => {
-            let mut action_attrs = Vec::with_capacity(block.len());
-            for (key, value) in block {
-                action_attrs.push((key.clone(), eval_expr_with_env(value, at, ctx.defs, env)?));
-            }
+            // Блок — либо литерал (значения-выражения), либо ссылка на
+            // константу-мапу: оба вычислимы одним `eval_expr`.
+            let action_attrs = match block {
+                None => Vec::new(),
+                Some(b) => match eval_expr_with_env(b, at, ctx.defs, env)? {
+                    Value::Map(pairs) => pairs,
+                    _ => return Err(Error::type_mismatch()),
+                },
+            };
             ctx.out.push(RawEvent {
                 time: base,
                 k,
@@ -661,8 +666,8 @@ schedule "Редкое" {
             const PR = {\"name\": \"БЖД\", \"type\": \"прак\"}; \
             schedule \"T\" { point B { actions = [ring]; } \
             cycle LESSON(subj) duration = 1h { \
-            0m: B.ring() { subject = subj.name, event = \"start\" }; \
-            [subj.type == \"лек\"] 30m: B.ring() { subject = subj.name, event = \"extra\" }; } \
+            0m: B.ring() {\"subject\": subj.name, \"event\": \"start\"}; \
+            [subj.type == \"лек\"] 30m: B.ring() {\"subject\": subj.name, \"event\": \"extra\"}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
             { 9h: LESSON(LEC); 13h: LESSON(PR); } }";
         let (ast, t, d) = setup(src);
@@ -703,7 +708,7 @@ schedule "Редкое" {
         // Динамический скоуп: безаргументный INNER видит subj вызывающего.
         let src = "const LEC = {\"name\": \"БЖД\", \"type\": \"лек\"}; \
             schedule \"T\" { point B { actions = [ring]; } \
-            cycle INNER duration = 30m { [subj.type == \"лек\"] 0m: B.ring() { subject = subj.name }; } \
+            cycle INNER duration = 30m { [subj.type == \"лек\"] 0m: B.ring() {\"subject\": subj.name}; } \
             cycle LESSON(subj) duration = 1h { 0m: INNER(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: LESSON(LEC); } }";
         let (ast, t, d) = setup(src);
@@ -725,7 +730,7 @@ schedule "Редкое" {
         let src = "const LEC = {\"name\": \"Лек\", \"type\": \"лек\"}; \
             const PR = {\"name\": \"Прак\", \"type\": \"прак\"}; \
             schedule \"T\" { point B { actions = [ring]; } \
-            cycle INNER(subj) duration = 30m { 0m: B.ring() { subject = subj.name }; } \
+            cycle INNER(subj) duration = 30m { 0m: B.ring() {\"subject\": subj.name}; } \
             cycle OUTER(subj) duration = 1h { 0m: INNER(PR); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: OUTER(LEC); } }";
         let (ast, t, d) = setup(src);
@@ -746,8 +751,8 @@ schedule "Редкое" {
         // Статика пропускает (имя — параметр LESSON), строка без связывания — unknown-name.
         let src = "const LEC = {\"name\": \"БЖД\"}; \
             schedule \"T\" { point B { actions = [ring]; } \
-            cycle LESSON(subj) duration = 1h { 0m: B.ring() { subject = subj.name }; } \
-            cycle INNER duration = 30m { 0m: B.ring() { subject = subj.name }; } \
+            cycle LESSON(subj) duration = 1h { 0m: B.ring() {\"subject\": subj.name}; } \
+            cycle INNER duration = 30m { 0m: B.ring() {\"subject\": subj.name}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
         let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
         let ast = &file.schedule;
@@ -1083,7 +1088,7 @@ schedule "Редкое" {
             [workday(at)] lunch: 12h -> LUNCH(); \
         } \
         schedule \"T\" { point A { actions = [x]; } point B { actions = [y]; } \
-        routine M(TC, subj) { [subj == 1] 1st: A.x() { n = subj }; } \
+        routine M(TC, subj) { [subj == 1] 1st: A.x() {\"n\": subj}; } \
         cycle LUNCH duration = 30m { 0m: B.y(); } \
         root_cycle start_time = \"2026-09-07T00:00:00\", duration = 24h { \
         [day_of_week(at) == 1] 0h: M(DAY, 1); \
