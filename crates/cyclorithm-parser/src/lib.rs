@@ -47,7 +47,10 @@ pub fn error_position(e: &pest::error::Error<Rule>) -> (usize, usize) {
 /// Путь из `use "path";` — без кавычек (строки без escapes, как везде).
 fn build_use(pair: Pair<Rule>) -> String {
     debug_assert_eq!(pair.as_rule(), Rule::use_decl);
-    let s = pair.into_inner().next().expect("use: путь").as_str();
+    let mut inner = pair.into_inner();
+    let kw = inner.next().expect("use: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_use);
+    let s = inner.next().expect("use: путь").as_str();
     s[1..s.len() - 1].to_owned()
 }
 
@@ -108,6 +111,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
     match kind.as_rule() {
         Rule::const_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("const: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_const);
             let name = inner.next().expect("const: имя").as_str().to_owned();
             let body = build_operand(
                 inner
@@ -121,6 +126,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         }
         Rule::fun_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("fun: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_fun);
             let name = inner.next().expect("fun: имя").as_str().to_owned();
             let param = inner.next().expect("fun: параметр").as_str().to_owned();
             let body = build_operand(
@@ -136,6 +143,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         Rule::pred_decl => {
             let span = kind.as_span();
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("pred: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_pred);
             let name = inner.next().expect("pred: имя").as_str().to_owned();
             let param = inner.next().expect("pred: параметр");
             if param.as_str() != "at" {
@@ -151,6 +160,8 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
         }
         Rule::time_const_decl => {
             let mut inner = kind.into_inner();
+            let kw = inner.next().expect("time_const: ключевое слово");
+            debug_assert_eq!(kw.as_rule(), Rule::kw_time_const);
             let name = inner.next().expect("time_const: имя").as_str().to_owned();
             let duration = build_duration(inner.next().expect("time_const: duration"));
             let rows = inner.map(build_slot_row).collect::<Result<_, _>>()?;
@@ -199,6 +210,8 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
 fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::schedule);
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("schedule: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_schedule);
     let name = unquote(inner.next().expect("schedule: имя"));
     let mut points = Vec::new();
     let mut routines = Vec::new();
@@ -224,7 +237,11 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
 
 fn build_point(pair: Pair<Rule>) -> Point {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("point: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_point);
     let name = inner.next().expect("point: имя").as_str().to_owned();
+    let kw_actions = inner.next().expect("point: actions");
+    debug_assert_eq!(kw_actions.as_rule(), Rule::kw_actions);
     let actions = inner
         .next()
         .expect("point: actions")
@@ -233,8 +250,10 @@ fn build_point(pair: Pair<Rule>) -> Point {
         .collect();
     let attrs = inner.next().map(|p| {
         debug_assert_eq!(p.as_rule(), Rule::point_attrs);
-        let src = p
-            .into_inner()
+        let mut attr_inner = p.into_inner();
+        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
+        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
+        let src = attr_inner
             .next()
             .expect("point_attrs: источник")
             .into_inner()
@@ -255,6 +274,8 @@ fn build_point(pair: Pair<Rule>) -> Point {
 
 fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("cycle: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_cycle);
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
     let mut next = inner.next().expect("cycle: параметры или duration");
     let params = if next.as_rule() == Rule::cycle_params {
@@ -276,6 +297,10 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
 
 fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Rule>> {
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("root_cycle: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_root_cycle);
+    let kw_start = inner.next().expect("root_cycle: start_time");
+    debug_assert_eq!(kw_start.as_rule(), Rule::kw_start_time);
     let start_time = unquote(inner.next().expect("root_cycle: start_time"));
     let duration = build_duration(inner.next().expect("root_cycle: duration"));
     let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
@@ -290,6 +315,8 @@ fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Ru
 fn build_routine(pair: Pair<Rule>) -> Result<Routine, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::routine);
     let mut inner = pair.into_inner();
+    let kw = inner.next().expect("routine: ключевое слово");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_routine);
     let name = inner.next().expect("routine: имя").as_str().to_owned();
     let mut params = Vec::new();
     let mut stmts = Vec::new();
