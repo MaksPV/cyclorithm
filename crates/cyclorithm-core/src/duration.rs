@@ -6,7 +6,7 @@
 //! Ноль (`0m`) сам по себе валиден; запрет нулевого *периода* `root_cycle`
 //! (деление на ноль в решётке) проверяется отдельно, тоже invalid-duration.
 
-use cyclorithm_parser::{Duration, DurationUnit, RootCycle};
+use cyclorithm_parser::{Duration, DurationItem, DurationUnit, RootCycle};
 
 use crate::Error;
 
@@ -120,6 +120,31 @@ pub fn format_duration(ms: i64) -> String {
         format!("{}s{}ms", ms / 1_000, ms % 1_000)
     } else {
         format!("{ms}ms")
+    }
+}
+
+/// Миллисекунды в каноническую однокомпонентную длительность для десугара
+/// (`reverse`): тот же каскад юнитов, что у `format_duration`, поэтому
+/// результат всегда валиден (порядок/уникальность/переполнение исключены).
+/// `raw` совпадает с `format_duration` — сообщения границ единообразны.
+pub fn duration_from_ms(ms: i64) -> Duration {
+    debug_assert!(ms >= 0, "отрицательные — через флаг, не сюда");
+    let item = |number: String, unit: DurationUnit| DurationItem { number, unit };
+    let items = if ms % 60_000 == 0 {
+        vec![item((ms / 60_000).to_string(), DurationUnit::Minute)]
+    } else if ms % 1_000 == 0 {
+        vec![item((ms / 1_000).to_string(), DurationUnit::Second)]
+    } else if ms / 1_000 > 0 {
+        vec![
+            item((ms / 1_000).to_string(), DurationUnit::Second),
+            item((ms % 1_000).to_string(), DurationUnit::Millisecond),
+        ]
+    } else {
+        vec![item(ms.to_string(), DurationUnit::Millisecond)]
+    };
+    Duration {
+        raw: format_duration(ms),
+        items,
     }
 }
 

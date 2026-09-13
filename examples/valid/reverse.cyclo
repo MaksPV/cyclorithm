@@ -1,0 +1,26 @@
+schedule "Reverse" {
+  point A {
+    actions = [stop];
+  }
+  point B {
+    actions = [stop];
+  }
+
+  cycle FWD(subj)
+    duration = 1h
+  {
+    0m: A.stop();
+    [subj == "x"] 20m: B.stop();
+    50m: B.stop();
+  }
+
+  cycle BACK reverse FWD;
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: FWD("x");
+    8h: BACK("x");
+  }
+}

@@ -92,13 +92,14 @@ fn with_setup<R>(
     libs: &[(&str, &str)],
     f: impl FnOnce(&Schedule, &NameTables<'_>, &Defs) -> Result<R, Diag>,
 ) -> Result<R, Diag> {
-    let file = match cyclorithm_parser::parse(src) {
+    let mut file = match cyclorithm_parser::parse(src) {
         Ok(f) => f,
         Err(e) => {
             let (line, col) = cyclorithm_parser::error_position(&e);
             return Err(Diag::parse(e.to_string(), Some(line), Some(col)));
         }
     };
+    crate::reverse::materialize_reverse(&mut file.schedule).map_err(Diag::valid)?;
     let ast = &file.schedule;
     let mem: HashMap<PathBuf, &str> = libs
         .iter()

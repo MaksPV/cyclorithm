@@ -47,7 +47,11 @@ attrs_src   = { map_lit | IDENT }
 // первый `duration` съедает `IDENT` как имя). А `cycle duration = 1h {}` —
 // синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
 // Неоднозначность разрешается в пользу имени — осознанно.
-cycle       = { kw_cycle ~ IDENT ~ cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Производный цикл — зеркало имеющегося (`o' = duration − o`, остальное как есть):
+// `cycle BACK reverse FWD;`. Параметры и длительность наследуются, тела нет.
+// `reverse` — ключевое слово с границей (`reversex` — имя, не модификатор).
+cycle       = { kw_cycle ~ IDENT ~ (cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+kw_reverse  = @{ "reverse" ~ !word_tail }
 // Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }

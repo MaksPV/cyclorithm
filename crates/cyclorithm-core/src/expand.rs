@@ -472,8 +472,9 @@ mod tests {
         NameTables<'static>,
         &'static Defs,
     ) {
-        let file: &'static cyclorithm_parser::SourceFile =
+        let file: &'static mut cyclorithm_parser::SourceFile =
             Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        crate::reverse::materialize_reverse(&mut file.schedule).unwrap();
         let ast: &'static cyclorithm_parser::Schedule = &file.schedule;
         // Импорты — из памяти: route_lib.cyclo лежит в libs/ рядом с route.cyclo.
         // Без `use` чтение не вызывается, остальные фикстуры не меняются.
@@ -797,6 +798,7 @@ schedule "Редкое" {
             cycle INNER duration = 30m { 0m: B.ring() {\"subject\": subj.name}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
         let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        crate::reverse::materialize_reverse(&mut file.schedule).unwrap();
         let ast = &file.schedule;
         let groups = vec![file.decls.clone()];
         let (defs, reg) = resolve_units(&groups).unwrap();
