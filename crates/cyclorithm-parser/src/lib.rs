@@ -176,7 +176,6 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
     }
 }
 
-/// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
 fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::slot_row);
     let mut inner = pair.into_inner();
@@ -352,8 +351,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         condition = Some(build_cond(cond));
         first = inner.next().expect("stmt: смещение или минус");
     }
-    // Минус смещения: пишется слитно (`-10m` ок, `- 10m` — ошибка).
-    // Грамматика пробел пропускает осознанно — границу проверяем по спанам.
+    // Слитность минуса — по спанам (см. `neg_sign` в грамматике).
     let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
         let offset_pair = inner.next().expect("stmt: длительность после минуса");
         if first.as_span().end() != offset_pair.as_span().start() {
@@ -1228,9 +1226,13 @@ pub enum Repeat {
     /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе invalid-repeat-count).
     Times(String),
     /// `fill [until [−]T]`: мягкое заполнение до горизонта.
-    Fill { until: Option<Until> },
+    Fill {
+        until: Option<Until>,
+    },
     /// `fill gaps [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
-    FillGaps { until: Option<Until> },
+    FillGaps {
+        until: Option<Until>,
+    },
 }
 
 /// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
