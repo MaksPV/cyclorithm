@@ -463,7 +463,7 @@ fn build_or(pair: Pair<Rule>) -> Cond {
     let mut acc = build_and(inner.next().expect("or_expr: левый операнд"));
     // Прозрачная группа даёт вложенный Or — вжимаем (один уровень логики —
     // один узел, `a or (b or c)` ≡ `a or b or c`).
-    let mut push = |acc: Cond, rhs: Cond| match acc {
+    let push = |acc: Cond, rhs: Cond| match acc {
         Cond::Or(mut all) => {
             match rhs {
                 Cond::Or(more) => all.extend(more),
@@ -525,7 +525,7 @@ fn build_and(pair: Pair<Rule>) -> Cond {
     let mut inner = pair.into_inner();
     let mut acc = build_not(inner.next().expect("and_expr: левый операнд"));
     // Как в `build_or`: вложенный And вжимается в плоский вектор.
-    let mut push = |acc: Cond, rhs: Cond| match acc {
+    let push = |acc: Cond, rhs: Cond| match acc {
         Cond::And(mut all) => {
             match rhs {
                 Cond::And(more) => all.extend(more),

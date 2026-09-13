@@ -105,6 +105,14 @@ impl TableReg {
     pub fn get(&self, name: &str) -> Option<&TimeTable> {
         self.tables.get(name)
     }
+
+    /// Таблицы в порядке первого объявления. Порядок строится вместе
+    /// с реестром в `resolve_units`, поэтому обход без `expect` на вызывателе.
+    pub fn ordered(&self) -> impl Iterator<Item = &TimeTable> {
+        self.order
+            .iter()
+            .filter_map(|n| self.tables.get(n.as_str()))
+    }
 }
 
 /// `at` зарезервировано (момент строки): объявлять так ничего нельзя.
@@ -528,15 +536,20 @@ impl CxTy<'_> {
                         // (динамика — мимо: разберётся строка). Строковые
                         // ветки — только под строку слева
                         // (`datestr(at) == ("2026-11-04" or ...)`).
+                        let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array);
                         for a in alts {
                             match (lt, self.infer(a)?) {
                                 (Ty::Dyn, _) | (_, Ty::Dyn) => {}
                                 (Ty::Num, Ty::Num) | (Ty::Str, Ty::Str) => {}
+                                (a, b) if collection(a) && collection(b) => {
+                                    return Err(Error::maps_not_comparable());
+                                }
                                 _ => return Err(Error::type_mismatch()),
                             }
                         }
                         match lt {
                             Ty::Num | Ty::Dyn | Ty::Str => Ok(()),
+                            Ty::Map | Ty::Array => Err(Error::maps_not_comparable()),
                             _ => Err(Error::type_mismatch()),
                         }
                     }
@@ -2143,6 +2156,25 @@ mod tests {
         );
         // Мапа с числом — обычное смешение.
         let e = static_err("{\"a\": 1} == 1");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+    }
+
+    #[test]
+    fn map_alternation_is_maps_not_comparable() {
+        // Тот же слаг, что в одиночном сравнении (было type-mismatch).
+        let e = static_err("{\"a\": 1} == ({\"a\": 1} or {\"b\": 2})");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("maps-not-comparable", "cannot compare maps or arrays")
+        );
+        // Мапа с числом в ветке — обычное смешение.
+        let e = static_err("{\"a\": 1} == (1 or 2)");
         assert_eq!(
             (e.code, e.message.as_str()),
             (

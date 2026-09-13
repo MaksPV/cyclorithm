@@ -96,8 +96,7 @@ pub fn validate_names<'a>(
         cycles.insert(c.name.as_str(), c);
     }
     // Дубли меток таблицы — duplicate, как дубли объявлений.
-    for tname in &reg.order {
-        let t = reg.get(tname.as_str()).expect("порядок — по реестру");
+    for t in reg.ordered() {
         let mut seen = HashSet::new();
         for row in &t.rows {
             if !seen.insert(row.label.as_str()) {
@@ -126,8 +125,7 @@ pub fn validate_names<'a>(
         schedule.root.stmts.iter().map(|st| &st.invocation),
         None,
     )?;
-    for tname in &reg.order {
-        let t = reg.get(tname.as_str()).expect("порядок — по реестру");
+    for t in reg.ordered() {
         check_invocations(
             &tables,
             t.rows.iter().filter_map(|row| row.firing.as_ref()),
