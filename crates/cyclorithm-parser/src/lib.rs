@@ -4,13 +4,13 @@ use pest::iterators::Pair;
 use pest::Parser as _;
 use pest_derive::Parser;
 
-/// Парсер грамматики из §3 спеки (см. `grammar.pest`).
+/// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 pub struct CycloParser;
 
-/// Разбор исходника в AST. Ошибка — синтаксическая, без слага
-/// (коды слаги главы ошибок — только валидация уже разобранного AST в ядре).
+/// Ошибка — синтаксическая, без слага
+/// (слаги главы ошибок — только валидация уже разобранного AST в ядре).
 pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     let file = CycloParser::parse(Rule::file, src)?
         .next()
@@ -66,12 +66,11 @@ pub fn parse_decls(src: &str) -> Result<Vec<Decl>, pest::error::Error<Rule>> {
         .collect()
 }
 
-/// Единица импорта: свои `use`, объявления, флаг наличия `schedule`
-/// (расписание внутри импорта запрещено (schedule-in-import) — решает резолвер).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnitFile {
     pub uses: Vec<String>,
     pub decls: Vec<Decl>,
+    /// Расписание внутри импорта запрещено — решает резолвер (schedule-in-import).
     pub has_schedule: bool,
 }
 
@@ -177,7 +176,6 @@ fn build_decl(pair: Pair<Rule>) -> Result<Decl, pest::error::Error<Rule>> {
     }
 }
 
-/// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
 fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::slot_row);
     let mut inner = pair.into_inner();
@@ -353,8 +351,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         condition = Some(build_cond(cond));
         first = inner.next().expect("stmt: смещение или минус");
     }
-    // Минус смещения (§3 спеки): пишется слитно (`-10m` ок, `- 10m` — ошибка).
-    // Грамматика пробел пропускает осознанно — границу проверяем по спанам.
+    // Слитность минуса — по спанам (см. `neg_sign` в грамматике).
     let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
         let offset_pair = inner.next().expect("stmt: длительность после минуса");
         if first.as_span().end() != offset_pair.as_span().start() {
@@ -425,8 +422,7 @@ fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Erro
     })
 }
 
-/// Тело строки (`stmt_body`): опциональный модификатор повторов и вызов.
-/// Общее для `stmt` и `routine_stmt`.
+/// Общее для `stmt` и `routine_stmt`: опциональный модификатор повторов и вызов.
 fn build_row_body(body: Pair<Rule>) -> Result<(Repeat, Invocation), pest::error::Error<Rule>> {
     debug_assert_eq!(body.as_rule(), Rule::stmt_body);
     let mut binner = body.into_inner();
@@ -446,8 +442,8 @@ fn build_row_body(body: Pair<Rule>) -> Result<(Repeat, Invocation), pest::error:
     }
 }
 
-/// Вызов: действие точки или вызов цикла/routine
-/// (`MONDAY(DAY)` от вызова цикла отличит валидация по имени).
+/// `MONDAY(DAY)` от вызова цикла отличит валидация по имени
+/// (вызов routine — тот же `CycleCall`).
 fn build_invocation(call: Pair<Rule>) -> Invocation {
     match call.as_rule() {
         Rule::point_action => {
@@ -475,7 +471,7 @@ fn build_invocation(call: Pair<Rule>) -> Invocation {
     }
 }
 
-/// Условие строки (§3 спеки): логика над сравнениями.
+/// Условие строки: логика над сравнениями.
 fn build_cond(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::condition);
     build_or(pair.into_inner().next().expect("condition: or_expr"))
@@ -768,7 +764,7 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     }
 }
 
-/// Постфикс (§3 спеки): база и цепочка `.поле` / `[n]`, свёртка слева.
+/// Постфикс: база и цепочка `.поле` / `[n]`, свёртка слева.
 fn build_postfix(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::postfix);
     let mut inner = pair.into_inner();
@@ -979,21 +975,19 @@ fn build_duration(pair: Pair<Rule>) -> Duration {
     Duration { raw, items }
 }
 
-/// Снять кавычки `"..."`. Экранирования в строках нет, кавычка внутри
-/// непредставима — среза достаточно.
+/// Экранирования в строках нет — среза кавычек достаточно.
 fn unquote(pair: Pair<Rule>) -> String {
     let s = pair.as_str();
     s[1..s.len() - 1].to_owned()
 }
 
 // ---------------------------------------------------------------------------
-// AST — строго по §3 спеки, без валидации.
+// AST — строго по грамматике, без валидации.
 // Проверки слаги главы ошибок — дело ядра над уже разобранным AST: парсер принимает
 // и `1h2h`, и переполнение, и `duration = 0`, ничего числового не решает.
 // Поэтому числа и сырой текст длительностей хранятся как есть.
 // ---------------------------------------------------------------------------
 
-/// Корень файла: импорты, объявления и `schedule`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     pub uses: Vec<String>,
@@ -1001,7 +995,7 @@ pub struct SourceFile {
     pub schedule: Schedule,
 }
 
-/// Объявление верхнего уровня (§3 спеки).
+/// Объявление верхнего уровня.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decl {
     Const {
@@ -1035,7 +1029,6 @@ pub struct SlotRow {
     pub firing: Option<Invocation>,
 }
 
-/// Корень расписания: `schedule "имя" { point* routine* cycle* root_cycle }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub name: String,
@@ -1055,7 +1048,7 @@ pub struct Point {
 }
 
 /// `cycle CITY_ROUTE duration = 1h20m { ... }`
-/// (`LESSON(subj)` — параметры для данных строк, см. черновик `attrs.md`).
+/// (`LESSON(subj)` — параметры для данных строк).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cycle {
     pub name: String,
@@ -1064,7 +1057,7 @@ pub struct Cycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня (§3).
+/// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня.
 /// `params[0]` — таблица (`time_const`), остальные — данные как у цикла.
 /// Вызов routine — `CycleCall` с таблицей первым аргументом
 /// (`MONDAY(DAY)`); routine от цикла отличает валидация по имени.
@@ -1086,14 +1079,12 @@ pub struct RoutineStmt {
     pub invocation: Invocation,
 }
 
-/// Смещение строки routine: обычная длительность или метка таблицы.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoutineOffset {
     Duration(Duration),
     Label(String),
 }
 
-/// `root_cycle start_time = "...", duration = 24h { ... }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootCycle {
     /// Сырая строка без кавычек; корректность дат — invalid-datetime в ядре.
@@ -1137,7 +1128,6 @@ pub enum Cond {
     Truthy(Box<Expr>),
 }
 
-/// Правая часть сравнения: одиночное значение или альтернация `(a or b)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CondRhs {
     One(Expr),
@@ -1145,7 +1135,7 @@ pub enum CondRhs {
 }
 
 /// Выражение условия: числа — сырым текстом, `at` — время строки.
-/// `Bool`/`Map`/`Array` — JSON-значения (черновик `attrs.md`): литералы
+/// `Bool`/`Map`/`Array` — JSON-значения: литералы
 /// и доступ `.поле` / `[n]`; вычисляются в момент строки.
 /// `Bool` в сравнениях запрещён (`type-mismatch`): живёт только ради
 /// `Truthy(true/false)` и литералов в мапах. `Truth` — обратный мостик
@@ -1187,7 +1177,6 @@ pub enum Expr {
     },
 }
 
-/// Оператор сравнения.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpOp {
     Eq,
@@ -1198,7 +1187,6 @@ pub enum CmpOp {
     Ge,
 }
 
-/// Арифметический оператор.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {
     Add,
@@ -1210,7 +1198,7 @@ pub enum ArithOp {
     FloorMod,
 }
 
-/// Битовый оператор (§4.13 спеки): только над числами, с wrap-семантикой.
+/// Битовый оператор (см. docs/reference/expressions.md): только над числами, с wrap-семантикой.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BitOp {
     Shl,
@@ -1231,17 +1219,20 @@ impl Stmt {
     }
 }
 
-/// Модификатор повторов строки (§3 спеки): `repeat N` / `fill` / `fill until`.
+/// Модификатор повторов строки (см. docs/reference/semantics.md): `repeat N` / `fill` / `fill until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repeat {
-    /// Без модификатора: одиночный вызов.
     Once,
     /// `repeat N`: ровно N экземпляров (`N ≥ 1`, иначе invalid-repeat-count).
     Times(String),
     /// `fill [until [−]T]`: мягкое заполнение до горизонта.
-    Fill { until: Option<Until> },
+    Fill {
+        until: Option<Until>,
+    },
     /// `fill gaps [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
-    FillGaps { until: Option<Until> },
+    FillGaps {
+        until: Option<Until>,
+    },
 }
 
 /// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
@@ -1295,7 +1286,7 @@ pub struct DurationItem {
     pub unit: DurationUnit,
 }
 
-/// Единицы в порядке убывания из спеки: `w > d > h > m > s > ms`.
+/// Единицы в порядке убывания (см. docs/reference/syntax.md): `w > d > h > m > s > ms`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DurationUnit {
     Week,
@@ -1884,7 +1875,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_old_trailing_comma() {
-        // Ревизия спеки: висячая запятая перед `{` запрещена строго.
+        // Висячая запятая перед `{` запрещена строго.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h, { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
@@ -1921,7 +1912,7 @@ mod tests {
         }
     }
 
-    /// Ожидаемый AST примера из §1 спеки (`route.cyclo`).
+    /// Ожидаемый AST контрактного примера (`examples/valid/route.cyclo`).
     /// Следующий шаг: `parse()` обязан строить ровно это.
     fn route_ast() -> Schedule {
         let dur = |raw: &str, items: Vec<(&str, DurationUnit)>| Duration {

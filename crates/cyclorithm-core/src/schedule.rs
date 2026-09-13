@@ -1,5 +1,5 @@
 //! Тонкий фасад для встраивания (WASM-плейграунд): один вызов
-//! «исходник → JSON §6», без файловой системы.
+//! «исходник → JSON» (см. docs/reference/output.md), без файловой системы.
 //!
 //! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по главе ошибок):
 //! разбор → импорты (`cannot-read-import`/`schedule-in-import`) → объявления
@@ -138,7 +138,7 @@ fn pipeline(
     })
 }
 
-/// Развернуть расписание из строки в JSON §6 (компактный, ключи
+/// Развернуть расписание из строки в JSON (см. docs/reference/output.md; компактный, ключи
 /// `schedule,start,end,events`, у событий — `time,action,point`,
 /// `point_attrs`,`action_attrs`; без завершающего `\n`, в отличие от stdout CLI).
 /// `libs` — содержимое библиотек для `use`: `(путь, текст)`, путь пишется
@@ -170,7 +170,7 @@ pub fn run_schedule(
 }
 
 /// Первые `n` событий от `from_ms` (включительно) в пределах
-/// `[from_ms, from_ms + within_ms)` — JSON §6 (компактный, ключи
+/// `[from_ms, from_ms + within_ms)` — JSON (см. docs/reference/output.md; компактный, ключи
 /// `schedule,from,within,events`; `from` — резолвленная ISO-строка,
 /// `within` — миллисекунды числом; без завершающего `\n`).
 /// Пусто — `"events":[]`. Ошибки строк за пределами ответа не срабатывают.
@@ -246,7 +246,7 @@ pub fn run_timeline(
     Ok(out)
 }
 
-/// Поля события в JSON-объект без скобок (порядок — §6:
+/// Поля события в JSON-объект без скобок (порядок — см. docs/reference/output.md:
 /// `time,action,point,point_attrs,action_attrs`).
 fn push_event_fields(out: &mut String, e: &Event) {
     out.push_str("\"time\":");

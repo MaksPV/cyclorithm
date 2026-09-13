@@ -1,4 +1,4 @@
-//! Бинарь `cyclo` — тонкая обёртка над парсером и ядром (контракт §1 спеки).
+//! Бинарь `cyclo` — тонкая обёртка над парсером и ядром (контракт — см. docs/reference/cli.md).
 //!
 //! - `cyclo run FILE|- --start T --end T [--ndjson]` → окно в stdout, код 0;
 //! - `cyclo next FILE|- [--from T] [--within D] [-n K] [--ndjson]` →
@@ -9,7 +9,7 @@
 //! - неверные аргументы → usage в stderr, код 2.
 //!
 //! Источник `-` — stdin до конца; `use` тогда резолвится от cwd.
-//! Даты CLI — короткие формы (§1): `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`,
+//! Даты CLI — короткие формы (см. docs/reference/cli.md): `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`,
 //! `+DURATION` (для `--end` — от `--start`, иначе — от now).
 
 use cyclorithm_core::cond::{check_conditions, resolve_units, Value};
@@ -307,7 +307,7 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
         Err(code) => return code,
     };
     setup!(text, base, ast, tables, defs, {
-        // `--start`/`--end`: короткие формы (§1), якорь дельты `--end` — старт;
+        // `--start`/`--end`: короткие формы (см. docs/reference/cli.md), якорь дельты `--end` — старт;
         // битые значения — invalid-datetime; в объекте — эхо как передали.
         let now = now_ms();
         let start_ms = match parse_cli_datetime(start_raw, now) {
@@ -417,7 +417,7 @@ fn cmd_next(
     })
 }
 
-/// Событие в JSON-объект §6 (ключи — `time,action,point`,
+/// Событие в JSON-объект (см. docs/reference/output.md; ключи — `time,action,point`,
 /// `point_attrs`,`action_attrs`; порядок ключей словарей — порядок объявления:
 /// `preserve_order` в `Cargo.toml` сохраняет порядок вставки).
 fn event_json(e: &Event) -> serde_json::Value {
