@@ -17,8 +17,8 @@ use cyclorithm_parser::{Expr, Invocation, Schedule};
 
 use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
 use crate::datetime::parse_datetime;
-use crate::duration::{duration_ms, effective_offset_ms, root_period_ms};
-use crate::validate::{chain, instantiate, root_actual_ms, NameTables};
+use crate::duration::{duration_ms, root_period_ms};
+use crate::validate::{instantiate, plan_stmts, plan_stmts_with, root_actual_ms, NameTables};
 use crate::Error;
 
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
@@ -74,21 +74,14 @@ fn unfold_root_instance(
         out,
         seq,
     };
-    for st in &schedule.root.stmts {
-        let offset = effective_offset_ms(st, period_ms, &schedule.root.duration.raw)?;
-        unfold_stmt(
-            st,
-            Frame {
-                base,
-                offset,
-                limit: period_ms,
-                limit_raw: &schedule.root.duration.raw,
-                k,
-            },
-            &root_span,
-            &mut ctx,
-            &root_env,
-        )?;
+    let plans = plan_stmts(
+        &schedule.root.stmts,
+        period_ms,
+        &schedule.root.duration.raw,
+        tables,
+    )?;
+    for (st, pl) in schedule.root.stmts.iter().zip(plans.iter()) {
+        unfold_stmt(st, &pl.starts, base, k, &root_span, &mut ctx, &root_env)?;
     }
     Ok(())
 }
@@ -288,16 +281,6 @@ struct RawEvent {
     span: Span,
 }
 
-/// Кадр развёртки строки: база родителя, эффективное смещение,
-/// длительность родителя для цепочек и номер экземпляра корня.
-struct Frame<'a> {
-    base: i128,
-    offset: i64,
-    limit: i64,
-    limit_raw: &'a str,
-    k: i128,
-}
-
 /// Общее состояние обхода: таблицы, определения, атрибуты точек и аккумуляторы.
 struct Ctx<'a, 'n, 'o, 'm> {
     tables: &'a NameTables<'n>,
@@ -306,26 +289,27 @@ struct Ctx<'a, 'n, 'o, 'm> {
     out: &'o mut Vec<RawEvent>,
     seq: &'o mut usize,
 }
-/// Развёртка строки: цепочка экземпляров по `chain` (валидация уже прошла,
-/// счёт конечен). Порядок обхода задаёт `seq` для сортировки.
+/// Развёртка строки: старты экземпляров уже посчитаны `plan_stmts`
+/// (валидация прошла, счёт конечен). Порядок обхода задаёт `seq` для сортировки.
 /// `env` — динамическое окружение параметров цепочки вызовов.
 fn unfold_stmt(
     stmt: &cyclorithm_parser::Stmt,
-    frame: Frame<'_>,
+    starts: &[i64],
+    base: i128,
+    k: i128,
     parent: &Span,
     ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
 ) -> Result<(), Error> {
-    let (count, step) = chain(stmt, frame.offset, frame.limit, frame.limit_raw, ctx.tables)?;
-    for i in 0..count {
-        let base = frame.base + frame.offset as i128 + i as i128 * step as i128;
+    for &start in starts {
+        let at_base = base + start as i128;
         if let Some(cond) = &stmt.condition {
-            let at = i64::try_from(base).unwrap_or(i64::MAX);
+            let at = i64::try_from(at_base).unwrap_or(i64::MAX);
             if !eval_cond_with_env(cond, at, ctx.defs, env)? {
                 continue;
             }
         }
-        unfold(&stmt.invocation, base, frame.k, parent, ctx, env)?;
+        unfold(&stmt.invocation, at_base, k, parent, ctx, env)?;
     }
     Ok(())
 }
@@ -394,21 +378,9 @@ fn unfold(
                     start: clamp_i64(base),
                     end: clamp_i64(base + limit as i128),
                 };
-                for st in &cycle.stmts {
-                    let offset = effective_offset_ms(st, limit, &cycle.duration.raw)?;
-                    unfold_stmt(
-                        st,
-                        Frame {
-                            base,
-                            offset,
-                            limit,
-                            limit_raw: &cycle.duration.raw,
-                            k,
-                        },
-                        &child_span,
-                        ctx,
-                        &child,
-                    )?;
+                let plans = plan_stmts(&cycle.stmts, limit, &cycle.duration.raw, ctx.tables)?;
+                for (st, pl) in cycle.stmts.iter().zip(plans.iter()) {
+                    unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &child)?;
                 }
                 Ok(())
             }
@@ -458,38 +430,29 @@ fn unfold_routine(
         end: clamp_i64(base + limit as i128),
     };
     let inst = instantiate(routine, table_name, ctx.tables)?;
-    for st in &inst.body {
-        let offset = effective_offset_ms(st, limit, &table.duration.raw)?;
-        unfold_stmt(
-            st,
-            Frame {
-                base,
-                offset,
-                limit,
-                limit_raw: &table.duration.raw,
-                k,
-            },
-            &child_span,
-            ctx,
-            &child,
-        )?;
+    // Тело и пожары делят один таймлайн: занятость течёт из тела в пожары
+    // (как в `check_tables`, где списки склеиваются).
+    let mut occupied: Vec<(i64, i64)> = Vec::new();
+    let body = plan_stmts_with(
+        &inst.body,
+        limit,
+        &table.duration.raw,
+        ctx.tables,
+        &mut occupied,
+    )?;
+    for (st, pl) in inst.body.iter().zip(body.iter()) {
+        unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &child)?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
-    for st in &inst.firings {
-        let offset = effective_offset_ms(st, limit, &table.duration.raw)?;
-        unfold_stmt(
-            st,
-            Frame {
-                base,
-                offset,
-                limit,
-                limit_raw: &table.duration.raw,
-                k,
-            },
-            &child_span,
-            ctx,
-            &fresh,
-        )?;
+    let firings = plan_stmts_with(
+        &inst.firings,
+        limit,
+        &table.duration.raw,
+        ctx.tables,
+        &mut occupied,
+    )?;
+    for (st, pl) in inst.firings.iter().zip(firings.iter()) {
+        unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &fresh)?;
     }
     Ok(())
 }
@@ -1077,6 +1040,62 @@ schedule "Редкое" {
         let fe = expand(af, &tf, df, s, e).unwrap();
         assert_eq!(fe, expand(au, &tu, du, s, e).unwrap());
         assert_eq!(fe.len(), 36);
+    }
+
+    #[test]
+    fn fills_gaps_between_lessons() {
+        // Дыра 1:00–1:30 после LESSON1; хвост за 2:30 в окно не входит.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle LESSON duration = 1h { 0m: A.x(); } \
+            cycle BREAK20 duration = 20m { 0m: A.x(); } \
+            cycle BREAK5 duration = 5m { 0m: A.x(); } \
+            cycle DAY duration = 2h30m { \
+            0h: LESSON(); 1h30m: LESSON(); \
+            0h: fill gaps until 2h30m BREAK20(); \
+            0h: fill gaps until 2h30m BREAK5(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: DAY(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, d, s, e).unwrap()),
+            vec![
+                "2026-01-01T00:00:00",
+                "2026-01-01T01:00:00",
+                "2026-01-01T01:20:00",
+                "2026-01-01T01:25:00",
+                "2026-01-01T01:30:00",
+            ]
+        );
+    }
+
+    #[test]
+    fn gaps_without_until_fill_to_parent_end() {
+        // Без until добивается весь свободный хвост до конца цикла.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: R(); 0h: fill gaps R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let got = times(&expand(ast, &t, d, s, e).unwrap());
+        assert_eq!(got.len(), 24);
+        assert_eq!(got[1], "2026-01-01T01:00:00");
+        assert_eq!(got[23], "2026-01-01T23:00:00");
+    }
+
+    #[test]
+    fn gaps_condition_checked_per_instance() {
+        // Условие на fill gaps — на каждый экземпляр в его старте (в дыре).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: R(); [hour(at) < 2] 0h: fill gaps R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        assert_eq!(
+            times(&expand(ast, &t, d, s, e).unwrap()),
+            vec!["2026-01-01T00:00:00", "2026-01-01T01:00:00"]
+        );
     }
 
     #[test]
