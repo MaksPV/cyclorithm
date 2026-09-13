@@ -859,39 +859,55 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
         }
         Rule::fill_mod => {
             let mut finner = kind.into_inner();
-            let first = finner.next();
-            match first {
+            match finner.next() {
                 None => Ok(Repeat::Fill { until: None }),
-                Some(p) if p.as_rule() == Rule::neg_sign => {
-                    let dur = finner.next().expect("until: длительность после минуса");
-                    if p.as_span().end() != dur.as_span().start() {
-                        return Err(pest::error::Error::new_from_span(
-                            pest::error::ErrorVariant::CustomError {
-                                message: "minus in until must be glued to duration ('-2h')"
-                                    .to_owned(),
-                            },
-                            span,
-                        ));
+                Some(p) if p.as_rule() == Rule::gaps_mod => {
+                    let mut ginner = p.into_inner();
+                    let kw = ginner.next().expect("gaps_mod: ключевое слово");
+                    debug_assert_eq!(kw.as_rule(), Rule::kw_gaps);
+                    match ginner.next() {
+                        None => Ok(Repeat::FillGaps { until: None }),
+                        Some(f) => Ok(Repeat::FillGaps {
+                            until: Some(build_until_from(f, &mut ginner, span)?),
+                        }),
                     }
-                    Ok(Repeat::Fill {
-                        until: Some(Until {
-                            negative: true,
-                            duration: build_duration(dur),
-                        }),
-                    })
                 }
-                Some(p) => {
-                    debug_assert_eq!(p.as_rule(), Rule::duration);
-                    Ok(Repeat::Fill {
-                        until: Some(Until {
-                            negative: false,
-                            duration: build_duration(p),
-                        }),
-                    })
-                }
+                Some(p) => Ok(Repeat::Fill {
+                    until: Some(build_until_from(p, &mut finner, span)?),
+                }),
             }
         }
         r => unreachable!("repeat_mod: неожиданное правило {r:?}"),
+    }
+}
+
+/// Хвост `until [−]duration`: первый пункт уже прочитан, остальное — в `rest`.
+/// Минус слитно (`-2h` ок, `- 2h` — ошибка), как у смещений.
+fn build_until_from(
+    first: Pair<Rule>,
+    rest: &mut pest::iterators::Pairs<'_, Rule>,
+    span: pest::Span<'_>,
+) -> Result<Until, pest::error::Error<Rule>> {
+    if first.as_rule() == Rule::neg_sign {
+        let dur = rest.next().expect("until: длительность после минуса");
+        if first.as_span().end() != dur.as_span().start() {
+            return Err(pest::error::Error::new_from_span(
+                pest::error::ErrorVariant::CustomError {
+                    message: "minus in until must be glued to duration ('-2h')".to_owned(),
+                },
+                span,
+            ));
+        }
+        Ok(Until {
+            negative: true,
+            duration: build_duration(dur),
+        })
+    } else {
+        debug_assert_eq!(first.as_rule(), Rule::duration);
+        Ok(Until {
+            negative: false,
+            duration: build_duration(first),
+        })
     }
 }
 
@@ -1185,6 +1201,8 @@ pub enum Repeat {
     Times(String),
     /// `fill [until [−]T]`: мягкое заполнение до горизонта.
     Fill { until: Option<Until> },
+    /// `fill gaps [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
+    FillGaps { until: Option<Until> },
 }
 
 /// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
@@ -2152,6 +2170,76 @@ mod tests {
             s.schedule.root.stmts[0].invocation,
             Invocation::CycleCall { .. }
         ));
+    }
+
+    #[test]
+    fn parses_fill_gaps() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            6h: fill gaps R(); 7h: fill gaps until 12h R(); 8h: fill gaps until -2h R(); } }";
+        let s = parse(src).expect("fill gaps обязан разбираться");
+        assert_eq!(
+            s.schedule.root.stmts[0].repeat,
+            Repeat::FillGaps { until: None }
+        );
+        match &s.schedule.root.stmts[1].repeat {
+            Repeat::FillGaps { until: Some(u) } => {
+                assert!(!u.negative);
+                assert_eq!(u.raw(), "12h");
+            }
+            r => panic!("ожидался fill gaps until, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[2].repeat {
+            Repeat::FillGaps { until: Some(u) } => {
+                assert!(u.negative);
+                assert_eq!(u.raw(), "-2h");
+            }
+            r => panic!("ожидался fill gaps until -2h, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_space_after_gaps_until_minus() {
+        // Минус в `until` слитно: `fill gaps until - 2h` — синтаксическая ошибка.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill gaps until - 2h R(); } }";
+        assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn cycle_named_gaps_still_callable() {
+        // Позиционное распознавание: `fill gaps()` — fill на вызове цикла `gaps`.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle gaps duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill gaps(); } }";
+        let s = parse(src).expect("вызов цикла gaps обязан разбираться");
+        assert_eq!(
+            s.schedule.root.stmts[0].repeat,
+            Repeat::Fill { until: None }
+        );
+        assert!(matches!(
+            s.schedule.root.stmts[0].invocation,
+            Invocation::CycleCall { .. }
+        ));
+    }
+
+    #[test]
+    fn gaps_prefixed_cycle_not_split() {
+        // `gapss()` — имя целиком, а не модификатор `gaps` + вызов `s()`.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle gapsX duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: fill gapsX(); } }";
+        let s = parse(src).expect("вызов цикла gapsX обязан разбираться");
+        assert_eq!(
+            s.schedule.root.stmts[0].repeat,
+            Repeat::Fill { until: None }
+        );
+        match &s.schedule.root.stmts[0].invocation {
+            Invocation::CycleCall { name, .. } => assert_eq!(name, "gapsX"),
+            i => panic!("ожидался вызов цикла, получено {i:?}"),
+        }
     }
 
     #[test]

@@ -147,7 +147,14 @@ cond_arg    = { concat | bitor }
 stmt_body   = { repeat_mod ~ invocation | invocation }
 repeat_mod  = { repeat_n | fill_mod }
 repeat_n    = { "repeat" ~ number }
-fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
+// `gaps` — отдельный модификатор добивки пустот: `fill gaps [until [−]T]`.
+// Цикл с именем `gaps` (`6h: fill gaps();`) остаётся вызовом: при `(` вместо
+// `until` ветка `gaps_mod` откатывается, `gaps` читается именем вызова.
+fill_mod    = { "fill" ~ (gaps_mod | ("until" ~ neg_sign? ~ duration))? }
+gaps_mod    = { kw_gaps ~ !"(" ~ ("until" ~ neg_sign? ~ duration)? }
+// Атомарно, чтобы граница слова проверялась до неявных пробелов
+// (`gaps X` — модификатор, `gapsX` — имя цикла).
+kw_gaps     = @{ "gaps" ~ !word_tail }
 // Минус смещения — именованное правило, чтобы парсер его видел; слитность
 // (`-10m` ок, `- 10m` — ошибка) проверяется в `build_stmt` по спанам:
 // неявные пробелы `~` здесь пропускают пробел осознанно.
