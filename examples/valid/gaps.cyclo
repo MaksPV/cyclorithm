@@ -1,0 +1,51 @@
+schedule "Fill gaps" {
+  point BELL {
+    actions = [ring];
+  }
+
+  cycle LESSON
+    duration = 1h
+  {
+    0m: BELL.ring();
+  }
+
+  cycle BREAK_20
+    duration = 20m
+  {
+    0m: BELL.ring();
+  }
+
+  cycle BREAK_5
+    duration = 5m
+  {
+    0m: BELL.ring();
+  }
+
+  // Окно по умолчанию — до конца цикла: добивается и дыра, и хвост.
+  cycle DAY
+    duration = 4h
+  {
+    0h: LESSON();
+    1h30m: LESSON();
+    0h: fill gaps BREAK_20();
+    0h: fill gaps BREAK_5();
+  }
+
+  // Явное окно: всё за 2h30m не добивается.
+  cycle SHORT
+    duration = 4h
+  {
+    0h: LESSON();
+    1h30m: LESSON();
+    0h: fill gaps until 2h30m BREAK_20();
+    0h: fill gaps until 2h30m BREAK_5();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    0h: DAY();
+    6h: SHORT();
+  }
+}
