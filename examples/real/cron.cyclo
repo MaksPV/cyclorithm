@@ -14,15 +14,15 @@ schedule "Cron" {
 
   // Одна строка = один запуск: параметры задачи переезжают в action_attrs.
   cycle RUN(job) duration = 1m {
-    0m: JOB.fire() { cmd = job.cmd, args = job.args, user = job.user, timeout_s = job.timeout_s };
+    0m: JOB.fire() {"cmd": job.cmd, "args": job.args, "user": job.user, "timeout_s": job.timeout_s};
   }
 
   cycle HOURLY_PING duration = 1h {
-    0m: JOB.fire() { cmd = HEARTBEAT.cmd, args = HEARTBEAT.args, user = HEARTBEAT.user, timeout_s = HEARTBEAT.timeout_s };
+    0m: JOB.fire() {"cmd": HEARTBEAT.cmd, "args": HEARTBEAT.args, "user": HEARTBEAT.user, "timeout_s": HEARTBEAT.timeout_s};
   }
 
   cycle HOURLY_CLEAN duration = 1h {
-    0m: JOB.fire() { cmd = CLEANUP.cmd, args = CLEANUP.args, user = CLEANUP.user, timeout_s = CLEANUP.timeout_s };
+    0m: JOB.fire() {"cmd": CLEANUP.cmd, "args": CLEANUP.args, "user": CLEANUP.user, "timeout_s": CLEANUP.timeout_s};
   }
 
   root_cycle start_time = "2026-09-07T00:00:00", duration = 24h {
