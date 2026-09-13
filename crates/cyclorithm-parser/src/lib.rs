@@ -2373,6 +2373,73 @@ mod tests {
     }
 
     #[test]
+    fn glued_keywords_are_not_split() {
+        // Склейка ключевого слова с именем — синтаксическая ошибка,
+        // а не ключевое слово + укороченное имя (`constx` ≠ `const x`).
+        let schedule_tail = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        // Объявления без расписания — через parse_decls.
+        for src in [
+            "constx = 5;",
+            "funx(a) = a;",
+            "predx(at) = at == 1;",
+            "time_constx duration = 1h { a: 1m; };",
+        ] {
+            assert!(parse_decls(src).is_err(), "обязана быть ошибка: {src}");
+        }
+        // Конструкции с расписанием — через parse.
+        for src in [
+            format!("pointfoo {{ actions = [x]; }} {schedule_tail}"),
+            schedule_tail.replace("cycle R", "cycleabc"),
+            schedule_tail.replace("point A", "pointA"),
+        ] {
+            assert!(parse(&src).is_err(), "обязана быть ошибка: {src}");
+        }
+        // А правильные формы с пробелом разбираются (регрессия сборки kw_*).
+        let s = parse(schedule_tail).expect("эталонное расписание обязано разбираться");
+        assert_eq!(s.schedule.points[0].name, "A");
+        assert_eq!(s.schedule.cycles[0].name, "R");
+        let decls = parse_decls("const C = 5; fun F(a) = a; pred P(at) = at == 1;")
+            .expect("эталонные объявления обязаны разбираться");
+        assert_eq!(decls.len(), 3);
+    }
+
+    #[test]
+    fn until_dur_matches_duration_units() {
+        // Паритет `until_dur` и `duration`: все юниты и составные длительности
+        // доходят через `fill until` без потерь (дрейф двух копий ловится здесь).
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        for dur in [
+            "1w",
+            "2d",
+            "3h",
+            "4m",
+            "5s",
+            "6ms",
+            "1h 20m",
+            "21h35m",
+            "1w2d3h4m5s6ms",
+        ] {
+            let src = format!("{head} 6h: fill until {dur} R(); {tail}");
+            let s = parse(&src).expect("горизонт обязан разбираться: {dur}");
+            match &s.schedule.root.stmts[0].repeat {
+                Repeat::Fill { until: Some(u) } => assert_eq!(u.raw(), dur),
+                r => panic!("ожидался fill until, получено {r:?}"),
+            }
+            let src_gaps = format!("{head} 6h: fill gaps until {dur} R(); {tail}");
+            let g = parse(&src_gaps).expect("gaps-горизонт обязан разбираться: {dur}");
+            match &g.schedule.root.stmts[0].repeat {
+                Repeat::FillGaps { until: Some(u) } => assert_eq!(u.raw(), dur),
+                r => panic!("ожидался fill gaps until, получено {r:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn parses_conditions() {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
