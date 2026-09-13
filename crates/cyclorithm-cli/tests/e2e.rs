@@ -233,6 +233,24 @@ fn dict_names_matches_expected_json() {
 }
 
 #[test]
+fn index_matches_expected_json() {
+    // Индекс-выражения: `[0]`, `[-1]`, `[1 + 1]`, индекс-параметр, цепочка.
+    let out = run(&[
+        "run",
+        "../../examples/valid/index.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/index.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn routines_matches_expected_json() {
     // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
     // суббота — тишина (пустая рутина, обед только по будням).
@@ -407,6 +425,11 @@ fn validation_errors_go_to_stderr() {
             "bad_duplicate-attribute-block",
             "duplicate-attribute",
             "duplicate attribute 'a'",
+        ),
+        (
+            "bad_index-out-of-bounds",
+            "index-out-of-bounds",
+            "index out of bounds '2'",
         ),
         (
             "bad_unknown-table",

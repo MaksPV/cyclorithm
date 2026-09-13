@@ -1,0 +1,23 @@
+const TAGS = ["поток", "утро", "БЖД"];
+const N = 3;
+const LEC = {"tags": TAGS};
+
+schedule "Индексы" {
+  point BELL {
+    actions = [ring];
+  }
+
+  cycle LESSON(i) duration = 1h {
+    0m: BELL.ring() {
+      "first": TAGS[0],
+      "last": TAGS[-1],
+      "sum": TAGS[1 + 1],
+      "param": TAGS[i],
+      "nested": LEC.tags[N - 1]
+    };
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    9h: LESSON(1);
+  }
+}
