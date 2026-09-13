@@ -40,6 +40,7 @@ point_attrs = { "attrs" ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
 cycle       = { "cycle" ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 // Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (duplicate).
+// Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
 root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
 // Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
@@ -66,6 +67,8 @@ not_expr    = { kw_not? ~ (comparison | bool_group | call | truthy) }
 // `truth`-операндом, а не как группа с мусором после скобки.
 bool_group  = { "(" ~ or_expr ~ ")" }
 // Скобка с условием как значение (`(a==1)==1`): строится в `Truth`.
+// Текстуально совпадает с `bool_group`, но позиция другая (значение, не условие),
+// поэтому дублирование осознанно, объединять нельзя.
 // В `not_expr` идёт последней — после `call`, иначе вызовы предикатов
 // уехали бы в выражения вместо условий.
 truthy      = { cond_value }
@@ -103,7 +106,11 @@ shift_op    = { "<<" | ">>" }
 arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
-mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
+mul_op      = { floordiv_kw | floormod_kw | "*" | "/" | "%" }
+// Атомарные с границей слова: `a floordivx()` — не `a floordiv x()`,
+// а синтаксическая ошибка (как `or/and/not/gaps/bool_lit`).
+floordiv_kw = @{ "floordiv" ~ !word_tail }
+floormod_kw = @{ "floormod" ~ !word_tail }
 factor      = { neg_sign? ~ postfix }
 // Скобка только в `postfix_base`: дубль `"(" ~ bitor ~ ")"` здесь был бы
 // мёртвым (всё, что берёт он, берёт и `postfix`, а `postfix` пробуется раньше).
@@ -111,7 +118,9 @@ factor      = { neg_sign? ~ postfix }
 // внутри скобок полное условие, а не одно сравнение.
 truth       = { "(" ~ or_expr ~ ")" }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
-concat_term = { postfix | "(" ~ concat ~ ")" }
+// Скобка раньше `postfix`: иначе `("a" ++ "b")` съедается `postfix` через
+// `truth` и правый операнд `"x" ++ ("a" ++ "b")` строится как `Truth`, а не `Concat`.
+concat_term = { "(" ~ concat ~ ")" | postfix }
 // Постфикс (§3): доступ к полю мапы (`.name`, цепочки) и индекс массива
 // (`[0]`). `BELL.ring()` остаётся вызовом: различие по скобке —
 // `IDENT.IDENT(` разбирает `point_action` на уровне строк, а не выражение.
@@ -146,12 +155,28 @@ cond_arg    = { concat | bitor }
 // веткой — PEG сбрасывает позицию при неудаче первой.
 stmt_body   = { repeat_mod ~ invocation | invocation }
 repeat_mod  = { repeat_n | fill_mod }
-repeat_n    = { "repeat" ~ number }
+// Атомарное с границей слова: `repeat3` — имя цикла, а не `repeat 3`.
+// Граница приклеена к цифрам атомарно (`repeat_count`): отдельный `~ !word_tail`
+// после `number` ставить нельзя — `~` пропустил бы разделительный пробел
+// (`repeat 3 R()` ломался бы). `repeat 3R()` — синтаксическая ошибка.
+repeat_n    = { repeat_kw ~ repeat_count }
+repeat_kw   = @{ "repeat" ~ !word_tail }
+repeat_count = @{ ASCII_DIGIT+ ~ !word_tail }
 // `gaps` — отдельный модификатор добивки пустот: `fill gaps [until [−]T]`.
 // Цикл с именем `gaps` (`6h: fill gaps();`) остаётся вызовом: при `(` вместо
 // `until` ветка `gaps_mod` откатывается, `gaps` читается именем вызова.
-fill_mod    = { "fill" ~ (gaps_mod | ("until" ~ neg_sign? ~ duration))? }
-gaps_mod    = { kw_gaps ~ !"(" ~ ("until" ~ neg_sign? ~ duration)? }
+// Границы слова: `fillgaps()` — вызов цикла `fillgaps`, а не `fill` + `gaps()`.
+// Длительность горизонта — `until_dur`, а не `duration`: граница проверяется
+// сразу за последним компонентом атомарно (`fill until 1msx()` — синтаксическая
+// ошибка, а не `fill until 1ms` + `x()`). Отдельный `~ !word_tail` после
+// `duration` ставить нельзя — `~` пропустил бы разделительный пробел
+// (`fill until 12h R()` ломался бы). Разделители внутри `until_dur` выписаны
+// явно, т.к. атомарность отключает неявные пробелы (тот же набор, что у `duration`).
+fill_mod    = { fill_kw ~ (gaps_mod | (until_kw ~ neg_sign? ~ until_dur))? }
+fill_kw     = @{ "fill" ~ !word_tail }
+until_kw    = @{ "until" ~ !word_tail }
+until_dur   = ${ duration_item ~ ((WHITESPACE | COMMENT)* ~ duration_item)* ~ !word_tail }
+gaps_mod    = { kw_gaps ~ !"(" ~ (until_kw ~ neg_sign? ~ until_dur)? }
 // Атомарно, чтобы граница слова проверялась до неявных пробелов
 // (`gaps X` — модификатор, `gapsX` — имя цикла).
 kw_gaps     = @{ "gaps" ~ !word_tail }

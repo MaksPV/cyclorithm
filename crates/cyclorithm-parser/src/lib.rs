@@ -851,7 +851,7 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
         Rule::repeat_n => {
             let count = kind
                 .into_inner()
-                .next()
+                .find(|p| p.as_rule() == Rule::repeat_count)
                 .expect("repeat: число")
                 .as_str()
                 .to_owned();
@@ -859,6 +859,8 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
         }
         Rule::fill_mod => {
             let mut finner = kind.into_inner();
+            let fill_kw = finner.next().expect("fill_mod: ключевое слово");
+            debug_assert_eq!(fill_kw.as_rule(), Rule::fill_kw);
             match finner.next() {
                 None => Ok(Repeat::Fill { until: None }),
                 Some(p) if p.as_rule() == Rule::gaps_mod => {
@@ -881,16 +883,20 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
     }
 }
 
-/// Хвост `until [−]duration`: первый пункт уже прочитан, остальное — в `rest`.
+/// Хвост `until [−]duration`: первый пункт — `until_kw`, остальное — в `rest`.
+/// Длительность — `until_dur` (тот же набор `duration_item`, плюс граница слова).
 /// Минус слитно (`-2h` ок, `- 2h` — ошибка), как у смещений.
 fn build_until_from(
     first: Pair<Rule>,
     rest: &mut pest::iterators::Pairs<'_, Rule>,
     span: pest::Span<'_>,
 ) -> Result<Until, pest::error::Error<Rule>> {
-    if first.as_rule() == Rule::neg_sign {
+    debug_assert_eq!(first.as_rule(), Rule::until_kw);
+    let second = rest.next().expect("until: длительность или минус");
+    if second.as_rule() == Rule::neg_sign {
         let dur = rest.next().expect("until: длительность после минуса");
-        if first.as_span().end() != dur.as_span().start() {
+        debug_assert_eq!(dur.as_rule(), Rule::until_dur);
+        if second.as_span().end() != dur.as_span().start() {
             return Err(pest::error::Error::new_from_span(
                 pest::error::ErrorVariant::CustomError {
                     message: "minus in until must be glued to duration ('-2h')".to_owned(),
@@ -903,10 +909,10 @@ fn build_until_from(
             duration: build_duration(dur),
         })
     } else {
-        debug_assert_eq!(first.as_rule(), Rule::duration);
+        debug_assert_eq!(second.as_rule(), Rule::until_dur);
         Ok(Until {
             negative: false,
-            duration: build_duration(first),
+            duration: build_duration(second),
         })
     }
 }
@@ -2240,6 +2246,103 @@ mod tests {
             Invocation::CycleCall { name, .. } => assert_eq!(name, "gapsX"),
             i => panic!("ожидался вызов цикла, получено {i:?}"),
         }
+    }
+
+    #[test]
+    fn fill_prefixed_cycle_not_split() {
+        // `fillgaps()`/`fillx()`/`filluntil()` — имена целиком, а не `fill` + вызов.
+        for name in ["fillgaps", "fillx", "filluntil"] {
+            let src = format!(
+                "schedule \"T\" {{ point A {{ actions = [x]; }} \
+                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 6h: {name}(); }} }}"
+            );
+            let s = parse(&src).expect("вызов цикла обязан разбираться");
+            assert_eq!(s.schedule.root.stmts[0].repeat, Repeat::Once);
+            match &s.schedule.root.stmts[0].invocation {
+                Invocation::CycleCall { name: got, .. } => assert_eq!(got, name),
+                i => panic!("ожидался вызов цикла, получено {i:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn repeat_count_needs_word_boundary() {
+        // `repeat3()` — вызов цикла, `repeat3 C()` и `repeat 3R()` — синтаксис.
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        let s = parse(&format!("{head} 6h: repeat3(); {tail}"))
+            .expect("вызов цикла repeat3 обязан разбираться");
+        assert_eq!(s.schedule.root.stmts[0].repeat, Repeat::Once);
+        match &s.schedule.root.stmts[0].invocation {
+            Invocation::CycleCall { name, .. } => assert_eq!(name, "repeat3"),
+            i => panic!("ожидался вызов цикла, получено {i:?}"),
+        }
+        assert!(parse(&format!("{head} 6h: repeat3 C(); {tail}")).is_err());
+        assert!(parse(&format!("{head} 6h: repeat 3R(); {tail}")).is_err());
+    }
+
+    #[test]
+    fn until_duration_needs_word_boundary() {
+        // `fill until 1msx()` — синтаксис, а не `fill until 1ms` + `x()`;
+        // многокомпонентная длительность с пробелами при этом валидна.
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        assert!(parse(&format!("{head} 6h: fill until 1msx(); {tail}")).is_err());
+        assert!(parse(&format!("{head} 6h: fill gaps until 2hx(); {tail}")).is_err());
+        let s = parse(&format!("{head} 6h: fill until 1h 20m R(); {tail}"))
+            .expect("fill until с составной длительностью обязан разбираться");
+        match &s.schedule.root.stmts[0].repeat {
+            Repeat::Fill { until: Some(u) } => assert_eq!(u.raw(), "1h 20m"),
+            r => panic!("ожидался fill until, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn floordiv_needs_word_boundary() {
+        // `floordivx`/`floormodx` — не операторы, а синтаксическая ошибка.
+        let num = |n: &str| Expr::Num(n.to_owned());
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        for (kw, op) in [
+            ("floordiv", ArithOp::FloorDiv),
+            ("floormod", ArithOp::FloorMod),
+        ] {
+            let src = format!("{head} [7 {kw} 2 == 3] 6h: R(); {tail}");
+            let s = parse(&src).expect("оператор обязан разбираться");
+            assert_eq!(
+                s.schedule.root.stmts[0].condition,
+                Some(Cond::Cmp {
+                    op: CmpOp::Eq,
+                    left: Expr::Bin {
+                        op,
+                        left: Box::new(num("7")),
+                        right: Box::new(num("2")),
+                    },
+                    right: CondRhs::One(num("3")),
+                })
+            );
+            assert!(parse(&format!("{head} [7 {kw}x 2 == 3] 6h: R(); {tail}")).is_err());
+        }
+    }
+
+    #[test]
+    fn concat_paren_stays_concat() {
+        // Правый операнд `"x" ++ ("a" ++ "b")` — `Concat`, а не `Truth`.
+        let decls = parse_decls("const C = \"x\" ++ (\"a\" ++ \"b\");")
+            .expect("склейка со скобками обязана разбираться");
+        let str = |v: &str| Expr::Str(v.to_owned());
+        assert_eq!(
+            decls.as_slice(),
+            &[Decl::Const {
+                name: "C".to_owned(),
+                body: Expr::Concat(vec![str("x"), Expr::Concat(vec![str("a"), str("b")]),]),
+            }]
+        );
     }
 
     #[test]
