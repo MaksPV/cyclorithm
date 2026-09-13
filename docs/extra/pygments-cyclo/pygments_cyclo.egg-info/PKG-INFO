@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: pygments-cyclo
+Version: 0.1.0
+Summary: Pygments lexer for the Cyclorithm DSL (.cyclo)
+Requires-Python: >=3.9
+Requires-Dist: pygments>=2.0
