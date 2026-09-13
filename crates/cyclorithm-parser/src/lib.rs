@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 use pest::Parser as _;
 use pest_derive::Parser;
 
-/// Парсер грамматики из §3 спеки (см. `grammar.pest`).
+/// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 pub struct CycloParser;
@@ -353,7 +353,7 @@ fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
         condition = Some(build_cond(cond));
         first = inner.next().expect("stmt: смещение или минус");
     }
-    // Минус смещения (§3 спеки): пишется слитно (`-10m` ок, `- 10m` — ошибка).
+    // Минус смещения: пишется слитно (`-10m` ок, `- 10m` — ошибка).
     // Грамматика пробел пропускает осознанно — границу проверяем по спанам.
     let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
         let offset_pair = inner.next().expect("stmt: длительность после минуса");
@@ -475,7 +475,7 @@ fn build_invocation(call: Pair<Rule>) -> Invocation {
     }
 }
 
-/// Условие строки (§3 спеки): логика над сравнениями.
+/// Условие строки: логика над сравнениями.
 fn build_cond(pair: Pair<Rule>) -> Cond {
     debug_assert_eq!(pair.as_rule(), Rule::condition);
     build_or(pair.into_inner().next().expect("condition: or_expr"))
@@ -768,7 +768,7 @@ fn build_factor(pair: Pair<Rule>) -> Expr {
     }
 }
 
-/// Постфикс (§3 спеки): база и цепочка `.поле` / `[n]`, свёртка слева.
+/// Постфикс: база и цепочка `.поле` / `[n]`, свёртка слева.
 fn build_postfix(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::postfix);
     let mut inner = pair.into_inner();
@@ -987,7 +987,7 @@ fn unquote(pair: Pair<Rule>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AST — строго по §3 спеки, без валидации.
+// AST — строго по грамматике, без валидации.
 // Проверки слаги главы ошибок — дело ядра над уже разобранным AST: парсер принимает
 // и `1h2h`, и переполнение, и `duration = 0`, ничего числового не решает.
 // Поэтому числа и сырой текст длительностей хранятся как есть.
@@ -1001,7 +1001,7 @@ pub struct SourceFile {
     pub schedule: Schedule,
 }
 
-/// Объявление верхнего уровня (§3 спеки).
+/// Объявление верхнего уровня.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decl {
     Const {
@@ -1055,7 +1055,7 @@ pub struct Point {
 }
 
 /// `cycle CITY_ROUTE duration = 1h20m { ... }`
-/// (`LESSON(subj)` — параметры для данных строк, см. черновик `attrs.md`).
+/// (`LESSON(subj)` — параметры для данных строк).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cycle {
     pub name: String,
@@ -1064,7 +1064,7 @@ pub struct Cycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня (§3).
+/// `routine MONDAY(TC) { 1st: LESSON(...); }`: шаблон дня.
 /// `params[0]` — таблица (`time_const`), остальные — данные как у цикла.
 /// Вызов routine — `CycleCall` с таблицей первым аргументом
 /// (`MONDAY(DAY)`); routine от цикла отличает валидация по имени.
@@ -1145,7 +1145,7 @@ pub enum CondRhs {
 }
 
 /// Выражение условия: числа — сырым текстом, `at` — время строки.
-/// `Bool`/`Map`/`Array` — JSON-значения (черновик `attrs.md`): литералы
+/// `Bool`/`Map`/`Array` — JSON-значения: литералы
 /// и доступ `.поле` / `[n]`; вычисляются в момент строки.
 /// `Bool` в сравнениях запрещён (`type-mismatch`): живёт только ради
 /// `Truthy(true/false)` и литералов в мапах. `Truth` — обратный мостик
@@ -1210,7 +1210,7 @@ pub enum ArithOp {
     FloorMod,
 }
 
-/// Битовый оператор (§4.13 спеки): только над числами, с wrap-семантикой.
+/// Битовый оператор (см. docs/reference/expressions.md): только над числами, с wrap-семантикой.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BitOp {
     Shl,
@@ -1231,7 +1231,7 @@ impl Stmt {
     }
 }
 
-/// Модификатор повторов строки (§3 спеки): `repeat N` / `fill` / `fill until`.
+/// Модификатор повторов строки (см. docs/reference/semantics.md): `repeat N` / `fill` / `fill until`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Repeat {
     /// Без модификатора: одиночный вызов.
@@ -1884,7 +1884,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_old_trailing_comma() {
-        // Ревизия спеки: висячая запятая перед `{` запрещена строго.
+        // Висячая запятая перед `{` запрещена строго.
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h, { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
@@ -1921,7 +1921,7 @@ mod tests {
         }
     }
 
-    /// Ожидаемый AST примера из §1 спеки (`route.cyclo`).
+    /// Ожидаемый AST контрактного примера (`examples/valid/route.cyclo`).
     /// Следующий шаг: `parse()` обязан строить ровно это.
     fn route_ast() -> Schedule {
         let dur = |raw: &str, items: Vec<(&str, DurationUnit)>| Duration {

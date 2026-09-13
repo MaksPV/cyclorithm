@@ -1,4 +1,4 @@
-//! Сквозные тесты контракта CLI (§1 спеки): JSON в stdout, ошибки в stderr.
+//! Сквозные тесты контракта CLI (см. docs/reference/cli.md): JSON в stdout, ошибки в stderr.
 
 use std::process::{Command, Output, Stdio};
 
