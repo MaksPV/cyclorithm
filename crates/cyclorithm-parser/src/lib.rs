@@ -760,11 +760,10 @@ fn build_postfix(pair: Pair<Rule>) -> Expr {
                 };
             }
             Rule::index_access => {
-                let text = suffix.as_str();
-                let index = text[1..text.len() - 1].to_owned();
+                let expr = suffix.into_inner().next().expect("index_access: выражение");
                 acc = Expr::Index {
                     base: Box::new(acc),
-                    index,
+                    index: Box::new(build_call_arg(expr)),
                 };
             }
             r => unreachable!("postfix: неожиданный суффикс {r:?}"),
@@ -1109,7 +1108,8 @@ pub enum Expr {
     },
     Index {
         base: Box<Expr>,
-        index: String,
+        /// Выражение-индекс (число); отрицательное считается с конца массива.
+        index: Box<Expr>,
     },
     At,
     Name(String),
@@ -1640,7 +1640,7 @@ mod tests {
                     op: CmpOp::Eq,
                     left: Expr::Index {
                         base: Box::new(subj("tags")),
-                        index: "0".to_owned(),
+                        index: Box::new(Expr::Num("0".to_owned())),
                     },
                     right: CondRhs::One(Expr::Str("a".to_owned())),
                 },
@@ -1787,39 +1787,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_spaced_index() {
-        // Индекс атомарный: пробелы внутри — синтаксис.
-        for row in [
-            "subj.tags[ 0] == \"a\"",
-            "subj.tags[0 ] == \"a\"",
-            "subj.tags[- 1] == \"a\"",
-        ] {
-            let src = format!(
-                "schedule \"T\" {{ point A {{ actions = [x]; }} \
-                root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ [{row}] 0m: A.x(); }} }}"
-            );
-            assert!(parse(&src).is_err(), "для {row:?}");
-        }
-        // Слитный минус разбирается (границы — integer-out-of-range в ядре, не синтаксис).
+    fn parses_index_expressions() {
+        // Индекс — выражение: пробелы, арифметика и минус допустимы.
         let src = "schedule \"T\" { point A { actions = [x]; } \
-            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { [subj.tags[-1] == \"a\"] 0m: A.x(); } }";
-        let cond = parse(src)
-            .expect("слитный минус обязан разбираться")
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { [subj.tags[ i + 1 ] == \"a\"] 0m: A.x(); [subj.tags[-1] == \"a\"] 0m: A.x(); } }";
+        let stmts = parse(src)
+            .expect("индекс-выражения обязаны разбираться")
             .schedule
             .root
-            .stmts
-            .into_iter()
-            .next()
-            .expect("строка есть")
-            .condition
-            .expect("условие есть");
-        match cond {
+            .stmts;
+        let index_of = |st: &Stmt| match st.condition.clone().expect("условие есть") {
             Cond::Cmp { left, .. } => match left {
-                Expr::Index { index, .. } => assert_eq!(index, "-1"),
+                Expr::Index { index, .. } => *index,
                 e => panic!("ожидался индекс, получено {e:?}"),
             },
             c => panic!("ожидалось сравнение, получено {c:?}"),
-        }
+        };
+        assert_eq!(
+            index_of(&stmts[0]),
+            Expr::Bin {
+                op: ArithOp::Add,
+                left: Box::new(Expr::Name("i".to_owned())),
+                right: Box::new(Expr::Num("1".to_owned())),
+            }
+        );
+        assert_eq!(
+            index_of(&stmts[1]),
+            Expr::Neg(Box::new(Expr::Num("1".to_owned())))
+        );
     }
 
     #[test]
