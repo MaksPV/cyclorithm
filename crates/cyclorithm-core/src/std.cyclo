@@ -1,4 +1,5 @@
-// std.cyclo — системная библиотека. Движок знает только §1, всё ниже — текст.
+// std.cyclo — системная прелюдия (календарь и словарь): подключается всегда,
+// `use` не нужен. Имена с `__` видны только своему юниту.
 
 const DAY = 86400000;
 
@@ -33,7 +34,7 @@ fun is_leap(t) = (year(t) % 4 == 0 and (year(t) % 100 != 0 or year(t) % 400 == 0
 fun days_in_month(t) = 31 - (month(t) == 4 or month(t) == 6 or month(t) == 9 or month(t) == 11)
   - (month(t) == 2) * (3 - is_leap(t));
 
-// Строковые формы (для сравнений дат, см. §7).
+// Строковые формы дат (для сравнений вида `datestr(at) == "..."`).
 fun datestr(t) = pad(year(t), 4) ++ "-" ++ pad(month(t), 2) ++ "-" ++ pad(day(t), 2);
 fun datetimestr(t) = datestr(t) ++ "T" ++ pad(hour(t), 2) ++ ":" ++ pad(minute(t), 2)
   ++ ":" ++ pad(second(t), 2) ++ "." ++ pad(millisecond(t), 3);
@@ -65,7 +66,7 @@ pred autumn(at) = month(at) == (9 or 10 or 11);
 pred winter(at) = month(at) == (12 or 1 or 2);
 
 // Детерминированный ГСЧ: xorshift32 (13/17/5) от младших 32 бит времени.
-// Только wrap-операции (`&`, `^`, `<<`, логический `>>`): `E12` невозможен
+// Только wrap-операции (`&`, `^`, `<<`, логический `>>`): `type-mismatch` невозможен
 // по построению. Нулевой сид (t кратно 2^32 мс) даёт 0 — как у xorshift.
 fun __rands(t) = t & 4294967295;
 fun __rand1(t) = __rands(t) ^ ((__rands(t) << 13) & 4294967295);

@@ -1,0 +1,8 @@
+{
+  "schedule": "Индексы",
+  "start": "2026-01-01T00:00:00",
+  "end": "2026-01-02T00:00:00",
+  "events": [
+    {"time": "2026-01-01T09:00:00", "action": "ring", "point": "BELL", "point_attrs": {}, "action_attrs": {"first": "поток", "last": "БЖД", "sum": "БЖД", "param": "утро", "nested": "БЖД"}}
+  ]
+}

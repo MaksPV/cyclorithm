@@ -1,6 +1,9 @@
-// Cyclorithm grammar — дословно §3 спеки (EBNF почти 1:1).
+// Формальная грамматика языка (PEG). Правила словами и примеры —
+// в `docs/reference/syntax.md` (тот файл ссылается сюда как на EBNF-источник).
+// Расширения сверх «школьного» EBNF (`kw_*` с границей слова, `until_dur`,
+// `repeat_count`) — защита от PEG-склеек, см. комментарии на местах.
 //
-// Осознанно пропуски грамматики (ловит валидация, E05):
+// Осознанно пропуски грамматики (ловит валидация, invalid-duration):
 // - порядок/уникальность компонентов длительности (`1h2h`, `30s1d`);
 // - переполнение i64 и нулевой период root_cycle.
 //
@@ -10,19 +13,19 @@ file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
 // Единица импорта: объявления и свои use, расписание — опционально
-// (его наличие бракует резолвер кодом E14, а не синтаксис).
+// (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
-use_decl    = { "use" ~ string ~ ";" }
-schedule    = { "schedule" ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
+use_decl    = { kw_use ~ string ~ ";" }
+schedule    = { kw_schedule ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
 decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
-const_decl  = { "const" ~ IDENT ~ "=" ~ decl_value ~ ";" }
-fun_decl    = { "fun" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
-pred_decl   = { "pred" ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
-// Таблица слотов (§3): именованные смещения для routine; `->` — слот
+const_decl  = { kw_const ~ IDENT ~ "=" ~ decl_value ~ ";" }
+fun_decl    = { kw_fun ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
+pred_decl   = { kw_pred ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
+// Таблица слотов: именованные смещения для routine; `->` — слот
 // и собственный вызов в одном лице (пожар при каждом инстанцировании).
-time_const_decl = { "time_const" ~ IDENT ~ "duration" ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
+time_const_decl = { kw_time_const ~ IDENT ~ kw_duration ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
 slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
 slot_fire   = { "->" ~ invocation }
 // Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
@@ -31,21 +34,32 @@ slot_fire   = { "->" ~ invocation }
 label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
 // Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
+// Дублирует `cond_value` осознанно (единый верхний уровень выражений):
+// при новом операторе править оба, чтобы не разъезжаться.
 decl_value  = { concat | bitor }
-point       = { "point" ~ IDENT ~ "{" ~ "actions" ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
+point       = { kw_point ~ IDENT ~ "{" ~ kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
-// Атрибуты точки (§3 спеки): только литерал или ссылка на константу-мапу,
-// строк `k = v;` нет. Дубли ключей ловит валидация (E15), не синтаксис.
-point_attrs = { "attrs" ~ "=" ~ attrs_src ~ ";" }
+// Атрибуты точки: только литерал или ссылка на константу-мапу,
+// строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
+point_attrs = { kw_attrs ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
-cycle       = { "cycle" ~ IDENT ~ cycle_params? ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-// Параметры цикла (§3): дубли (`cycle C(a, a)`) ловит валидация (E04).
+// Цикл можно назвать `duration` (`cycle duration duration = 1h {}` валиден:
+// первый `duration` съедает `IDENT` как имя). А `cycle duration = 1h {}` —
+// синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
+// Неоднозначность разрешается в пользу имени — осознанно.
+// Производный цикл — зеркало имеющегося (`o' = duration − o`, остальное как есть):
+// `cycle BACK reverse FWD;`. Параметры и длительность наследуются, тела нет.
+// `reverse` — ключевое слово с границей (`reversex` — имя, не модификатор).
+cycle       = { kw_cycle ~ IDENT ~ (cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+kw_reverse  = @{ "reverse" ~ !word_tail }
+// Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
+// Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
-root_cycle  = { "root_cycle" ~ "start_time" ~ "=" ~ string ~ "," ~ "duration" ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
-// Шаблон дня (§3): первый параметр — таблица (`time_const`), остальные —
+root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+// Шаблон дня: первый параметр — таблица (`time_const`), остальные —
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
-routine     = { "routine" ~ IDENT ~ cycle_params? ~ "{" ~ routine_stmt* ~ "}" }
+routine     = { kw_routine ~ IDENT ~ cycle_params? ~ "{" ~ routine_stmt* ~ "}" }
 routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
 // Сначала длительность, потом метка: иначе `45m` съестся как метка.
 // Граница `!word_tail` — чтобы `1st` не резалось на длительность `1s` + мусор:
@@ -53,29 +67,65 @@ routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
 // Минус — только у длительности (`-10m` от конца таблицы; `-1st` нет).
 routine_offset = { neg_sign? ~ duration ~ !word_tail | label }
 stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
-// Условия (§3 спеки). `concat` раньше `bitor`: иначе `bitor` съедает
-// строковый префикс. Смешение типов разбирается, бракуется валидацией (E12).
+// Условия. `concat` раньше `bitor`: иначе `bitor` съедает
+// строковый префикс. Смешение типов разбирается, бракуется валидацией (type-mismatch).
 condition_block = { "[" ~ condition ~ "]" }
 condition   = { or_expr }
 or_expr     = { and_expr ~ (kw_or ~ and_expr)* }
 and_expr    = { not_expr ~ (kw_and ~ not_expr)* }
-not_expr    = { kw_not? ~ (bool_group | comparison | call) }
+not_expr    = { kw_not? ~ (comparison | bool_group | call | truthy) }
 // Скобочная группа — прозрачный атом уровня условий (как в C/Python):
 // приоритет задаёт пользователь, узла в AST нет (сборка вернёт внутреннее).
+// `comparison` раньше группы: `(a==1)==1` читается как сравнение с
+// `truth`-операндом, а не как группа с мусором после скобки.
 bool_group  = { "(" ~ or_expr ~ ")" }
+// Скобка с условием как значение (`(a==1)==1`): строится в `Truth`.
+// Текстуально совпадает с `bool_group`, но позиция другая (значение, не условие),
+// поэтому дублирование осознанно, объединять нельзя.
+// В `not_expr` идёт последней — после `call`, иначе вызовы предикатов
+// уехали бы в выражения вместо условий.
+truthy      = { cond_value }
 // `notx == 1` не должно читаться как `not (x == 1)`.
 // Атомарные: пробел между словом и границей запрещён, иначе lookahead
 // смотрел бы символ после пробелов, а не сразу за словом.
 kw_or       = @{ "or" ~ !word_tail }
 kw_and      = @{ "and" ~ !word_tail }
 kw_not      = @{ "not" ~ !word_tail }
+// Верхнеуровневые ключевые слова с той же границей: иначе `constx = 5;`
+// разберётся как `const x = 5;`, а `pointfoo { ... }` — как `point foo { ... }`.
+// Составные (`root_cycle`, `time_const`, `start_time`) — целиком, `_` внутри ок.
+kw_use        = @{ "use" ~ !word_tail }
+kw_schedule   = @{ "schedule" ~ !word_tail }
+kw_const      = @{ "const" ~ !word_tail }
+kw_fun        = @{ "fun" ~ !word_tail }
+kw_pred       = @{ "pred" ~ !word_tail }
+kw_time_const = @{ "time_const" ~ !word_tail }
+kw_point      = @{ "point" ~ !word_tail }
+kw_actions    = @{ "actions" ~ !word_tail }
+kw_attrs      = @{ "attrs" ~ !word_tail }
+kw_cycle      = @{ "cycle" ~ !word_tail }
+kw_routine    = @{ "routine" ~ !word_tail }
+kw_root_cycle = @{ "root_cycle" ~ !word_tail }
+kw_start_time = @{ "start_time" ~ !word_tail }
+kw_duration   = @{ "duration" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
 cmp_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
-cmp_side    = { concat | bitor }
-cmp_right   = { concat | bitor | alternation }
-alternation = { "(" ~ bitor ~ (kw_or ~ bitor)+ ~ ")" }
+// Общее значение-операнд (склейка или битовое): один раз здесь,
+// переиспользуется в `truthy`, чтобы не разъезжаться.
+cond_value  = { concat | bitor }
+// Операнды сравнения — та же арифметика, что везде: `(1 << 63) + ...`
+// обязана разбираться как число, а не как условие. Скобочное условие
+// (`(a==1)`) доходит до `truth` через `postfix_base` само; отдельный
+// `truth` здесь не нужен. Справа `alternation` раньше всего: `(1 or 2)` —
+// числовая альтернация, а не условие (иначе сломается `at == (1 or 2)`).
+// Слева альтернации нет (только справа).
+cmp_side    = { cond_value }
+cmp_right   = { alternation | cond_value }
+alternation = { "(" ~ cond_value ~ (kw_or ~ cond_value)+ ~ ")" }
+// Ветки — те же значения, что в операндах (включая склейку):
+// `("a" ++ "b" or "c")` валидно, как снаружи.
 // Битовые уровни (слабее сложения, сильнее сравнения; внутри — как в Python:
 // `|` слабее `^`, `^` слабее `&`, сдвиги сильнее всех трёх).
 bitor       = { bitxor ~ ("|" ~ bitxor)* }
@@ -86,37 +136,46 @@ shift_op    = { "<<" | ">>" }
 arith       = { term ~ (add_op ~ term)* }
 add_op      = { "+" | "-" }
 term        = { factor ~ (mul_op ~ factor)* }
-mul_op      = { "floordiv" | "floormod" | "*" | "/" | "%" }
-factor      = { neg_sign? ~ (postfix | "(" ~ bitor ~ ")") }
+mul_op      = { floordiv_kw | floormod_kw | "*" | "/" | "%" }
+// Атомарные с границей слова: `a floordivx()` — не `a floordiv x()`,
+// а синтаксическая ошибка (как `or/and/not/gaps/bool_lit`).
+floordiv_kw = @{ "floordiv" ~ !word_tail }
+floormod_kw = @{ "floormod" ~ !word_tail }
+factor      = { neg_sign? ~ postfix }
+// Скобка только в `postfix_base`: дубль `"(" ~ bitor ~ ")"` здесь был бы
+// мёртвым (всё, что берёт он, берёт и `postfix`, а `postfix` пробуется раньше).
 // Мостик булева в арифметику (как в C: истина — 1, ложь — 0):
 // внутри скобок полное условие, а не одно сравнение.
 truth       = { "(" ~ or_expr ~ ")" }
 concat      = { concat_term ~ ("++" ~ concat_term)+ }
-concat_term = { postfix | "(" ~ concat ~ ")" }
-// Постфикс (§3): доступ к полю мапы (`.name`, цепочки) и индекс массива
+// Скобка раньше `postfix`: иначе `("a" ++ "b")` съедается `postfix` через
+// `truth` и правый операнд `"x" ++ ("a" ++ "b")` строится как `Truth`, а не `Concat`.
+concat_term = { "(" ~ concat ~ ")" | postfix }
+// Постфикс: доступ к полю мапы (`.name`, цепочки) и индекс массива
 // (`[0]`). `BELL.ring()` остаётся вызовом: различие по скобке —
 // `IDENT.IDENT(` разбирает `point_action` на уровне строк, а не выражение.
-// Вычисляемых ключей нет: в скобках только целочисленный литерал
-// (минус пишется слитно, как у смещений; `-1` даст E12 в момент строки).
+// Индекс — выражение уровня `cond_arg` (имена, `at`, арифметика, вызовы);
+// отрицательное значение считается с конца массива.
 postfix     = { postfix_base ~ postfix_suffix* }
 // Порядок как у операндов: `call` раньше `bool_lit`, иначе `true(x)`
 // режется на литерал + мусор; `bool_lit` раньше `IDENT`, иначе `true`
-// читается именем. `truth` раньше скобок — как было в `factor`.
-postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | truth | "(" ~ bitor ~ ")" }
+// читается именем. Арифметическая скобка раньше `truth`: `(2+3)` — число 5,
+// а не истина от `5`; условие в скобках (`(at>=K)`) не разбирается как
+// `bitor` и падает в `truth` как раньше.
+postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
 postfix_suffix = { field_access | index_access }
 field_access = { "." ~ IDENT }
-// Атомарное: пробелы внутри скобок запрещены (`m[0]` ок, `m[ 0]` — ошибка),
-// минус пишется слитно (`m[-1]`).
-index_access = @{ "[" ~ "-"? ~ ASCII_DIGIT+ ~ "]" }
-// JSON-литералы (§3): содержимое — только литералы (чистые данные,
-// без вычислений). Висячих запятых нет (строго, как везде).
+// Индекс — выражение: `m[0]`, `m[i + 1]`, `m[-1]`; пробелы внутри — обычные.
+index_access = { "[" ~ cond_arg ~ "]" }
+// JSON-значения: словари и массивы. Значения — выражения уровня `cond_arg`
+// (литералы, имена/`at`, арифметика, склейка, вызовы): вычисляются в момент
+// использования, видимость динамическая. Висячих запятых нет (строго, как везде).
 map_lit     = { "{" ~ (map_pair ~ ("," ~ map_pair)*)? ~ "}" }
 // Ключ — отдельное правило (не `string`): атомарное строковое правило
 // пары не даёт, а ключ нужен сборке отдельно от значения.
-map_pair    = { map_key ~ ":" ~ literal_value }
+map_pair    = { map_key ~ ":" ~ cond_arg }
 map_key     = ${ "\"" ~ string_char* ~ "\"" }
-array_lit   = { "[" ~ (literal_value ~ ("," ~ literal_value)*)? ~ "]" }
-literal_value = { number | string | bool_lit | map_lit | array_lit }
+array_lit   = { "[" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ "]" }
 // Атомарное с границей слова: `truex` — имя, а не литерал + мусор.
 bool_lit    = @{ ("true" | "false") ~ !word_tail }
 call        = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
@@ -126,24 +185,53 @@ cond_arg    = { concat | bitor }
 // веткой — PEG сбрасывает позицию при неудаче первой.
 stmt_body   = { repeat_mod ~ invocation | invocation }
 repeat_mod  = { repeat_n | fill_mod }
-repeat_n    = { "repeat" ~ number }
-fill_mod    = { "fill" ~ ("until" ~ neg_sign? ~ duration)? }
+// Атомарное с границей слова: `repeat3` — имя цикла, а не `repeat 3`.
+// Граница приклеена к цифрам атомарно (`repeat_count`): отдельный `~ !word_tail`
+// после `number` ставить нельзя — `~` пропустил бы разделительный пробел
+// (`repeat 3 R()` ломался бы). `repeat 3R()` — синтаксическая ошибка.
+repeat_n    = { repeat_kw ~ repeat_count }
+repeat_kw   = @{ "repeat" ~ !word_tail }
+repeat_count = @{ ASCII_DIGIT+ ~ !word_tail }
+// `gaps` — отдельный модификатор добивки пустот: `fill gaps [until [−]T]`.
+// `!"("` смотрит через пробелы (`fill gaps ()` — тоже откат): при `(` вместо
+// `until` ветка `gaps_mod` падает целиком и PEG возвращается к голому `fill`,
+// а `gaps(...)` читается именем вызова (`Repeat::Fill` + `CycleCall`, не `FillGaps`).
+// Цикл с именем `gaps` (`6h: fill gaps();`) остаётся вызовом именно поэтому.
+// Границы слова: `fillgaps()` — вызов цикла `fillgaps`, а не `fill` + `gaps()`.
+// Длительность горизонта — `until_dur`, а не `duration`: граница проверяется
+// сразу за последним компонентом атомарно (`fill until 1msx()` — синтаксическая
+// ошибка, а не `fill until 1ms` + `x()`). Отдельный `~ !word_tail` после
+// `duration` ставить нельзя — `~` пропустил бы разделительный пробел
+// (`fill until 12h R()` ломался бы). Разделители внутри `until_dur` выписаны
+// явно, т.к. атомарность отключает неявные пробелы (тот же набор, что у `duration`).
+// Дрейф двух копий: юниты общие (`duration_unit` через `duration_item`),
+// дублируются только разделители и граница — новые юниты добавлять лишь туда.
+fill_mod    = { fill_kw ~ (gaps_mod | (until_kw ~ neg_sign? ~ until_dur))? }
+fill_kw     = @{ "fill" ~ !word_tail }
+until_kw    = @{ "until" ~ !word_tail }
+until_dur   = ${ duration_item ~ ((WHITESPACE | COMMENT)* ~ duration_item)* ~ !word_tail }
+gaps_mod    = { kw_gaps ~ !"(" ~ (until_kw ~ neg_sign? ~ until_dur)? }
+// Атомарно, чтобы граница слова проверялась до неявных пробелов
+// (`gaps X` — модификатор, `gapsX` — имя цикла).
+kw_gaps     = @{ "gaps" ~ !word_tail }
 // Минус смещения — именованное правило, чтобы парсер его видел; слитность
-// (`-10m` ок, `- 10m` — ошибка) проверяется в `build_stmt` по спанам:
+// (`-10m` ок, `- 10m` — ошибка) проверяется в сборке по спанам: `build_stmt`,
+// `build_routine_stmt` и `build_until_from` (обе ветки `fill until`);
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
 invocation  = { point_action | cycle_call }
-// Блок действий (§3): только у вызова точки; у цикла после `)` блока нет
-// (иначе синтаксис). Ключи — IDENT, значения — выражения уровня условий.
-point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ action_block? }
-action_block = { "{" ~ (block_pair ~ ("," ~ block_pair)*)? ~ "}" }
-block_pair   = { IDENT ~ "=" ~ cond_arg }
+// Вызов точки: блок атрибутов — тот же JSON-словарь `map_lit`, либо
+// ссылка на константу-мапу (`BELL.ring() CORPUS;`). У цикла после `)` блока нет.
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | IDENT)? }
 cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 duration     = { duration_item+ }
 // Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),
 // между компонентами разрешены (`1h 20m` ок).
 duration_item = ${ number ~ duration_unit }
 duration_unit = { "ms" | "w" | "d" | "h" | "m" | "s" }
+// Голые цифры без границы слова осознанно: `!word_tail` здесь развалил бы
+// `duration_item` (`1h` резалось бы на `1` + `h`). Граница нужна только
+// в `repeat_count`, где число стоит перед вызовом.
 number        = @{ ASCII_DIGIT+ }
 // Атомарное: комментарии `//` и пробелы внутрь строк не проникают.
 string      = @{ "\"" ~ string_char* ~ "\"" }

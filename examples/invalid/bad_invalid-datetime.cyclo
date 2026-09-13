@@ -1,0 +1,18 @@
+schedule "invalid-datetime" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "not-a-datetime",
+    duration = 24h
+  {
+    6h: R();
+  }
+}

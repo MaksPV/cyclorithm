@@ -1,0 +1,23 @@
+const BASE = "БЖД";
+const ROOM = "233/А";
+const LEC = {"subject": BASE, "room": ROOM, "label": BASE ++ " (" ++ ROOM ++ ")"};
+
+schedule "Имена в словарях" {
+  point BELL {
+    actions = [ring];
+  }
+
+  cycle LESSON(subj) duration = 1h {
+    0m: BELL.ring() subj;
+  }
+
+  cycle OUTER(name) duration = 1h {
+    0m: LESSON({"subject": name, "room": ROOM});
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    0m: BELL.ring() LEC;
+    1m: BELL.ring() {"subject": BASE};
+    2h: OUTER(BASE);
+  }
+}

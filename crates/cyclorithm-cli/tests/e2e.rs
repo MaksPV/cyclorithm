@@ -1,6 +1,6 @@
-//! Сквозные тесты контракта CLI (§1 спеки): JSON в stdout, ошибки в stderr.
+//! Сквозные тесты контракта CLI (см. docs/reference/cli.md): JSON в stdout, ошибки в stderr.
 
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 fn cyclo() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cyclo"))
@@ -11,6 +11,27 @@ fn run(args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("бинарь cyclo обязан запускаться")
+}
+
+/// Прогон со stdin вместо файла (`-`): вход подаётся в поток.
+fn run_stdin(args: &[&str], input: &str) -> Output {
+    use std::io::Write as _;
+    let mut child = cyclo()
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("бинарь cyclo обязан запускаться");
+    child
+        .stdin
+        .take()
+        .expect("stdin обязан открыться")
+        .write_all(input.as_bytes())
+        .expect("запись в stdin обязана удаваться");
+    child
+        .wait_with_output()
+        .expect("ожидание обязано удаваться")
 }
 
 fn stdout_json(out: &Output) -> serde_json::Value {
@@ -106,6 +127,24 @@ fn rand_matches_expected_json() {
 }
 
 #[test]
+fn reverse_matches_expected_json() {
+    // Зеркало FWD (0/20/50 при 1h) едет как 60/40/10: параметры и условие — с ним.
+    let out = run(&[
+        "run",
+        "../../examples/valid/reverse.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/reverse.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn mkdate_matches_expected_json() {
     let out = run(&[
         "run",
@@ -175,6 +214,79 @@ fn attrs_matches_expected_json() {
 }
 
 #[test]
+fn action_attrs_matches_expected_json() {
+    // Блок вызова: JSON-литерал, ссылка на const-мапу и пустой `{}`.
+    let out = run(&[
+        "run",
+        "../../examples/valid/action_attrs.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/action_attrs.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn dict_names_matches_expected_json() {
+    // Имена/выражения в словарях: const-словарь, инлайновый литерал и
+    // аргумент-литерал с параметром.
+    let out = run(&[
+        "run",
+        "../../examples/valid/dict_names.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/dict_names.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn index_matches_expected_json() {
+    // Индекс-выражения: `[0]`, `[-1]`, `[1 + 1]`, индекс-параметр, цепочка.
+    let out = run(&[
+        "run",
+        "../../examples/valid/index.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/index.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn gaps_matches_expected_json() {
+    // fill gaps: без until добивает до конца цикла, until ограничивает окно.
+    let out = run(&[
+        "run",
+        "../../examples/valid/gaps.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/gaps.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn routines_matches_expected_json() {
     // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
     // суббота — тишина (пустая рутина, обед только по будням).
@@ -228,47 +340,159 @@ fn empty_window_gives_empty_events() {
 #[test]
 fn validation_errors_go_to_stderr() {
     // (файл, фрагмент stderr). В stdout при ошибке — ничего.
-    for (file, message) in [
-        ("bad_e01", "unknown point 'PORT'"),
-        ("bad_e02", "action 'arrive' not allowed for point 'DEPOT'"),
-        ("bad_e03", "unknown cycle 'NIGHT_ROUTE'"),
-        ("bad_e04", "duplicate point 'DEPOT'"),
-        ("bad_e05", "invalid duration '1h2h'"),
-        ("bad_e06", "recursive cycle 'A'"),
+    for (file, slug, message) in [
+        ("bad_unknown-point", "unknown-point", "unknown point 'PORT'"),
         (
-            "bad_e07",
+            "bad_action-not-allowed",
+            "action-not-allowed",
+            "action 'arrive' not allowed for point 'DEPOT'",
+        ),
+        (
+            "bad_unknown-cycle",
+            "unknown-cycle",
+            "unknown cycle 'NIGHT_ROUTE'",
+        ),
+        (
+            "bad_reverse-unknown",
+            "unknown-cycle",
+            "unknown cycle 'NIGHT_ROUTE'",
+        ),
+        ("bad_duplicate", "duplicate", "duplicate point 'DEPOT'"),
+        ("bad_reserved-name", "reserved-name", "reserved name 'at'"),
+        (
+            "bad_invalid-duration",
+            "invalid-duration",
+            "invalid duration '1h2h'",
+        ),
+        ("bad_recursive", "recursive", "recursive cycle 'A'"),
+        (
+            "bad_cycle-overruns",
+            "cycle-overruns",
             "cycle 'CYCLE2' overruns 'CYCLE1' by 20m (80m > 60m)",
         ),
-        ("bad_e07_neg", "offset '-2h' out of bounds (duration 1h20m)"),
         (
-            "bad_e07_chain",
+            "bad_offset-out-of-bounds",
+            "offset-out-of-bounds",
+            "offset '-2h' out of bounds (duration 1h20m)",
+        ),
+        (
+            "bad_cycle-overruns-chain",
+            "cycle-overruns",
             "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
         ),
-        ("bad_e07_until", "until '30h' out of bounds (duration 24h)"),
-        ("bad_e10_zero", "invalid repeat count '0'"),
-        ("bad_e10_fill0", "fill of zero-duration cycle 'EMPTY'"),
         (
-            "bad_e10_action",
+            "bad_until-out-of-bounds",
+            "until-out-of-bounds",
+            "until '30h' out of bounds (duration 24h)",
+        ),
+        (
+            "bad_invalid-repeat-count",
+            "invalid-repeat-count",
+            "invalid repeat count '0'",
+        ),
+        (
+            "bad_fill-zero-duration",
+            "fill-zero-duration",
+            "fill of zero-duration cycle 'EMPTY'",
+        ),
+        (
+            "bad_repeat-point-action",
+            "repeat-point-action",
             "repeat of point action 'depart' not allowed",
         ),
-        ("bad_e11", "unknown name 'banana'"),
-        ("bad_e11_private", "unknown name '__z'"),
-        ("bad_e12_recursive", "recursive definition 'a'"),
-        ("bad_e12_datestr", "invalid date '2026-13-01'"),
-        ("bad_e13_cycle", "import cycle 'bad_e13_cycle_a.cyclo'"),
-        ("bad_e13_missing", "cannot read import 'no_such_lib.cyclo'"),
         (
-            "bad_e14_schedule",
-            "schedule not allowed in import 'bad_e14_lib.cyclo'",
+            "bad_gaps-until",
+            "until-out-of-bounds",
+            "until '30h' out of bounds (duration 24h)",
         ),
-        ("bad_e04_dup", "duplicate const 'K'"),
-        ("bad_e12", "type mismatch: cannot mix number and string"),
-        ("bad_e12_div", "division by zero"),
-        ("bad_e08", "invalid datetime 'not-a-datetime'"),
-        ("bad_e09", "point 'DEPOT' is not a cycle"),
-        ("bad_e15", "duplicate attribute 'a'"),
-        ("bad_e16", "unknown table 'SHORT'"),
-        ("bad_e16_slot", "unknown slot '8th'"),
+        (
+            "bad_gaps-fill0",
+            "fill-zero-duration",
+            "fill of zero-duration cycle 'EMPTY'",
+        ),
+        (
+            "bad_gaps-window",
+            "until-out-of-bounds",
+            "until '2h' out of bounds (duration 24h)",
+        ),
+        ("bad_unknown-name", "unknown-name", "unknown name 'banana'"),
+        (
+            "bad_unknown-name-dict",
+            "unknown-name",
+            "unknown name 'NOPE'",
+        ),
+        (
+            "bad_unknown-name-private",
+            "unknown-name",
+            "unknown name '__z'",
+        ),
+        (
+            "bad_recursive-definition",
+            "recursive-definition",
+            "recursive definition 'a'",
+        ),
+        (
+            "bad_invalid-date",
+            "invalid-date",
+            "invalid date '2026-13-01'",
+        ),
+        (
+            "bad_import-cycle",
+            "import-cycle",
+            "import cycle 'bad_import-cycle_a.cyclo'",
+        ),
+        (
+            "bad_cannot-read-import",
+            "cannot-read-import",
+            "cannot read import 'no_such_lib.cyclo'",
+        ),
+        (
+            "bad_schedule-in-import",
+            "schedule-in-import",
+            "schedule not allowed in import 'bad_schedule-in-import-lib.cyclo'",
+        ),
+        ("bad_duplicate-dup", "duplicate", "duplicate const 'K'"),
+        (
+            "bad_type-mismatch",
+            "type-mismatch",
+            "type mismatch: cannot mix number and string",
+        ),
+        (
+            "bad_division-by-zero",
+            "division-by-zero",
+            "division by zero",
+        ),
+        (
+            "bad_invalid-datetime",
+            "invalid-datetime",
+            "invalid datetime 'not-a-datetime'",
+        ),
+        (
+            "bad_wrong-kind",
+            "wrong-kind",
+            "point 'DEPOT' is not a cycle",
+        ),
+        (
+            "bad_duplicate-attribute",
+            "duplicate-attribute",
+            "duplicate attribute 'a'",
+        ),
+        (
+            "bad_duplicate-attribute-block",
+            "duplicate-attribute",
+            "duplicate attribute 'a'",
+        ),
+        (
+            "bad_index-out-of-bounds",
+            "index-out-of-bounds",
+            "index out of bounds '2'",
+        ),
+        (
+            "bad_unknown-table",
+            "unknown-table",
+            "unknown table 'SHORT'",
+        ),
+        ("bad_unknown-slot", "unknown-slot", "unknown slot '8th'"),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
@@ -286,11 +510,15 @@ fn validation_errors_go_to_stderr() {
             err.contains(message),
             "для {file}: нет {message:?} в {err:?}"
         );
+        assert!(
+            err.contains(&format!("{slug}: ")),
+            "для {file}: нет префикса {slug:?} в {err:?}"
+        );
     }
 }
 
 #[test]
-fn syntax_error_has_no_e_code() {
+fn syntax_error_has_no_slug() {
     let out = run(&[
         "run",
         "../../examples/invalid/bad_syntax.cyclo",
@@ -307,7 +535,6 @@ fn syntax_error_has_no_e_code() {
 #[test]
 fn bad_cli_args_give_usage() {
     for args in [
-        vec![],
         vec!["run"],
         vec!["run", "../../examples/valid/route.cyclo"],
         vec![
@@ -324,10 +551,157 @@ fn bad_cli_args_give_usage() {
             "--end",
             "2026-01-11T00:00:00",
         ],
+        vec!["next", "../../examples/real/cron.cyclo", "--within", "1x"],
+        vec!["next", "../../examples/real/cron.cyclo", "-n", "много"],
+        vec!["check"],
+        vec!["bogus"],
     ] {
         let out = run(&args);
         assert!(!out.status.success(), "для {args:?}");
         assert!(out.stdout.is_empty(), "для {args:?}");
         assert!(!out.stderr.is_empty(), "для {args:?}");
     }
+}
+
+#[test]
+fn help_and_version() {
+    // Без аргументов и --help — справка в stdout, код 0.
+    for args in [vec![], vec!["--help"]] {
+        let out = run(&args);
+        assert!(out.status.success(), "для {args:?}");
+        let text = String::from_utf8(out.stdout.clone()).expect("stdout — UTF-8");
+        assert!(text.starts_with("usage:"), "для {args:?}");
+    }
+    let out = run(&["--version"]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout.clone()).expect("stdout — UTF-8");
+    assert!(text.starts_with("cyclo "), "версия: {text:?}");
+}
+
+#[test]
+fn check_command() {
+    let out = run(&["check", "../../examples/valid/route.cyclo"]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).expect("stdout — UTF-8"),
+        "ok\n"
+    );
+    let out = run(&["check", "../../examples/invalid/bad_unknown-table.cyclo"]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    let err = String::from_utf8(out.stderr).expect("stderr — UTF-8");
+    assert!(err.contains("unknown table 'SHORT'"), "{err:?}");
+}
+
+#[test]
+fn short_dates_and_deltas() {
+    // --start датой, --end дельтой от старта: те же 18 событий, что в контракте.
+    let out = run(&[
+        "run",
+        "../../examples/valid/route.cyclo",
+        "--start",
+        "2026-01-09",
+        "--end",
+        "+1d",
+    ]);
+    let got = stdout_json(&out);
+    assert_eq!(got["events"].as_array().expect("массив").len(), 18);
+    assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00");
+}
+
+#[test]
+fn stdin_source_matches_file() {
+    // `-` читает программу из stdin (без импортов — не зависит от cwd).
+    let args = [
+        "run",
+        "-",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ];
+    let from_file = run(&[
+        "run",
+        "../../examples/valid/neg_offsets.cyclo",
+        "--start",
+        "2026-01-10T00:00:00",
+        "--end",
+        "2026-01-11T00:00:00",
+    ]);
+    assert!(from_file.status.success());
+    let input = include_str!("../../../examples/valid/neg_offsets.cyclo");
+    let from_stdin = run_stdin(&args, input);
+    assert!(from_stdin.status.success());
+    assert_eq!(from_stdin.stdout, from_file.stdout);
+    // check и next тоже едят stdin.
+    let out = run_stdin(&["check", "-"], input);
+    assert!(out.status.success());
+    let out = run_stdin(
+        &["next", "-", "--from", "2026-01-10T00:00:00", "-n", "2"],
+        input,
+    );
+    assert!(out.status.success());
+    let got: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("stdout — один JSON-объект");
+    assert_eq!(got["events"].as_array().expect("массив").len(), 2);
+}
+
+#[test]
+fn next_command() {
+    let cron = "../../examples/real/cron.cyclo";
+    // Первые 3 события понедельника — часовые пинги с полуночи.
+    let out = run(&["next", cron, "--from", "2026-09-07T00:00:00", "-n", "3"]);
+    let got = stdout_json(&out);
+    assert_eq!(got["from"], "2026-09-07T00:00:00");
+    let times: Vec<&str> = got["events"]
+        .as_array()
+        .expect("массив")
+        .iter()
+        .map(|e| e["time"].as_str().expect("строка"))
+        .collect();
+    assert_eq!(
+        times,
+        vec![
+            "2026-09-07T00:00:00",
+            "2026-09-07T01:00:00",
+            "2026-09-07T02:00:00"
+        ]
+    );
+    // n считает события: отчёт 09:30 + чистка 10:00.
+    let out = run(&["next", cron, "--from", "2026-09-07T09:30:00", "-n", "2"]);
+    let got = stdout_json(&out);
+    let cmds: Vec<&str> = got["events"]
+        .as_array()
+        .expect("массив")
+        .iter()
+        .map(|e| e["action_attrs"]["cmd"].as_str().expect("строка"))
+        .collect();
+    assert_eq!(cmds, vec!["/opt/jobs/report.py", "/opt/jobs/cleanup.sh"]);
+    // Нулевой горизонт — пусто без ошибки.
+    let out = run(&[
+        "next",
+        cron,
+        "--from",
+        "2026-09-07T00:00:00",
+        "--within",
+        "0",
+    ]);
+    let got = stdout_json(&out);
+    assert_eq!(got["events"].as_array().expect("массив").len(), 0);
+    // --ndjson — по событию на строку.
+    let out = run(&[
+        "next",
+        cron,
+        "--from",
+        "2026-09-07T00:00:00",
+        "-n",
+        "2",
+        "--ndjson",
+    ]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).expect("stdout — UTF-8");
+    assert_eq!(text.lines().count(), 2);
+    let first: serde_json::Value =
+        serde_json::from_str(text.lines().next().expect("строка")).expect("JSON");
+    assert_eq!(first["time"], "2026-09-07T00:00:00");
 }

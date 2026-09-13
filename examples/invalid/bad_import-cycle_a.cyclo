@@ -1,0 +1,3 @@
+use "bad_import-cycle_b.cyclo";
+
+const A = 1;

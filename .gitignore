@@ -16,6 +16,14 @@ target
 # Agent tooling (opencode) — local only, never commit
 .opencode/
 
+# mkdocs-material
+site/
+
+# Python packaging artefacts (docs/extra/pygments-cyclo)
+build/
+*.egg-info/
+__pycache__/
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

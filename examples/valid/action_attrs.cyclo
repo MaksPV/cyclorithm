@@ -1,0 +1,13 @@
+const START = {"event": "start"};
+
+schedule "Атрибуты вызова" {
+  point BELL {
+    actions = [ring];
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    0m: BELL.ring() {"event": "literal"};
+    1m: BELL.ring() START;
+    2m: BELL.ring() {};
+  }
+}

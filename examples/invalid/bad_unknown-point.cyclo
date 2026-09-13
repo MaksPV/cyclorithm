@@ -1,0 +1,18 @@
+schedule "unknown-point" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: PORT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: R();
+  }
+}

@@ -1,12 +1,13 @@
-//! Условия строк (§3–§5 спеки): объявления, подстановка, вычисление.
+//! Условия строк (семантика — docs/reference/semantics.md, слаги — глава ошибок): объявления, подстановка, вычисление.
 //!
 //! Определения (`const`/`fun`/`pred` + системный файл) раскрываются
 //! через окружение — для чистых выражений это та же подстановка.
-//! Проверки в порядке объявления: дубли (E04), тела (E11/E12, рекурсия),
+//! Проверки в порядке объявления: дубли (duplicate), тела (unknown-name/ошибки условий, рекурсия),
 //! затем строки. Константное деление на ноль ловится статически,
-//! деление нулём выражения — вычислением в момент строки (тоже E12).
+//! деление нулём выражения — вычислением в момент строки (тоже division-by-zero).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use cyclorithm_parser::{
     ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
@@ -31,7 +32,7 @@ enum Ty {
     Num,
     Str,
     /// Динамическое данное: параметр цикла или поле/индекс. Статика пропускает
-    /// любые операции, ошибки — в момент строки (E12). См. черновик `attrs.md`.
+    /// любые операции, ошибки — в момент строки (type-mismatch).
     Dyn,
     Map,
     Array,
@@ -68,6 +69,18 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Разобранная прелюдия — один раз на процесс (каждый `resolve_units`
+/// раньше парсил её заново). Битая сборка — `broken-prelude`, не паника.
+static SYSTEM: LazyLock<Result<Vec<Decl>, Error>> = LazyLock::new(|| resolve_system(PRELUDE));
+
+/// Разобрать системный файл в объявления. Публична для тестов битой прелюдии.
+fn resolve_system(src: &str) -> Result<Vec<Decl>, Error> {
+    cyclorithm_parser::parse_decls(src).map_err(|e| {
+        let first = e.to_string().lines().next().unwrap_or("").to_owned();
+        Error::broken_prelude(&first)
+    })
+}
+
 /// Таблица слотов `time_const`: длительность, строки и юнит исходника
 /// (для `__`-видимости условий `->`-строк — как у `Def.unit`).
 #[derive(Debug, Clone)]
@@ -92,20 +105,38 @@ impl TableReg {
     pub fn get(&self, name: &str) -> Option<&TimeTable> {
         self.tables.get(name)
     }
+
+    /// Таблицы в порядке первого объявления. Порядок строится вместе
+    /// с реестром в `resolve_units`, поэтому обход без `expect` на вызывателе.
+    pub fn ordered(&self) -> impl Iterator<Item = &TimeTable> {
+        self.order
+            .iter()
+            .filter_map(|n| self.tables.get(n.as_str()))
+    }
+}
+
+/// `at` зарезервировано (момент строки): объявлять так ничего нельзя.
+/// Проверяют обе фазы именования — объявления (`resolve_units`) и сущности
+/// расписания (`validate_names`), плюс параметры циклов/рутин (но не предикатов:
+/// у предиката параметр обязан буквально зваться `at`).
+pub(crate) fn check_reserved(name: &str) -> Result<(), Error> {
+    if name == "at" {
+        return Err(Error::reserved_name(name));
+    }
+    Ok(())
 }
 
 /// Собрать определения одного файла поверх системных.
 pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
     resolve_units(&[decls.to_vec()])
 }
-
 /// Собрать определения: оверлей групп в порядке наложения
 // (последняя группа — тело программы), затем проверить все тела.
-// Дубли — только внутри одной группы (`E04`); между файлами побеждает последнее.
+// Дубли — только внутри одной группы (`duplicate`); между файлами побеждает последнее.
 // Таблицы (`time_const`) — отдельным реестром: своё пространство имён
 // (позиции ссылок не пересекаются с выражениями), дубли — `duplicate table`.
 pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
-    let system = cyclorithm_parser::parse_decls(PRELUDE).expect("прелюдия обязана разбираться");
+    let system = SYSTEM.clone()?;
     let mut map = HashMap::new();
     let mut all: Vec<String> = Vec::new();
     for d in &system {
@@ -128,8 +159,9 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
             } = d
             {
                 if !seen_tables.insert(name.clone()) {
-                    return Err(Error::e04("table", name));
+                    return Err(Error::duplicate("table", name));
                 }
+                check_reserved(name)?;
                 if !tables.tables.contains_key(name) {
                     tables.order.push(name.clone());
                 }
@@ -151,8 +183,9 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
                 Decl::TimeConst { .. } => unreachable!("таблицы разобраны выше"),
             };
             if !seen.insert(name.clone()) {
-                return Err(Error::e04(kind, name));
+                return Err(Error::duplicate(kind, name));
             }
+            check_reserved(name)?;
             all.push(name.clone());
             let (_, def) = to_def(d, unit);
             map.insert(name.clone(), def);
@@ -212,15 +245,17 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
     // Тело проверяется изнутри своего файла: `__` видно.
     let mut cx = CxTy {
         defs,
-        stack: vec![(name.to_owned(), def.unit)],
-        unit: def.unit,
+        scope: Scope {
+            stack: vec![(name.to_owned(), def.unit)],
+            unit: def.unit,
+        },
         vars: HashMap::new(),
         // Тела объявлений — позиция данных: `const M = {...}`, `const A = M`.
         data: true,
     };
     match def.kind {
         // Константа — любое значение (число, строка, мапа, ...), не только Num:
-        // данные живут в константах (`BJD_LECTURE`), условия их не видят (E11).
+        // данные живут в константах (`BJD_LECTURE`), условия их не видят (unknown-name).
         DefKind::Const => {
             let body = def.expr.as_ref().expect("const: тело");
             cx.infer(body)?;
@@ -245,35 +280,90 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
 
 struct CxTy<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, usize)>,
-    unit: usize,
+    scope: Scope,
     vars: HashMap<String, Ty>,
     /// Позиция данных (`true`): голые имена констант-мап/массивов/bool видны.
-    /// В условиях (`false`) они — E11 (в скоупе только числа, строки и `at`).
+    /// В условиях (`false`) они — unknown-name (в скоупе только числа, строки и `at`).
     data: bool,
 }
 
 struct CxEv<'a> {
     defs: &'a Defs,
-    stack: Vec<(String, usize)>,
-    unit: usize,
+    scope: Scope,
     vars: HashMap<String, Value>,
 }
 
+/// Стек вызовов + текущий юнит: общий для статики (`CxTy`) и вычисления
+/// (`CxEv`). Раньше `enter`/`leave` жили копипастой в обоих контекстах.
+#[derive(Debug, Clone, Default)]
+struct Scope {
+    stack: Vec<(String, usize)>,
+    unit: usize,
+}
+
+impl Scope {
+    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
+        if self.stack.iter().any(|(n, _)| n == name) {
+            return Err(Error::recursive_definition(name));
+        }
+        let prev = std::mem::replace(&mut self.unit, unit);
+        self.stack.push((name.to_owned(), prev));
+        Ok(())
+    }
+
+    fn leave(&mut self) {
+        if let Some((_, prev)) = self.stack.pop() {
+            self.unit = prev;
+        }
+    }
+}
+
 fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error> {
+    visible_def(defs, name, unit).ok_or_else(|| Error::unknown_name(name))
+}
+
+/// Объявление, видимое из юнита: чужое private не в счёт. Единое правило
+/// для резолва, предикатов, встроенных и вызовов — раньше `infer` смотрел
+/// `contains_key`, а `eval` — `private`-видимость.
+fn visible_def<'a>(defs: &'a Defs, name: &str, unit: usize) -> Option<&'a Def> {
     match defs.map.get(name) {
-        Some(d) if d.private && d.unit != unit => Err(Error::e11(name)),
-        Some(d) => Ok(d),
-        None => Err(Error::e11(name)),
+        Some(d) if d.private && d.unit != unit => None,
+        Some(d) => Some(d),
+        None => None,
+    }
+}
+
+/// Вызов предиката: резолв + проверка рода. Общее для статики и вычисления —
+/// раньше living копипастой в `infer_cond`/`eval_cond`.
+fn resolve_pred<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error> {
+    let def = resolve(defs, name, unit)?;
+    match def.kind {
+        DefKind::Pred => Ok(def),
+        _ => Err(Error::not_a_predicate(name)),
+    }
+}
+
+/// Встроенные функции (`str`/`pad`/`floordiv`/`floormod`/`mkdate`) действуют,
+/// только если имя не затенено видимым объявлением. Общее для `infer_call`
+/// и `eval_call` (раньше проверки расходились).
+fn builtin_arity(defs: &Defs, name: &str, unit: usize) -> Option<usize> {
+    if visible_def(defs, name, unit).is_some() {
+        return None;
+    }
+    match name {
+        "str" => Some(1),
+        "pad" | "floordiv" | "floormod" => Some(2),
+        "mkdate" => Some(7),
+        _ => None,
     }
 }
 
 /// Проверить все условия файла в порядке объявления: циклы, рутины, корень,
 /// затем пожары `->` таблиц.
-/// Заодно — аргументы вызовов и блоки действий (та же фаза E11/E12:
+/// Заодно — аргументы вызовов и блоки действий (та же фаза unknown-name/ошибки условий:
 /// сначала условие строки, затем вызов — как в момент развёртки).
 /// У вызова рутины первый аргумент — таблица (не выражение): пропускается.
-/// Табличный параметр рутины в условиях невидим (E11): при развёртке он
+/// Табличный параметр рутины в условиях невидим (unknown-name): при развёртке он
 /// затирается из окружения; в скоупе только данные (`params[1..]`).
 pub fn check_conditions(
     schedule: &Schedule,
@@ -335,8 +425,10 @@ fn check_row(
 ) -> Result<(), Error> {
     let mut cx = CxTy {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: params.clone(),
         data: false,
     };
@@ -348,15 +440,14 @@ fn check_row(
     cx.data = true;
     match invocation {
         Invocation::PointAction { block, .. } => {
-            // Дубли ключей блока — E15 (порядок объявления).
-            let mut seen = HashSet::new();
-            for (k, _) in block {
-                if !seen.insert(k) {
-                    return Err(Error::e15(k));
+            // Блок — литерал мапы (дубли ловит `infer`/`check_map_dupes`) или
+            // ссылка на константу/параметр-мапу; параметр статически `Dyn`,
+            // форму (`Value::Map`) добьёт момент строки.
+            if let Some(b) = block {
+                match cx.infer(b)? {
+                    Ty::Map | Ty::Dyn => {}
+                    _ => return Err(Error::type_mismatch()),
                 }
-            }
-            for (_, v) in block {
-                cx.infer(v)?;
             }
         }
         Invocation::CycleCall { name, args } => {
@@ -380,70 +471,85 @@ impl CxTy<'_> {
         match cond {
             Cond::Or(cs) | Cond::And(cs) => cs.iter().try_for_each(|c| self.infer_cond(c)),
             Cond::Not(c) => self.infer_cond(c),
+            // C-стиль: число/арифметика/`true`/`false` годятся напрямую
+            // (ноль — ложь). Строки/словари/массивы — «забытое сравнение».
+            Cond::Truthy(e) => match self.infer(e)? {
+                Ty::Num | Ty::Dyn | Ty::Bool => Ok(()),
+                _ => Err(Error::type_mismatch()),
+            },
             Cond::Pred { name, args } => {
                 let arg = match args.as_slice() {
                     [a] => a,
-                    _ => return Err(Error::e12_arity(name)),
+                    _ => return Err(Error::wrong_arguments(name)),
                 };
                 // Аргумент предиката — число; Dyn (параметр/поле) пропускаем,
-                // момент строки проверит (E12).
+                // момент строки проверит (type-mismatch).
                 match self.infer(arg)? {
                     Ty::Num | Ty::Dyn => {}
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 }
-                let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Pred => {}
-                    _ => return Err(Error::e12_not_pred(name)),
-                };
-                self.enter(name, def.unit)?;
+                let def = resolve_pred(self.defs, name, self.scope.unit)?;
+                self.scope.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.infer_cond(&body);
-                self.leave();
+                self.scope.leave();
                 r
             }
-            Cond::Cmp { left, right, .. } => {
+            Cond::Cmp { op, left, right } => {
                 let lt = self.infer(left)?;
                 match right {
                     CondRhs::One(r) => {
                         let rt = self.infer(r)?;
-                        // Bool в условиях нет: любое участие — сразу E12.
+                        // Bool в условиях нет: любое участие — сразу type-mismatch.
                         if lt == Ty::Bool || rt == Ty::Bool {
-                            return Err(Error::e12_mismatch());
+                            return Err(Error::type_mismatch());
                         }
                         let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array);
                         match (lt, rt) {
                             // Динамика: статика пропускает, разберётся строка.
                             (Ty::Dyn, _) | (_, Ty::Dyn) => Ok(()),
-                            // Мапа/массив с мапой/массивом — «пока»
-                            // (глубокое сравнение — будущее решение).
-                            (a, b) if collection(a) && collection(b) => Err(Error::e12_map_cmp()),
+                            // Мапа/массив с мапой/массивом — глубокое сравнение
+                            // не поддерживается (maps-not-comparable).
+                            (a, b) if collection(a) && collection(b) => {
+                                Err(Error::maps_not_comparable())
+                            }
                             (a, b) if a == b => Ok(()),
                             _ => {
-                                if date_cmp_ok(left, r)? {
+                                if let Some((_, lit)) = date_sides(left, r) {
+                                    normalize_date_literal(lit)?;
                                     Ok(())
                                 } else {
-                                    Err(Error::e12_mismatch())
+                                    Err(Error::type_mismatch())
                                 }
                             }
                         }
                     }
                     CondRhs::Alt(alts) => {
+                        // Альтернация — только `==`/`!=`: ловим здесь, а не
+                        // в момент строки (рантайм-ветка в eval — страховка
+                        // для прямых вызовов `eval_cond` без статики).
+                        if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
+                            return Err(Error::type_mismatch());
+                        }
                         // Каждая ветка — того же типа, что левая часть
                         // (динамика — мимо: разберётся строка). Строковые
                         // ветки — только под строку слева
                         // (`datestr(at) == ("2026-11-04" or ...)`).
+                        let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array);
                         for a in alts {
                             match (lt, self.infer(a)?) {
                                 (Ty::Dyn, _) | (_, Ty::Dyn) => {}
                                 (Ty::Num, Ty::Num) | (Ty::Str, Ty::Str) => {}
-                                _ => return Err(Error::e12_mismatch()),
+                                (a, b) if collection(a) && collection(b) => {
+                                    return Err(Error::maps_not_comparable());
+                                }
+                                _ => return Err(Error::type_mismatch()),
                             }
                         }
                         match lt {
                             Ty::Num | Ty::Dyn | Ty::Str => Ok(()),
-                            _ => Err(Error::e12_mismatch()),
+                            Ty::Map | Ty::Array => Err(Error::maps_not_comparable()),
+                            _ => Err(Error::type_mismatch()),
                         }
                     }
                 }
@@ -454,15 +560,16 @@ impl CxTy<'_> {
     fn infer(&mut self, expr: &Expr) -> Result<Ty, Error> {
         match expr {
             Expr::Num(raw) => {
-                raw.parse::<i64>().map_err(|_| Error::e12_range(raw))?;
+                raw.parse::<i64>()
+                    .map_err(|_| Error::integer_out_of_range(raw))?;
                 Ok(Ty::Num)
             }
             Expr::Str(_) => Ok(Ty::Str),
             Expr::Bool(_) => Ok(Ty::Bool),
             Expr::Map(pairs) => {
                 check_map_dupes(pairs)?;
-                // Значения — литералы по грамматике; типы всё равно выводим
-                // (дубли и кривые числа ловятся здесь же).
+                // Значения — выражения (имена/`at`, арифметика, вложенность);
+                // типы выводим, дубли и кривые числа ловятся здесь же.
                 for (_, v) in pairs {
                     self.infer(v)?;
                 }
@@ -477,20 +584,17 @@ impl CxTy<'_> {
             // Поля данных динамические: статически не проверяются
             // (даже когда мапа известна) — только момент строки.
             // Исключение — голое имя под доступом (см. ниже).
-            Expr::Field { base, .. } | Expr::Index { base, .. } => {
-                // Базу выводим ради её проверок (вложенные доступы, E11 имён);
-                // сам доступ всегда Dyn (см. ниже).
-                self.infer(base)?;
-                if let Expr::Name(name) = base.as_ref() {
-                    // Параметр — динамика, пропускаем.
-                    if !self.vars.contains_key(name) {
-                        let defs = self.defs;
-                        let def = resolve(defs, name, self.unit)?;
-                        if def.kind == DefKind::Const {
-                            let ty = self.const_body_ty(name, def)?;
-                            self.hide_data(name, ty)?;
-                        }
-                    }
+            Expr::Field { base, .. } => {
+                self.infer_access_base(base)?;
+                Ok(Ty::Dyn)
+            }
+            // Индекс — доступ к массиву; индекс обязан быть числом
+            // (или динамикой, форму добьёт момент строки).
+            Expr::Index { base, index } => {
+                self.infer_access_base(base)?;
+                match self.infer(index)? {
+                    Ty::Num | Ty::Dyn => {}
+                    _ => return Err(Error::type_mismatch()),
                 }
                 Ok(Ty::Dyn)
             }
@@ -501,33 +605,39 @@ impl CxTy<'_> {
                 }
                 // Голая константа (K, DAY); fun/pred без вызова — не значение.
                 let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
+                let def = resolve(defs, name, self.scope.unit)?;
                 match def.kind {
                     DefKind::Const => {
                         let ty = self.const_body_ty(name, def)?;
-                        // Данные напрямую в условии невидимы: только E11.
+                        // Данные напрямую в условии невидимы: только unknown-name.
                         self.hide_data(name, ty)
                     }
-                    DefKind::Fun | DefKind::Pred => Err(Error::e12_mismatch()),
+                    DefKind::Fun | DefKind::Pred => Err(Error::type_mismatch()),
                 }
             }
             Expr::Neg(x) => match self.infer(x)? {
                 Ty::Num => Ok(Ty::Num),
                 Ty::Dyn => Ok(Ty::Dyn),
-                _ => Err(Error::e12_mismatch()),
+                _ => Err(Error::type_mismatch()),
             },
             Expr::Truth(c) => {
                 self.infer_cond(c)?;
                 Ok(Ty::Num)
             }
-            Expr::Bin { left, right, .. } => {
+            Expr::Bin { op, left, right } => {
                 let ty = match (self.infer(left)?, self.infer(right)?) {
                     (Ty::Num, Ty::Num) => Ty::Num,
                     (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ty::Dyn,
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 };
-                if let Some(Err(e)) = self.const_div(right) {
-                    return Err(e);
+                // Ноль опасен только в делителе: `1 + 0` и `5 * 0` валидны.
+                if matches!(
+                    op,
+                    ArithOp::Div | ArithOp::Mod | ArithOp::FloorDiv | ArithOp::FloorMod
+                ) {
+                    if let Some(Err(e)) = self.const_div(right) {
+                        return Err(e);
+                    }
                 }
                 Ok(ty)
             }
@@ -536,13 +646,13 @@ impl CxTy<'_> {
             Expr::Bit { left, right, .. } => match (self.infer(left)?, self.infer(right)?) {
                 (Ty::Num, Ty::Num) => Ok(Ty::Num),
                 (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ok(Ty::Dyn),
-                _ => Err(Error::e12_mismatch()),
+                _ => Err(Error::type_mismatch()),
             },
             Expr::Concat(xs) => {
                 for x in xs {
                     match self.infer(x)? {
                         Ty::Str | Ty::Dyn => {}
-                        _ => return Err(Error::e12_mismatch()),
+                        _ => return Err(Error::type_mismatch()),
                     }
                 }
                 Ok(Ty::Str)
@@ -552,164 +662,150 @@ impl CxTy<'_> {
     }
 
     fn infer_call(&mut self, name: &str, args: &[Expr]) -> Result<Ty, Error> {
-        match name {
-            "str" | "pad" if !self.defs.map.contains_key(name) => {
-                let want = if name == "str" { 1 } else { 2 };
-                if args.len() != want {
-                    return Err(Error::e12_arity(name));
+        // Встроенные — только если не затенены (`builtin_arity`); все берут числа.
+        if let Some(want) = builtin_arity(self.defs, name, self.scope.unit) {
+            if args.len() != want {
+                return Err(Error::wrong_arguments(name));
+            }
+            for a in args {
+                match self.infer(a)? {
+                    Ty::Num | Ty::Dyn => {}
+                    _ => return Err(Error::type_mismatch()),
                 }
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Dyn => {}
-                        _ => return Err(Error::e12_mismatch()),
-                    }
-                }
-                Ok(Ty::Str)
             }
             // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
-            "floordiv" | "floormod" if !self.defs.map.contains_key(name) => {
-                let [a, b] = args else {
-                    return Err(Error::e12_arity(name));
+            if name == "floordiv" || name == "floormod" {
+                let [_, b] = args else {
+                    return Err(Error::wrong_arguments(name));
                 };
-                match (self.infer(a)?, self.infer(b)?) {
-                    (Ty::Num, Ty::Num) => {}
-                    (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => {}
-                    _ => return Err(Error::e12_mismatch()),
-                }
                 if let Some(Err(e)) = self.const_div(b) {
                     return Err(e);
                 }
-                Ok(Ty::Num)
+                return Ok(Ty::Num);
             }
-            // Конструктор даты — встроенная функция (§4.13): ровно 7 чисел.
+            // Конструктор даты — встроенная функция (см. docs/reference/expressions.md): ровно 7 чисел.
             // Все-константа проверяется сразу (как константный ноль у деления),
             // иначе — в момент строки.
-            "mkdate" if !self.defs.map.contains_key(name) => {
-                if args.len() != 7 {
-                    return Err(Error::e12_arity(name));
-                }
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Dyn => {}
-                        _ => return Err(Error::e12_mismatch()),
-                    }
-                }
+            if name == "mkdate" {
                 let mut vals = Vec::with_capacity(7);
                 for a in args {
                     match const_eval(a, self) {
                         None => return Ok(Ty::Num),
                         Some(Err(e)) => return Err(e),
                         Some(Ok(Value::Num(v))) => vals.push(v),
-                        Some(Ok(_)) => return Err(Error::e12_mismatch()),
+                        Some(Ok(_)) => return Err(Error::type_mismatch()),
                     }
                 }
                 build_date(&vals, name)?;
-                Ok(Ty::Num)
+                return Ok(Ty::Num);
             }
-            _ => {
-                let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Const => {
-                        if !args.is_empty() {
-                            return Err(Error::e12_arity(name));
-                        }
-                        let ty = self.const_body_ty(name, def)?;
-                        // Как голое имя: данные через вызов в условии невидимы.
-                        self.hide_data(name, ty)
-                    }
-                    DefKind::Fun => {
-                        let arg = match args {
-                            [a] => a,
-                            _ => return Err(Error::e12_arity(name)),
-                        };
-                        let arg_ty = self.infer(arg)?;
-                        self.enter(name, def.unit)?;
-                        let param = def.param.clone().expect("fun: параметр");
-                        let body = def.expr.clone().expect("fun: тело");
-                        // Восстановить внешнее значение: параметры вложенных
-                        // вызовов часто зовутся так же (`t` в прелюдии).
-                        let old = self.vars.insert(param.clone(), arg_ty);
-                        let ty = self.infer(&body);
-                        match old {
-                            Some(v) => {
-                                self.vars.insert(param, v);
-                            }
-                            None => {
-                                self.vars.remove(&param);
-                            }
-                        }
-                        self.leave();
-                        ty
-                    }
-                    DefKind::Pred => Err(Error::e12_mismatch()),
+            return Ok(Ty::Str);
+        }
+        // Пользовательское объявление (встроенные выше уже отсечены).
+        let defs = self.defs;
+        let def = resolve(defs, name, self.scope.unit)?;
+        match def.kind {
+            DefKind::Const => {
+                if !args.is_empty() {
+                    return Err(Error::wrong_arguments(name));
                 }
+                let ty = self.const_body_ty(name, def)?;
+                // Как голое имя: данные через вызов в условии невидимы.
+                self.hide_data(name, ty)
             }
+            DefKind::Fun => {
+                let arg = match args {
+                    [a] => a,
+                    _ => return Err(Error::wrong_arguments(name)),
+                };
+                let arg_ty = self.infer(arg)?;
+                self.scope.enter(name, def.unit)?;
+                let param = def.param.clone().expect("fun: параметр");
+                let body = def.expr.clone().expect("fun: тело");
+                // Восстановить внешнее значение: параметры вложенных
+                // вызовов часто зовутся так же (`t` в прелюдии).
+                let old = self.vars.insert(param.clone(), arg_ty);
+                let ty = self.infer(&body);
+                match old {
+                    Some(v) => {
+                        self.vars.insert(param, v);
+                    }
+                    None => {
+                        self.vars.remove(&param);
+                    }
+                }
+                self.scope.leave();
+                ty
+            }
+            DefKind::Pred => Err(Error::type_mismatch()),
         }
     }
 
     /// Тип тела константы. Тело — всегда позиция данных (`const A = M` —
     /// алиас мапы); видимость решает место использования (`hide_data`).
     fn const_body_ty(&mut self, name: &str, def: &Def) -> Result<Ty, Error> {
-        self.enter(name, def.unit)?;
+        self.scope.enter(name, def.unit)?;
         let body = def.expr.clone().expect("const: тело");
         let saved = std::mem::replace(&mut self.data, true);
         let ty = self.infer(&body);
         self.data = saved;
-        self.leave();
+        self.scope.leave();
         ty
     }
 
-    /// Данные по голому имени в позиции условия невидимы: только E11.
-    fn hide_data(&self, name: &str, ty: Ty) -> Result<Ty, Error> {
-        if !self.data && matches!(ty, Ty::Map | Ty::Array | Ty::Bool) {
-            return Err(Error::e11(name));
+    /// База доступа `.поле`/`[n]`: выводим тип и, для голого имени константы,
+    /// применяем правило видимости данных (`hide_data`). Сам доступ всегда `Dyn`.
+    fn infer_access_base(&mut self, base: &Expr) -> Result<(), Error> {
+        self.infer(base)?;
+        if let Expr::Name(name) = base {
+            // Параметр — динамика, пропускаем.
+            if !self.vars.contains_key(name) {
+                let defs = self.defs;
+                let def = resolve(defs, name, self.scope.unit)?;
+                if def.kind == DefKind::Const {
+                    let ty = self.const_body_ty(name, def)?;
+                    self.hide_data(name, ty)?;
+                }
+            }
         }
-        Ok(ty)
-    }
-
-    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
-        if self.stack.iter().any(|(n, _)| n == name) {
-            return Err(Error::e12_recursive(name));
-        }
-        let prev = std::mem::replace(&mut self.unit, unit);
-        self.stack.push((name.to_owned(), prev));
         Ok(())
     }
 
-    fn leave(&mut self) {
-        if let Some((_, prev)) = self.stack.pop() {
-            self.unit = prev;
+    /// Данные по голому имени в позиции условия невидимы: только unknown-name.
+    fn hide_data(&self, name: &str, ty: Ty) -> Result<Ty, Error> {
+        if !self.data && matches!(ty, Ty::Map | Ty::Array | Ty::Bool) {
+            return Err(Error::unknown_name(name));
         }
+        Ok(ty)
     }
 
     fn const_div(&mut self, expr: &Expr) -> Option<Result<(), Error>> {
         match const_eval(expr, self)? {
             Err(e) => Some(Err(e)),
-            Ok(Value::Num(0)) => Some(Err(Error::e12_divzero())),
+            Ok(Value::Num(0)) => Some(Err(Error::division_by_zero())),
             Ok(_) => Some(Ok(())),
         }
     }
 }
 
-/// Дубли ключей в литерале мапы — E15 (первый повтор в порядке объявления).
+/// Дубли ключей в литерале мапы — duplicate-attribute (первый повтор в порядке объявления).
 /// Вызывается из `infer`, поэтому покрывает все позиции литералов:
 /// тела объявлений, условия, аргументы, блоки.
 fn check_map_dupes(pairs: &[(String, cyclorithm_parser::Expr)]) -> Result<(), Error> {
     let mut seen = HashSet::new();
     for (k, _) in pairs {
         if !seen.insert(k) {
-            return Err(Error::e15(k));
+            return Err(Error::duplicate_attribute(k));
         }
     }
     Ok(())
 }
 
 /// Разрешить атрибуты точек: `attrs` каждой точки в готовый словарь.
-/// Без `attrs` — пустой. Литерал — как есть (дубли — E15); ссылка —
-/// тело константы-мапы (неизвестное имя — E11, не мапа — E12).
-/// Значения — литералы по грамматике, вычисляются с `at = 0` без окружения.
-/// Вызывать после всех проверок §5, в начале развёртки.
+/// Без `attrs` — пустой. Литерал — как есть (дубли — duplicate-attribute); ссылка —
+/// тело константы-мапы (неизвестное имя — unknown-name, не мапа — type-mismatch).
+/// Значения — выражения; вычисляются с `at = 0` без окружения (доступны только
+/// константы, параметров у точки нет). Вызывать после проверок, в начале развёртки.
 pub fn resolve_point_attrs(
     schedule: &Schedule,
     defs: &Defs,
@@ -727,22 +823,22 @@ pub fn resolve_point_attrs(
                 let def = resolve(defs, name, defs.main)?;
                 match def.kind {
                     DefKind::Const => {}
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 }
                 match eval_expr_with_env(def.expr.as_ref().expect("const: тело"), 0, defs, &empty)?
                 {
                     Value::Map(pairs) => pairs,
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 }
             }
-            Some(_) => return Err(Error::e12_mismatch()),
+            Some(_) => return Err(Error::type_mismatch()),
         };
         out.insert(p.name.clone(), attrs);
     }
     Ok(out)
 }
 
-/// Вычислить пары литерала атрибутов (значения — литералы, `at` нет).
+/// Вычислить пары литерала атрибутов (значения — выражения, окружение пусто).
 fn eval_attr_pairs(
     pairs: &[(String, Expr)],
     defs: &Defs,
@@ -754,21 +850,25 @@ fn eval_attr_pairs(
         .collect()
 }
 
-/// Голый `at` рядом со строковым литералом (§4.13): проверить литерал.
-/// Остальное смешение — ложь, вызыватель даст `E12`.
-fn date_cmp_ok(left: &Expr, right: &Expr) -> Result<bool, Error> {
-    let lit = match (left, right) {
-        (Expr::At, Expr::Str(s)) | (Expr::Str(s), Expr::At) => s,
-        _ => return Ok(false),
-    };
-    normalize_date_literal(lit)?;
-    Ok(true)
+/// Голый `at` рядом со строковым литералом (см. docs/reference/expressions.md): проверить литерал.
+/// Остальное смешение — ложь, вызыватель даст `type-mismatch`.
+/// Date-сравнение: одна сторона — голый `at`, другая — строковый литерал.
+/// Возвращает `(at_слева, литерал)`. Единственное место, знающее правило;
+/// зовут и статика (проверить литерал), и вычисление (привести `at`).
+/// Алиасы/арифметика над `at` (`K`, `at+0`) сюда не попадают — только
+/// синтаксически голый `at` (иначе `hour(at) == "дата"` приняла бы мусор).
+fn date_sides<'a>(left: &'a Expr, right: &'a Expr) -> Option<(bool, &'a str)> {
+    match (left, right) {
+        (Expr::At, Expr::Str(s)) => Some((true, s)),
+        (Expr::Str(s), Expr::At) => Some((false, s)),
+        _ => None,
+    }
 }
 
 /// Строковый литерал даты к канонической форме `YYYY-MM-DDTHH:MM:SS.mmm`.
-/// Короткие формы дополняются нулями; кривой литерал — `E12`.
+/// Короткие формы дополняются нулями; кривой литерал — `invalid-date`.
 fn normalize_date_literal(raw: &str) -> Result<String, Error> {
-    let bad = || Error::e12_date(raw);
+    let bad = || Error::invalid_date(raw);
     let b = raw.as_bytes();
     // Фиксированные длины: 10 дата, 16 +часы:минуты, 19 +секунды, 23 +милли.
     let full = match b.len() {
@@ -824,8 +924,7 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
     }
     let mut ev = CxEv {
         defs: cx.defs,
-        stack: cx.stack.clone(),
-        unit: cx.unit,
+        scope: cx.scope.clone(),
         vars: HashMap::new(),
     };
     let r = eval_expr(expr, 0, &mut ev);
@@ -838,7 +937,8 @@ fn has_at(expr: &Expr) -> bool {
         Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_at(v)),
         Expr::Array(xs) => xs.iter().any(has_at),
-        Expr::Field { base, .. } | Expr::Index { base, .. } => has_at(base),
+        Expr::Field { base, .. } => has_at(base),
+        Expr::Index { base, index } => has_at(base) || has_at(index),
         Expr::Neg(x) => has_at(x),
         Expr::Truth(c) => has_cond_at(c),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -853,6 +953,7 @@ fn has_cond_at(cond: &Cond) -> bool {
     match cond {
         Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_at),
         Cond::Not(c) => has_cond_at(c),
+        Cond::Truthy(e) => has_at(e),
         Cond::Pred { args, .. } => args.iter().any(has_at),
         Cond::Cmp { left, right, .. } => {
             has_at(left)
@@ -870,7 +971,8 @@ fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
         Expr::At | Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_param(v, cx)),
         Expr::Array(xs) => xs.iter().any(|x| has_param(x, cx)),
-        Expr::Field { base, .. } | Expr::Index { base, .. } => has_param(base, cx),
+        Expr::Field { base, .. } => has_param(base, cx),
+        Expr::Index { base, index } => has_param(base, cx) || has_param(index, cx),
         Expr::Neg(x) => has_param(x, cx),
         Expr::Truth(c) => has_cond_param(c, cx),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -885,6 +987,7 @@ fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
     match cond {
         Cond::Or(cs) | Cond::And(cs) => cs.iter().any(|c| has_cond_param(c, cx)),
         Cond::Not(c) => has_cond_param(c, cx),
+        Cond::Truthy(e) => has_param(e, cx),
         Cond::Pred { args, .. } => args.iter().any(|a| has_param(a, cx)),
         Cond::Cmp { left, right, .. } => {
             has_param(left, cx)
@@ -900,8 +1003,10 @@ fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
 pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
     CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: HashMap::new(),
     }
     .eval_cond(cond, at)
@@ -917,15 +1022,17 @@ pub fn eval_cond_with_env(
 ) -> Result<bool, Error> {
     CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: env.clone(),
     }
     .eval_cond(cond, at)
 }
 
 /// Вычислить выражение (аргумент вызова, значение блока) в окружении
-/// параметров. Несвязанное имя — E11, как голое неизвестное имя.
+/// параметров. Несвязанное имя — unknown-name, как голое неизвестное имя.
 pub fn eval_expr_with_env(
     expr: &Expr,
     at: i64,
@@ -934,29 +1041,16 @@ pub fn eval_expr_with_env(
 ) -> Result<Value, Error> {
     let mut cx = CxEv {
         defs,
-        stack: Vec::new(),
-        unit: defs.main,
+        scope: Scope {
+            stack: Vec::new(),
+            unit: defs.main,
+        },
         vars: env.clone(),
     };
     eval_expr(expr, at, &mut cx)
 }
 
 impl CxEv<'_> {
-    fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
-        if self.stack.iter().any(|(n, _)| n == name) {
-            return Err(Error::e12_recursive(name));
-        }
-        let prev = std::mem::replace(&mut self.unit, unit);
-        self.stack.push((name.to_owned(), prev));
-        Ok(())
-    }
-
-    fn leave(&mut self) {
-        if let Some((_, prev)) = self.stack.pop() {
-            self.unit = prev;
-        }
-    }
-
     fn eval_cond(&mut self, cond: &Cond, at: i64) -> Result<bool, Error> {
         match cond {
             Cond::Or(cs) => {
@@ -976,25 +1070,27 @@ impl CxEv<'_> {
                 Ok(true)
             }
             Cond::Not(c) => Ok(!self.eval_cond(c, at)?),
+            // C-стиль: 0/`false` — ложь, ненулевое/`true` — истина.
+            Cond::Truthy(e) => Ok(match eval_expr(e, at, self)? {
+                Value::Num(n) => n != 0,
+                Value::Bool(b) => b,
+                _ => return Err(Error::type_mismatch()),
+            }),
             Cond::Pred { name, args } => {
                 let arg = match args.as_slice() {
                     [a] => eval_expr(a, at, self)?,
-                    _ => return Err(Error::e12_arity(name)),
+                    _ => return Err(Error::wrong_arguments(name)),
                 };
                 let at_arg = match arg {
                     Value::Num(n) => n,
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 };
                 let defs = self.defs;
-                let def = resolve(defs, name, self.unit)?;
-                match def.kind {
-                    DefKind::Pred => {}
-                    _ => return Err(Error::e12_not_pred(name)),
-                }
-                self.enter(name, def.unit)?;
+                let def = resolve_pred(defs, name, self.scope.unit)?;
+                self.scope.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
                 let r = self.eval_cond(&body, at_arg);
-                self.leave();
+                self.scope.leave();
                 r
             }
             Cond::Cmp { op, left, right } => {
@@ -1002,28 +1098,31 @@ impl CxEv<'_> {
                 match right {
                     CondRhs::One(rexpr) => {
                         let r = eval_expr(rexpr, at, self)?;
-                        // Голый `at` рядом со строкой: проверка уже пропустила
-                        // только эту форму смешения — приводим здесь.
+                        // Date-сравнение — то же правило, что в статике
+                        // (`date_sides`): голый `at` приводим к канонике.
                         let canonical = || {
                             crate::datetime::format_datetime_full(at).ok_or_else(|| {
-                                Error::e12_date(&crate::datetime::format_datetime(at))
+                                Error::invalid_date(&crate::datetime::format_datetime(at))
                             })
                         };
-                        match (&l, &r, left, rexpr) {
-                            (Value::Num(_), Value::Str(_), Expr::At, Expr::Str(lit)) => {
+                        match date_sides(left, rexpr) {
+                            Some((at_left, lit)) => {
                                 let norm = normalize_date_literal(lit)?;
-                                cmp_values(*op, &Value::Str(canonical()?), &Value::Str(norm))
+                                let canon = Value::Str(canonical()?);
+                                let norm = Value::Str(norm);
+                                let (l, r) = if at_left {
+                                    (canon, norm)
+                                } else {
+                                    (norm, canon)
+                                };
+                                cmp_values(*op, &l, &r)
                             }
-                            (Value::Str(_), Value::Num(_), Expr::Str(lit), Expr::At) => {
-                                let norm = normalize_date_literal(lit)?;
-                                cmp_values(*op, &Value::Str(norm), &Value::Str(canonical()?))
-                            }
-                            _ => cmp_values(*op, &l, &r),
+                            None => cmp_values(*op, &l, &r),
                         }
                     }
                     CondRhs::Alt(alts) => {
                         if !matches!(op, CmpOp::Eq | CmpOp::Ne) {
-                            return Err(Error::e12_mismatch());
+                            return Err(Error::type_mismatch());
                         }
                         let mut any_eq = false;
                         for a in alts {
@@ -1059,18 +1158,20 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
             CmpOp::Gt => a > b,
             CmpOp::Ge => a >= b,
         }),
-        // Мапы/массивы не сравниваются («пока», см. черновик) — даже между собой.
+        // Мапы/массивы не сравниваются даже между собой (maps-not-comparable).
         (Value::Map(_) | Value::Array(_), _) | (_, Value::Map(_) | Value::Array(_)) => {
-            Err(Error::e12_map_cmp())
+            Err(Error::maps_not_comparable())
         }
-        _ => Err(Error::e12_mismatch()),
+        _ => Err(Error::type_mismatch()),
     }
 }
 
-/// Вычислить выражение для `at`. Переполнение — E12.
+/// Вычислить выражение для `at`. Переполнение — integer-out-of-range.
 fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     match expr {
-        Expr::Num(raw) => Ok(Value::Num(raw.parse().map_err(|_| Error::e12_range(raw))?)),
+        Expr::Num(raw) => Ok(Value::Num(
+            raw.parse().map_err(|_| Error::integer_out_of_range(raw))?,
+        )),
         Expr::Str(s) => Ok(Value::Str(s.clone())),
         Expr::Bool(b) => Ok(Value::Bool(*b)),
         Expr::Map(pairs) => pairs
@@ -1084,28 +1185,31 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
         // Доступ — только в момент строки: нет ключа / не-мапа / не-массив —
-        // `unknown field`, выход за границы (и отрицательный) — `out of bounds`.
+        // `unknown field`; индекс вне границ — `out of bounds`.
         Expr::Field { base, field } => match eval_expr(base, at, cx)? {
             Value::Map(pairs) => pairs
                 .iter()
                 .find(|(k, _)| k == field)
                 .map(|(_, v)| v.clone())
-                .ok_or_else(|| Error::e12_field(field)),
-            _ => Err(Error::e12_field(field)),
+                .ok_or_else(|| Error::unknown_field(field)),
+            _ => Err(Error::unknown_field(field)),
         },
         Expr::Index { base, index } => {
+            let i = match eval_expr(index, at, cx)? {
+                Value::Num(n) => n,
+                _ => return Err(Error::type_mismatch()),
+            };
             let items = match eval_expr(base, at, cx)? {
                 Value::Array(xs) => xs,
-                _ => return Err(Error::e12_field(index)),
+                _ => return Err(Error::unknown_field(&i.to_string())),
             };
-            let i: i64 = index.parse().map_err(|_| Error::e12_range(index))?;
-            if i < 0 {
-                return Err(Error::e12_index(index));
+            // Питоновская адресация: отрицательный индекс считается с конца.
+            let len = items.len() as i64;
+            let pos = if i < 0 { len + i } else { i };
+            if pos < 0 || pos >= len {
+                return Err(Error::index_out_of_bounds(&i.to_string()));
             }
-            items
-                .get(i as usize)
-                .cloned()
-                .ok_or_else(|| Error::e12_index(index))
+            Ok(items[pos as usize].clone())
         }
         Expr::At => Ok(Value::Num(at)),
         Expr::Name(name) => {
@@ -1113,30 +1217,30 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 return Ok(v.clone());
             }
             let defs = cx.defs;
-            let (unit, body) = match resolve(defs, name, cx.unit) {
+            let (unit, body) = match resolve(defs, name, cx.scope.unit) {
                 Ok(def) if def.kind == DefKind::Const => {
                     (def.unit, def.expr.clone().expect("const: тело"))
                 }
-                Ok(_) => return Err(Error::e12_mismatch()),
+                Ok(_) => return Err(Error::type_mismatch()),
                 Err(e) => return Err(e),
             };
-            cx.enter(name, unit)?;
+            cx.scope.enter(name, unit)?;
             let r = eval_expr(&body, at, cx);
-            cx.leave();
+            cx.scope.leave();
             r
         }
         Expr::Neg(x) => match eval_expr(x, at, cx)? {
             Value::Num(v) => v
                 .checked_neg()
                 .map(Value::Num)
-                .ok_or_else(|| Error::e12_range("negation overflow")),
-            _ => Err(Error::e12_mismatch()),
+                .ok_or_else(|| Error::integer_out_of_range("negation overflow")),
+            _ => Err(Error::type_mismatch()),
         },
         Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c, at)?))),
         Expr::Bin { op, left, right } => {
             let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
                 (Value::Num(a), Value::Num(b)) => (a, b),
-                _ => return Err(Error::e12_mismatch()),
+                _ => return Err(Error::type_mismatch()),
             };
             let v = match op {
                 ArithOp::Add => a.checked_add(b),
@@ -1144,38 +1248,38 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 ArithOp::Mul => a.checked_mul(b),
                 ArithOp::Div => {
                     if b == 0 {
-                        return Err(Error::e12_divzero());
+                        return Err(Error::division_by_zero());
                     }
                     a.checked_div(b)
                 }
                 ArithOp::Mod => {
                     if b == 0 {
-                        return Err(Error::e12_divzero());
+                        return Err(Error::division_by_zero());
                     }
                     a.checked_rem(b)
                 }
                 ArithOp::FloorDiv => {
                     if b == 0 {
-                        return Err(Error::e12_divzero());
+                        return Err(Error::division_by_zero());
                     }
                     a.checked_div_euclid(b)
                 }
                 ArithOp::FloorMod => {
                     if b == 0 {
-                        return Err(Error::e12_divzero());
+                        return Err(Error::division_by_zero());
                     }
                     a.checked_rem_euclid(b)
                 }
             };
             v.map(Value::Num)
-                .ok_or_else(|| Error::e12_range("arithmetic overflow"))
+                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
         }
-        // Битовые (§4.13): two's complement с wrap'ом, ошибок нет по построению.
+        // Битовые (см. docs/reference/expressions.md): two's complement с wrap'ом, ошибок нет по построению.
         // `>>` — логический (добивка нулями), величина сдвига — по модулю 64.
         Expr::Bit { op, left, right } => {
             let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
                 (Value::Num(a), Value::Num(b)) => (a, b),
-                _ => return Err(Error::e12_mismatch()),
+                _ => return Err(Error::type_mismatch()),
             };
             let k = b.rem_euclid(64) as u32;
             let v = match op {
@@ -1192,7 +1296,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             for x in xs {
                 match eval_expr(x, at, cx)? {
                     Value::Str(s) => out.push_str(&s),
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 }
             }
             Ok(Value::Str(out))
@@ -1207,29 +1311,29 @@ fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> 
 
 fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     let defs = cx.defs;
-    if let Some(def) = defs.map.get(name) {
-        if !(def.private && def.unit != cx.unit) {
-            return eval_def_call(name, def, args, at, cx);
-        }
+    // Видимое объявление затеняет встроенную — то же правило, что в infer
+    // (`builtin_arity` через `visible_def`).
+    if let Some(def) = visible_def(defs, name, cx.scope.unit) {
+        return eval_def_call(name, def, args, at, cx);
     }
     match name {
         "str" => {
-            let a = args.first().ok_or_else(|| Error::e12_arity(name))?;
+            let a = args.first().ok_or_else(|| Error::wrong_arguments(name))?;
             if args.len() != 1 {
-                return Err(Error::e12_arity(name));
+                return Err(Error::wrong_arguments(name));
             }
             match eval_expr(a, at, cx)? {
                 Value::Num(n) => Ok(Value::Str(n.to_string())),
-                _ => Err(Error::e12_mismatch()),
+                _ => Err(Error::type_mismatch()),
             }
         }
         "pad" => {
             if args.len() != 2 {
-                return Err(Error::e12_arity(name));
+                return Err(Error::wrong_arguments(name));
             }
             let (n, w) = match (eval_expr(&args[0], at, cx)?, eval_expr(&args[1], at, cx)?) {
                 (Value::Num(n), Value::Num(w)) => (n, w),
-                _ => return Err(Error::e12_mismatch()),
+                _ => return Err(Error::type_mismatch()),
             };
             let s = n.to_string();
             let w = w.max(0) as usize;
@@ -1241,14 +1345,14 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
         }
         "floordiv" | "floormod" => {
             let [a, b] = args else {
-                return Err(Error::e12_arity(name));
+                return Err(Error::wrong_arguments(name));
             };
             let (x, y) = match (eval_expr(a, at, cx)?, eval_expr(b, at, cx)?) {
                 (Value::Num(x), Value::Num(y)) => (x, y),
-                _ => return Err(Error::e12_mismatch()),
+                _ => return Err(Error::type_mismatch()),
             };
             if y == 0 {
-                return Err(Error::e12_divzero());
+                return Err(Error::division_by_zero());
             }
             Ok(Value::Num(if name == "floordiv" {
                 x.div_euclid(y)
@@ -1258,32 +1362,32 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
         }
         "mkdate" => {
             if args.len() != 7 {
-                return Err(Error::e12_arity(name));
+                return Err(Error::wrong_arguments(name));
             }
             let mut vals = Vec::with_capacity(7);
             for a in args {
                 match eval_expr(a, at, cx)? {
                     Value::Num(v) => vals.push(v),
-                    _ => return Err(Error::e12_mismatch()),
+                    _ => return Err(Error::type_mismatch()),
                 }
             }
             build_date(&vals, name).map(Value::Num)
         }
-        _ => Err(Error::e11(name)),
+        _ => Err(Error::unknown_name(name)),
     }
 }
 
-/// Собрать дату из 7 чисел (§4.13): кривые компоненты — `invalid date`,
+/// Собрать дату из 7 чисел (см. docs/reference/expressions.md): кривые компоненты — `invalid date`,
 /// переполнение сборки — `integer out of range`. Сырь — числа как даны.
 fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
     let [y, mo, d, h, mi, s, ms] = v else {
-        return Err(Error::e12_arity(name));
+        return Err(Error::wrong_arguments(name));
     };
     let raw = format!("{y}-{mo}-{d}T{h}:{mi}:{s}.{ms}");
     match crate::datetime::make_datetime(*y, *mo, *d, *h, *mi, *s, *ms) {
         Ok(t) => Ok(t),
-        Err(crate::datetime::DateBuildErr::Invalid) => Err(Error::e12_date(&raw)),
-        Err(crate::datetime::DateBuildErr::Overflow) => Err(Error::e12_range(&raw)),
+        Err(crate::datetime::DateBuildErr::Invalid) => Err(Error::invalid_date(&raw)),
+        Err(crate::datetime::DateBuildErr::Overflow) => Err(Error::integer_out_of_range(&raw)),
     }
 }
 
@@ -1294,26 +1398,26 @@ fn eval_def_call(
     at: i64,
     cx: &mut CxEv<'_>,
 ) -> Result<Value, Error> {
-    if cx.stack.iter().any(|(n, _)| n == name) {
-        return Err(Error::e12_recursive(name));
+    if cx.scope.stack.iter().any(|(n, _)| n == name) {
+        return Err(Error::recursive_definition(name));
     }
     match def.kind {
         DefKind::Const => {
             if !args.is_empty() {
-                return Err(Error::e12_arity(name));
+                return Err(Error::wrong_arguments(name));
             }
-            cx.enter(name, def.unit)?;
+            cx.scope.enter(name, def.unit)?;
             let body = def.expr.clone().expect("const: тело");
             let r = eval_expr(&body, at, cx);
-            cx.leave();
+            cx.scope.leave();
             r
         }
         DefKind::Fun => {
             let arg = match args {
                 [a] => eval_expr(a, at, cx)?,
-                _ => return Err(Error::e12_arity(name)),
+                _ => return Err(Error::wrong_arguments(name)),
             };
-            cx.enter(name, def.unit)?;
+            cx.scope.enter(name, def.unit)?;
             let param = def.param.clone().expect("fun: параметр");
             let body = def.expr.clone().expect("fun: тело");
             let old = cx.vars.insert(param.clone(), arg);
@@ -1326,10 +1430,10 @@ fn eval_def_call(
                     cx.vars.remove(&param);
                 }
             }
-            cx.leave();
+            cx.scope.leave();
             r
         }
-        DefKind::Pred => Err(Error::e12_mismatch()),
+        DefKind::Pred => Err(Error::type_mismatch()),
     }
 }
 
@@ -1374,8 +1478,10 @@ mod tests {
     fn check_single(c: &Cond, d: &Defs) -> Result<(), Error> {
         CxTy {
             defs: d,
-            stack: Vec::new(),
-            unit: d.main,
+            scope: Scope {
+                stack: Vec::new(),
+                unit: d.main,
+            },
             vars: HashMap::new(),
             data: false,
         }
@@ -1447,7 +1553,10 @@ mod tests {
         let e = static_err("at & \"x\" == \"y\"");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
@@ -1492,6 +1601,36 @@ mod tests {
     }
 
     #[test]
+    fn truthy_numbers_as_conditions() {
+        // C-стиль: ненулевое/`true` — истина, ноль/`false` — ложь.
+        assert!(yes("5", 0));
+        assert!(no("0", 0));
+        assert!(yes("true", 0));
+        assert!(no("false", 0));
+        assert!(yes("1 + 2", 0));
+        assert!(no("at - at", 100));
+        assert!(yes("at", 100));
+        assert!(yes("not 0", 0));
+        assert!(yes("5 and at == at", 7));
+        // Скобочное условие как операнд: истина вносится как 1/0.
+        assert!(yes("(at == 1) == 1", 1));
+        assert!(no("(at == 1) == 1", 2));
+        assert!(yes("at == (1 and 2)", 1));
+        // Строки/словари/массивы в позиции условия — «забытое сравнение».
+        for bad in ["\"x\"", "{\"a\": 1}", "[1]"] {
+            let e = static_err(bad);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "type-mismatch",
+                    "type mismatch: cannot mix number and string"
+                ),
+                "для {bad}"
+            );
+        }
+    }
+
+    #[test]
     fn truth_bridge_takes_and_or() {
         assert!(yes("2 * (at == 1 or at == 2) == 2", 2));
         assert!(yes("2 * (at == 1 or at == 2) == 0", 3));
@@ -1510,8 +1649,10 @@ mod tests {
         let d = test_defs();
         let mut cx = CxEv {
             defs: &d,
-            stack: Vec::new(),
-            unit: d.main,
+            scope: Scope {
+                stack: Vec::new(),
+                unit: d.main,
+            },
             vars: HashMap::new(),
         };
         (0..n)
@@ -1657,7 +1798,10 @@ mod tests {
         let e = static_err("(at + \"x\" == \"y\")");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
@@ -1672,7 +1816,7 @@ mod tests {
         let e = static_err("banana(at) == 1");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E11", "unknown name 'banana'")
+            ("unknown-name", "unknown name 'banana'")
         );
     }
 
@@ -1681,12 +1825,15 @@ mod tests {
         let e = static_err("str(1, 2) == \"x\"");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "wrong arguments for 'str'")
+            ("wrong-arguments", "wrong arguments for 'str'")
         );
         let e = static_err("at + \"x\" == \"y\"");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
@@ -1721,7 +1868,7 @@ mod tests {
             "mkdate(1900, 2, 29, 0, 0, 0, 0) == 0",
         ] {
             let e = static_err(bad);
-            assert_eq!(e.code, "E12", "{bad}");
+            assert_eq!(e.code, "invalid-date", "{bad}");
             assert!(
                 e.message.starts_with("invalid date"),
                 "{bad}: {}",
@@ -1735,20 +1882,23 @@ mod tests {
         let e = static_err("mkdate(2026, 1, 1, 0, 0, 0) == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "wrong arguments for 'mkdate'")
+            ("wrong-arguments", "wrong arguments for 'mkdate'")
         );
         let e = static_err("mkdate(2026, 1, 1, 0, 0, 0, 0, 0) == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "wrong arguments for 'mkdate'")
+            ("wrong-arguments", "wrong arguments for 'mkdate'")
         );
         let e = static_err("mkdate(2026, \"x\", 1, 0, 0, 0, 0) == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
         let e = static_err("mkdate(300000000, 1, 1, 0, 0, 0, 0) == 0");
-        assert_eq!(e.code, "E12");
+        assert_eq!(e.code, "integer-out-of-range");
         assert!(
             e.message.starts_with("integer out of range"),
             "{}",
@@ -1766,7 +1916,7 @@ mod tests {
         let e = eval_cond(&c, 100, &d).expect_err("кривая дата — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "invalid date '2026-2-29T0:0:0.0'")
+            ("invalid-date", "invalid date '2026-2-29T0:0:0.0'")
         );
     }
 
@@ -1791,7 +1941,25 @@ mod tests {
     #[test]
     fn rejects_constant_division_by_zero() {
         let e = static_err("1 / 0 == 0");
-        assert_eq!((e.code, e.message.as_str()), ("E12", "division by zero"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
+    }
+
+    #[test]
+    fn zero_lhs_rhs_ok_for_non_division() {
+        // Ноль опасен только в делителе: `+`, `-`, `*` с константным нулём валидны.
+        assert!(yes("1 + 0 == 1", 0));
+        assert!(yes("5 * 0 == 0", 0));
+        assert!(yes("1 - 0 == 1", 0));
+        assert!(yes("1 * (1 + 2 > 9) == 0", 0));
+        assert!(yes("1 % 3 == 1", 0));
+        let e = static_err("1 % 0 == 0");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
     }
 
     #[test]
@@ -1800,7 +1968,10 @@ mod tests {
         let d = test_defs();
         check_single(&c, &d).expect("делитель не константа — статика проходит");
         let e = eval_cond(&c, 100, &d).expect_err("ноль в момент строки — ошибка");
-        assert_eq!((e.code, e.message.as_str()), ("E12", "division by zero"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
     }
 
     #[test]
@@ -1808,7 +1979,10 @@ mod tests {
         let e = static_err("99999999999999999999999 == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "integer out of range '99999999999999999999999'")
+            (
+                "integer-out-of-range",
+                "integer out of range '99999999999999999999999'"
+            )
         );
     }
 
@@ -1821,7 +1995,10 @@ mod tests {
         let e = eval_cond(&c, 0, &d).expect_err("переполнение в момент строки — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "integer out of range 'arithmetic overflow'")
+            (
+                "integer-out-of-range",
+                "integer out of range 'arithmetic overflow'"
+            )
         );
     }
 
@@ -1834,7 +2011,7 @@ mod tests {
 
     #[test]
     fn string_alternation_matches_date_lists() {
-        // Строковые ветки — под строку слева (`datestr`), смешение — E12.
+        // Строковые ветки — под строку слева (`datestr`), смешение — type-mismatch.
         let nov4 = crate::datetime::parse_datetime("2026-11-04T12:00:00").unwrap();
         let nov5 = crate::datetime::parse_datetime("2026-11-05T12:00:00").unwrap();
         let row = "datestr(at) == (\"2026-11-04\" or \"2026-12-31\")";
@@ -1847,22 +2024,36 @@ mod tests {
             let e = static_err(bad);
             assert_eq!(
                 (e.code, e.message.as_str()),
-                ("E12", "type mismatch: cannot mix number and string"),
+                (
+                    "type-mismatch",
+                    "type mismatch: cannot mix number and string"
+                ),
                 "для {bad}"
             );
         }
     }
 
     #[test]
-    fn alternation_beyond_eq_ne_is_runtime_error() {
-        // Статика пропускает (числа, арность в норме), падает вычисление.
+    fn alternation_beyond_eq_ne_is_static_error() {
+        // Оператор смотрит статика: `check_single` падает, до вычисления не доходит.
+        let e = static_err("at < (1 or 2)");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+        // Рантайм-ветка осталась страховкой для прямых вызовов `eval_cond`.
         let c = cond_of("at < (1 or 2)");
         let d = test_defs();
-        check_single(&c, &d).expect("оператор статика не смотрит");
         let e = eval_cond(&c, 1, &d).expect_err("только == и !=");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
@@ -1888,7 +2079,7 @@ mod tests {
 
     #[test]
     fn prelude_matches_control_points() {
-        // at = 0 — четверг 1970-01-01 (контрольная точка черновика).
+        // at = 0 — четверг 1970-01-01 (контрольная дата прелюдии).
         assert!(eval_with("", "dow(at) == 3", 0).unwrap());
         assert!(eval_with(
             "",
@@ -1927,7 +2118,10 @@ mod tests {
     #[test]
     fn private_names_stay_in_file() {
         let e = defs_of("fun f(t) = __z(t);").expect_err("чужое __ — ошибка");
-        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__z'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-name", "unknown name '__z'")
+        );
     }
 
     #[test]
@@ -1940,76 +2134,182 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_map_keys_are_e15() {
-        // Дубль в литерале — E15 уже в объявлении (до развёртки).
-        let e = defs_of("const M = {\"a\": 1, \"a\": 2};").expect_err("дубль — ошибка");
+    fn names_and_exprs_inside_literals() {
+        // Имя/выражение внутри словаря — обычное выражение в позиции данных.
+        defs_of(
+            "const ROOM = \"233/А\"; const N = 2; \
+            const LEC = {\"room\": ROOM, \"n\": N + 1, \"tags\": [ROOM, N]};",
+        )
+        .expect("имена и арифметика в словаре обязаны проходить");
+        // Неизвестное имя — unknown-name (не ошибка парсера).
+        let e = defs_of("const M = {\"a\": NOPE};").expect_err("неизвестное имя — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E15", "duplicate attribute 'a'")
+            ("unknown-name", "unknown name 'NOPE'")
         );
-        // Вложенный литерал — тоже E15.
-        let e = defs_of("const M = {\"a\": {\"b\": 1, \"b\": 2}};")
-            .expect_err("вложенный дубль — ошибка");
+        // Кривой делитель ловится статически, как и везде.
+        let e = defs_of("const M = {\"a\": 1 / 0};").expect_err("деление на ноль — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E15", "duplicate attribute 'b'")
+            ("division-by-zero", "division by zero")
+        );
+        // Голое fun-имя в значении — не значение.
+        let e =
+            defs_of("fun f(t) = t; const M = {\"a\": f};").expect_err("fun как значение — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
     #[test]
-    fn bare_data_const_in_condition_is_e11() {
+    fn index_static_checks() {
+        // Индекс — выражение; тип и опасное деление проверяются статически.
+        defs_of("const TAGS = [\"a\", \"b\"]; const X = TAGS[0 + 1];")
+            .expect("числовой индекс обязан проходить");
+        let e = defs_of("const TAGS = [\"a\"]; const X = TAGS[\"a\"];")
+            .expect_err("строковый индекс — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+        let e = defs_of("const TAGS = [\"a\"]; const X = TAGS[1 / 0];")
+            .expect_err("ноль в индексе — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
+        );
+    }
+
+    #[test]
+    fn duplicate_map_keys_are_duplicate_attribute() {
+        // Дубль в литерале — duplicate-attribute уже в объявлении (до развёртки).
+        let e = defs_of("const M = {\"a\": 1, \"a\": 2};").expect_err("дубль — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate-attribute", "duplicate attribute 'a'")
+        );
+        // Вложенный литерал — тоже duplicate-attribute.
+        let e = defs_of("const M = {\"a\": {\"b\": 1, \"b\": 2}};")
+            .expect_err("вложенный дубль — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate-attribute", "duplicate attribute 'b'")
+        );
+    }
+
+    #[test]
+    fn bare_data_const_in_condition_is_unknown_name() {
         // Данные напрямую в условии невидимы — даже под доступом.
         let d = defs_of("const M = {\"n\": 1, \"tags\": [\"a\"]};").unwrap();
         for row in ["M == 1", "M.n == 1", "M.tags[0] == \"a\""] {
             let e = check_single(&cond_of(row), &d).expect_err("статика обязана браковать");
-            assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'M'"));
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("unknown-name", "unknown name 'M'")
+            );
         }
     }
 
     #[test]
     fn map_comparison_is_e12() {
-        // Мапа с мапой — E12 «пока» (глубокое сравнение — будущее).
+        // Мапа с мапой — maps-not-comparable (глубокое сравнение не поддерживается).
         let e = static_err("{\"a\": 1} == {\"a\": 1}");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "cannot compare maps or arrays")
+            ("maps-not-comparable", "cannot compare maps or arrays")
         );
         // Мапа с числом — обычное смешение.
         let e = static_err("{\"a\": 1} == 1");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+    }
+
+    #[test]
+    fn map_alternation_is_maps_not_comparable() {
+        // Тот же слаг, что в одиночном сравнении (было type-mismatch).
+        let e = static_err("{\"a\": 1} == ({\"a\": 1} or {\"b\": 2})");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("maps-not-comparable", "cannot compare maps or arrays")
+        );
+        // Мапа с числом в ветке — обычное смешение.
+        let e = static_err("{\"a\": 1} == (1 or 2)");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
     #[test]
     fn bool_in_condition_is_e12() {
-        // Булева типа в условиях нет: литерал в сравнении — E12.
+        // Булева типа в условиях нет: литерал в сравнении — type-mismatch.
         let e = static_err("true == true");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "type mismatch: cannot mix number and string")
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
     #[test]
-    fn duplicate_block_keys_are_e15() {
-        // Дубль ключей блока — E15 в фазе строк.
+    fn duplicate_block_keys_are_duplicate_attribute() {
+        // Дубль ключей блока — duplicate-attribute в фазе строк.
         let e = check_rows(
             "schedule \"T\" { point A { actions = [x]; } \
-            cycle R duration = 1h { 0m: A.x() { a = 1, a = 2 }; } \
+            cycle R duration = 1h { 0m: A.x() {\"a\": 1, \"a\": 2}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
         )
         .expect_err("дубль в блоке — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E15", "duplicate attribute 'a'")
+            ("duplicate-attribute", "duplicate attribute 'a'")
+        );
+    }
+
+    #[test]
+    fn block_const_must_be_map() {
+        // Ссылка на const-мапу в блоке проходит; const-число — type-mismatch.
+        check_rows(
+            "const ATTRS = {\"n\": 1}; schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x() ATTRS; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
+        )
+        .expect("const-мапа в блоке обязана проходить");
+        let e = check_rows(
+            "const N = 1; schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x() N; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }",
+        )
+        .expect_err("const-число в блоке — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
         );
     }
 
     #[test]
     fn call_args_see_data_names() {
-        // Аргументы — позиция данных: константы-мапы видны, неизвестные — E11.
+        // Аргументы — позиция данных: константы-мапы видны, неизвестные — unknown-name.
         check_rows(
             "const M = {\"n\": 1}; schedule \"T\" { point A { actions = [x]; } \
             cycle R(a) duration = 1h { 0m: A.x(); } \
@@ -2030,9 +2330,9 @@ mod tests {
         .expect_err("неизвестное имя в аргументе — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E11", "unknown name 'banana'")
+            ("unknown-name", "unknown name 'banana'")
         );
-        // Дубль в литерале аргумента — E15 (интеграция infer).
+        // Дубль в литерале аргумента — duplicate-attribute (интеграция infer).
         let e = check_rows(
             "schedule \"T\" { point A { actions = [x]; } \
             cycle R(a) duration = 1h { 0m: A.x(); } \
@@ -2042,7 +2342,7 @@ mod tests {
         .expect_err("дубль в аргументе — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E15", "duplicate attribute 'k'")
+            ("duplicate-attribute", "duplicate attribute 'k'")
         );
     }
 
@@ -2059,26 +2359,29 @@ mod tests {
         let e = defs_of("fun a(t) = b(t); fun b(t) = a(t);").expect_err("цикл — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "recursive definition 'a'")
+            ("recursive-definition", "recursive definition 'a'")
         );
         let e = defs_of("const c = c + 1;").expect_err("самовызов — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "recursive definition 'c'")
+            ("recursive-definition", "recursive definition 'c'")
         );
     }
 
     #[test]
     fn rejects_duplicate_definitions() {
         let e = defs_of("const a = 1; fun a(t) = t;").expect_err("дубль — ошибка");
-        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate fun 'a'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate", "duplicate fun 'a'")
+        );
     }
     #[test]
     fn fun_of_non_predicate_is_error() {
         let e = static_err("hour(at)");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E12", "'hour' is not a predicate")
+            ("not-a-predicate", "'hour' is not a predicate")
         );
     }
 
@@ -2110,7 +2413,7 @@ mod tests {
             let e = static_err(&format!("at >= \"{raw}\""));
             assert_eq!(
                 (e.code, e.message.as_str()),
-                ("E12", format!("invalid date '{raw}'").as_str()),
+                ("invalid-date", format!("invalid date '{raw}'").as_str()),
                 "для {raw:?}"
             );
         }
@@ -2127,7 +2430,10 @@ mod tests {
             let e = static_err(row);
             assert_eq!(
                 (e.code, e.message.as_str()),
-                ("E12", "type mismatch: cannot mix number and string"),
+                (
+                    "type-mismatch",
+                    "type mismatch: cannot mix number and string"
+                ),
                 "для {row:?}"
             );
         }
@@ -2135,7 +2441,7 @@ mod tests {
 
     #[test]
     fn cross_file_shadow_wins_silently() {
-        // Импорт переопределяет системное имя без E04; программа — поверх.
+        // Импорт переопределяет системное имя без duplicate; программа — поверх.
         let imp = p::parse_decls("const sat = 3;").unwrap();
         let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("weekend(at)");
@@ -2145,12 +2451,15 @@ mod tests {
 
     #[test]
     fn private_names_do_not_cross_files() {
-        // `__` импорта не видно из программы — E11.
+        // `__` импорта не видно из программы — unknown-name.
         let imp = p::parse_decls("fun __h(t) = t;").unwrap();
         let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("__h(at) == 1");
         let e = check_single(&c, &d).expect_err("чужое __ — ошибка");
-        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name '__h'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-name", "unknown name '__h'")
+        );
         // Своё `__` внутри своего файла работает.
         let prog = p::parse_decls("fun __p(t) = t + 1;").unwrap();
         let (d, _) = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
@@ -2160,7 +2469,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_across_files_is_not_e04() {
+    fn duplicate_across_files_is_not_duplicate() {
         // Дубль — только внутри одного файла.
         let a = p::parse_decls("const K = 1;").unwrap();
         let b = p::parse_decls("const K = 2;").unwrap();
@@ -2173,7 +2482,7 @@ mod tests {
 
     #[test]
     fn routine_table_param_invisible_in_conds() {
-        // Табличный параметр в условиях — E11, данные (`params[1..]`) — видны.
+        // Табличный параметр в условиях — unknown-name, данные (`params[1..]`) — видны.
         let ok = "time_const D duration = 2h { 1st: 0m; } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC, subj) { [subj == 1] 1st: A.x(); } \
@@ -2181,12 +2490,15 @@ mod tests {
         check_rows(ok).expect("данные рутины видны в условиях");
         let bad = ok.replace("[subj == 1]", "[TC == 1]");
         let e = check_rows(&bad).expect_err("таблица в условиях невидима");
-        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'TC'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-name", "unknown name 'TC'")
+        );
     }
 
     #[test]
     fn table_firing_conditions_checked() {
-        // Условия пожаров проверяются без параметров (E11), вызов — как строка.
+        // Условия пожаров проверяются без параметров (unknown-name), вызов — как строка.
         let src = "time_const D duration = 2h { [banana == 1] tick: 0m -> A.x(); } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 0m: A.x(); } \
@@ -2194,20 +2506,23 @@ mod tests {
         let e = check_rows(src).expect_err("имя в пожаре обязано проверяться");
         assert_eq!(
             (e.code, e.message.as_str()),
-            ("E11", "unknown name 'banana'")
+            ("unknown-name", "unknown name 'banana'")
         );
     }
 
     #[test]
     fn time_const_registry_dup_and_overlay() {
-        // Дубль таблицы внутри файла — E04 `duplicate table`.
+        // Дубль таблицы внутри файла — duplicate `duplicate table`.
         let d = p::parse_decls(
             "time_const D duration = 1h { 1st: 0m; } time_const D duration = 2h { 1st: 0m; }",
         )
         .unwrap();
         let e = resolve_units(&[d]).expect_err("дубль таблицы");
-        assert_eq!((e.code, e.message.as_str()), ("E04", "duplicate table 'D'"));
-        // Между файлами побеждает последнее; в выражениях таблиц не видно (E11).
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate", "duplicate table 'D'")
+        );
+        // Между файлами побеждает последнее; в выражениях таблиц не видно (unknown-name).
         let a = p::parse_decls("time_const D duration = 1h { 1st: 0m; }").unwrap();
         let b = p::parse_decls("time_const D duration = 2h { 1st: 0m; }").unwrap();
         let (d, reg) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
@@ -2216,6 +2531,18 @@ mod tests {
         assert_eq!(reg.tables["D"].rows.len(), 1);
         let c = cond_of("at >= D");
         let e = check_single(&c, &d).expect_err("таблица — не имя условия");
-        assert_eq!((e.code, e.message.as_str()), ("E11", "unknown name 'D'"));
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-name", "unknown name 'D'")
+        );
+    }
+
+    #[test]
+    fn broken_prelude_is_error_not_panic() {
+        // Загрузчик системного файла возвращает слаг вместо паники.
+        assert!(resolve_system(PRELUDE).is_ok());
+        let e = resolve_system("const = ;").expect_err("битая прелюдия — ошибка");
+        assert_eq!(e.code, "broken-prelude");
+        assert!(e.message.starts_with("broken prelude '"), "{}", e.message);
     }
 }

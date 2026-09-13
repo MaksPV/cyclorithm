@@ -1,33 +1,36 @@
 //! Тонкий фасад для встраивания (WASM-плейграунд): один вызов
-//! «исходник → JSON §6», без файловой системы.
+//! «исходник → JSON» (см. docs/reference/output.md), без файловой системы.
 //!
-//! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по §5):
-//! разбор → импорты (`E13`/`E14`) → объявления → имена (`E04`/`E09`,
-//! затем `E01`/`E02`/`E03`) → рекурсия (`E06`) → таблицы (`E16`, границы
-//! таблиц и тел) → границы (`E05`/`E10`/`E07`)
-//! → условия (`E11`/`E12`) → даты окна (`E08`) → развёртка.
+//! Конвейер повторяет `cyclo run` 1:1 (порядок фаз — по главе ошибок):
+//! разбор → импорты (`cannot-read-import`/`schedule-in-import`) → объявления
+//! → имена (`duplicate`/`wrong-kind`, затем `unknown-point`/`action-not-allowed`/
+//! `unknown-cycle`) → рекурсия (`recursive`) → таблицы (`unknown-table`,
+//! границы таблиц и тел) → границы (`invalid-duration`/`invalid-repeat-count`/
+//! `cycle-overruns`) → условия (`unknown-name`/`type-mismatch`…) → даты окна
+//! (`invalid-datetime`) → развёртка.
 //! Тексты ошибок совпадают со stderr CLI дословно.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::cond::{check_conditions, resolve_units, Value};
+use crate::cond::{check_conditions, resolve_units, Defs, Value};
 use crate::datetime::{format_datetime, parse_datetime};
-use crate::expand::expand;
+use crate::expand::{expand, next_events, Event};
 use crate::imports::{collect_units, ImportError};
-use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
+use crate::validate::{check_bounds, check_recursion, check_tables, validate_names, NameTables};
 use crate::Error;
+use cyclorithm_parser::Schedule;
 
 /// Диагностика для редактора: что сломалось и где (если позиция известна).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diag {
-    /// `parse` — синтаксис (без E-кода), `import` — `E13`/`E14`,
-    /// `valid` — остальные коды §5.
+    /// `parse` — синтаксис (без слага), `import` — `cannot-read-import`/
+    /// `schedule-in-import`/`import-cycle`, `valid` — остальные слаги.
     pub kind: &'static str,
-    /// Код из §5; у синтаксиса — `None`.
+    /// Слаг ситуации; у синтаксиса — `None`.
     pub code: Option<&'static str>,
     /// 1-базные строка/колонка; только у синтаксиса
-    /// (позиций в AST нет, E-ошибки их не несут).
+    /// (позиций в AST нет, ошибки валидации их не несут).
     pub line: Option<usize>,
     pub col: Option<usize>,
     /// Текст как в stderr CLI.
@@ -59,7 +62,7 @@ impl Diag {
         match e {
             ImportError::Coded(e) => {
                 let kind = match e.code {
-                    "E13" | "E14" => "import",
+                    "cannot-read-import" | "import-cycle" | "schedule-in-import" => "import",
                     _ => "valid",
                 };
                 Self {
@@ -81,21 +84,22 @@ impl Diag {
     }
 }
 
-/// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
-/// Порядок фаз — как в `cyclo run` (§5).
-fn pipeline(
+/// Общий setup фаз главы ошибок для фасадов: разбор → импорты → объявления → решётка.
+/// Даты окон и развёртка — в замыкании вызывателя (заимствования живут
+/// внутри: вернуть их наружу нельзя, поэтому общий код — через замыкание).
+fn with_setup<R>(
     src: &str,
-    start_raw: &str,
-    end_raw: &str,
     libs: &[(&str, &str)],
-) -> Result<(String, Vec<crate::expand::Event>), Diag> {
-    let file = match cyclorithm_parser::parse(src) {
+    f: impl FnOnce(&Schedule, &NameTables<'_>, &Defs) -> Result<R, Diag>,
+) -> Result<R, Diag> {
+    let mut file = match cyclorithm_parser::parse(src) {
         Ok(f) => f,
         Err(e) => {
             let (line, col) = cyclorithm_parser::error_position(&e);
             return Err(Diag::parse(e.to_string(), Some(line), Some(col)));
         }
     };
+    crate::reverse::materialize_reverse(&mut file.schedule).map_err(Diag::valid)?;
     let ast = &file.schedule;
     let mem: HashMap<PathBuf, &str> = libs
         .iter()
@@ -116,13 +120,26 @@ fn pipeline(
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
         .map_err(Diag::valid)?;
-    let start_ms = parse_datetime(start_raw).map_err(Diag::valid)?;
-    let end_ms = parse_datetime(end_raw).map_err(Diag::valid)?;
-    let events = expand(ast, &tables, &defs, start_ms, end_ms).map_err(Diag::valid)?;
-    Ok((ast.name.clone(), events))
+    f(ast, &tables, &defs)
 }
 
-/// Развернуть расписание из строки в JSON §6 (компактный, ключи
+/// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
+/// Порядок фаз — как в `cyclo run` (глава ошибок).
+fn pipeline(
+    src: &str,
+    start_raw: &str,
+    end_raw: &str,
+    libs: &[(&str, &str)],
+) -> Result<(String, Vec<Event>), Diag> {
+    with_setup(src, libs, |ast, tables, defs| {
+        let start_ms = parse_datetime(start_raw).map_err(Diag::valid)?;
+        let end_ms = parse_datetime(end_raw).map_err(Diag::valid)?;
+        let events = expand(ast, tables, defs, start_ms, end_ms).map_err(Diag::valid)?;
+        Ok((ast.name.clone(), events))
+    })
+}
+
+/// Развернуть расписание из строки в JSON (см. docs/reference/output.md; компактный, ключи
 /// `schedule,start,end,events`, у событий — `time,action,point`,
 /// `point_attrs`,`action_attrs`; без завершающего `\n`, в отличие от stdout CLI).
 /// `libs` — содержимое библиотек для `use`: `(путь, текст)`, путь пишется
@@ -145,16 +162,43 @@ pub fn run_schedule(
         if i > 0 {
             out.push(',');
         }
-        out.push_str("{\"time\":");
-        out.push_str(&esc(&format_datetime(e.time)));
-        out.push_str(",\"action\":");
-        out.push_str(&esc(&e.action));
-        out.push_str(",\"point\":");
-        out.push_str(&esc(&e.point));
-        out.push_str(",\"point_attrs\":");
-        out.push_str(&attrs_text(&e.point_attrs));
-        out.push_str(",\"action_attrs\":");
-        out.push_str(&attrs_text(&e.action_attrs));
+        out.push('{');
+        push_event_fields(&mut out, e);
+        out.push('}');
+    }
+    out.push_str("]}");
+    Ok(out)
+}
+
+/// Первые `n` событий от `from_ms` (включительно) в пределах
+/// `[from_ms, from_ms + within_ms)` — JSON (см. docs/reference/output.md; компактный, ключи
+/// `schedule,from,within,events`; `from` — резолвленная ISO-строка,
+/// `within` — миллисекунды числом; без завершающего `\n`).
+/// Пусто — `"events":[]`. Ошибки строк за пределами ответа не срабатывают.
+pub fn next_steps(
+    src: &str,
+    from_ms: i64,
+    within_ms: i64,
+    n: usize,
+    libs: &[(&str, &str)],
+) -> Result<String, Diag> {
+    let (name, events) = with_setup(src, libs, |ast, tables, defs| {
+        let events = next_events(ast, tables, defs, from_ms, within_ms, n).map_err(Diag::valid)?;
+        Ok((ast.name.clone(), events))
+    })?;
+    let mut out = String::from("{\"schedule\":");
+    out.push_str(&esc(&name));
+    out.push_str(",\"from\":");
+    out.push_str(&esc(&format_datetime(from_ms)));
+    out.push_str(",\"within\":");
+    out.push_str(&within_ms.to_string());
+    out.push_str(",\"events\":[");
+    for (i, e) in events.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        push_event_fields(&mut out, e);
         out.push('}');
     }
     out.push_str("]}");
@@ -183,16 +227,8 @@ pub fn run_timeline(
         if i > 0 {
             out.push(',');
         }
-        out.push_str("{\"time\":");
-        out.push_str(&esc(&format_datetime(e.time)));
-        out.push_str(",\"action\":");
-        out.push_str(&esc(&e.action));
-        out.push_str(",\"point\":");
-        out.push_str(&esc(&e.point));
-        out.push_str(",\"point_attrs\":");
-        out.push_str(&attrs_text(&e.point_attrs));
-        out.push_str(",\"action_attrs\":");
-        out.push_str(&attrs_text(&e.action_attrs));
+        out.push('{');
+        push_event_fields(&mut out, e);
         out.push_str(",\"span\":");
         out.push_str(&span_json(&e.span));
         out.push('}');
@@ -209,6 +245,21 @@ pub fn run_timeline(
     }
     out.push_str("]}");
     Ok(out)
+}
+
+/// Поля события в JSON-объект без скобок (порядок — см. docs/reference/output.md:
+/// `time,action,point,point_attrs,action_attrs`).
+fn push_event_fields(out: &mut String, e: &Event) {
+    out.push_str("\"time\":");
+    out.push_str(&esc(&format_datetime(e.time)));
+    out.push_str(",\"action\":");
+    out.push_str(&esc(&e.action));
+    out.push_str(",\"point\":");
+    out.push_str(&esc(&e.point));
+    out.push_str(",\"point_attrs\":");
+    out.push_str(&attrs_text(&e.point_attrs));
+    out.push_str(",\"action_attrs\":");
+    out.push_str(&attrs_text(&e.action_attrs));
 }
 
 fn span_json(s: &crate::expand::Span) -> String {
@@ -330,10 +381,10 @@ mod tests {
     }
 
     #[test]
-    fn facade_reports_e11() {
+    fn facade_reports_unknown_name() {
         let src = MINI.replace("[not weekend(at)]", "[banana(at)]");
         let d = run_schedule(&src, "2026-01-09T00:00:00", "2026-01-10T00:00:00", &[]).unwrap_err();
-        assert_eq!((d.kind, d.code), ("valid", Some("E11")));
+        assert_eq!((d.kind, d.code), ("valid", Some("unknown-name")));
     }
 
     #[test]
@@ -360,9 +411,9 @@ mod tests {
         let src =
             "use \"lib.cyclo\";\n".to_owned() + &MINI.replace("[not weekend(at)]", "[early(at)]");
         let lib = "pred early(at) = hour(at) < 12;";
-        // Без библиотеки — E13, с ней — успех.
+        // Без библиотеки — cannot-read-import, с ней — успех.
         let d = run_schedule(&src, "2026-01-09T00:00:00", "2026-01-10T00:00:00", &[]).unwrap_err();
-        assert_eq!((d.kind, d.code), ("import", Some("E13")));
+        assert_eq!((d.kind, d.code), ("import", Some("cannot-read-import")));
         let got = run_schedule(
             &src,
             "2026-01-09T00:00:00",
