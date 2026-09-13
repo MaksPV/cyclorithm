@@ -742,6 +742,47 @@ schedule "Редкое" {
     }
 
     #[test]
+    fn index_expressions_evaluate_in_blocks() {
+        // Питоновский минус, арифметика, параметр и вложенная цепочка.
+        let src = "const TAGS = [\"поток\", \"утро\", \"БЖД\"]; const N = 3; \
+            const LEC = {\"tags\": TAGS}; \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle LESSON(i) duration = 1h { 0m: B.ring() { \
+            \"first\": TAGS[0], \"last\": TAGS[-1], \"sum\": TAGS[1 + 1], \
+            \"param\": TAGS[i], \"nested\": LEC.tags[N - 1]}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: LESSON(1); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e).unwrap();
+        let str_ = |s: &str| crate::cond::Value::Str(s.to_owned());
+        assert_eq!(
+            events[0].action_attrs,
+            vec![
+                ("first".to_owned(), str_("поток")),
+                ("last".to_owned(), str_("БЖД")),
+                ("sum".to_owned(), str_("БЖД")),
+                ("param".to_owned(), str_("утро")),
+                ("nested".to_owned(), str_("БЖД")),
+            ]
+        );
+    }
+
+    #[test]
+    fn index_out_of_bounds_is_runtime() {
+        // Слишком отрицательный индекс — index-out-of-bounds в момент строки.
+        let src = "const TAGS = [\"a\"]; schedule \"T\" { point B { actions = [ring]; } \
+            cycle L duration = 1h { 0m: B.ring() {\"x\": TAGS[-2]}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: L(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let err = expand(ast, &t, d, s, e).expect_err("индекс вне границ — ошибка");
+        assert_eq!(
+            (err.code, err.message.as_str()),
+            ("index-out-of-bounds", "index out of bounds '-2'")
+        );
+    }
+
+    #[test]
     fn inner_cycle_sees_outer_params() {
         // Динамический скоуп: безаргументный INNER видит subj вызывающего.
         let src = "const LEC = {\"name\": \"БЖД\", \"type\": \"лек\"}; \

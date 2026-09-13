@@ -68,7 +68,7 @@
 | `integer-out-of-range` | `integer out of range '...'` | Уложиться в `i64` |
 | `invalid-date` | `invalid date '...'` | Проверить компоненты даты |
 | `unknown-field` | `unknown field 'name'` | Проверить ключ и цепочку доступа |
-| `index-out-of-bounds` | `index out of bounds '5'` | Держать индекс внутри массива |
+| `index-out-of-bounds` | `index out of bounds '5'` | Держать индекс внутри массива (минус считается с конца) |
 | `maps-not-comparable` | `cannot compare maps or arrays` | Сравнивать только числа и строки |
 
 ## Импорты

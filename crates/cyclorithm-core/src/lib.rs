@@ -250,7 +250,8 @@ impl Error {
         Self::coded("unknown-field", format!("unknown field '{name}'"))
     }
 
-    /// `index-out-of-bounds`: индекс за границами массива (`tags[5]`, отрицательный `tags[-1]`).
+    /// `index-out-of-bounds`: индекс за границами массива (`tags[5]`,
+    /// слишком отрицательный `tags[-9]`; в диапазоне минус считается с конца).
     pub fn index_out_of_bounds(raw: &str) -> Self {
         Self::coded(
             "index-out-of-bounds",

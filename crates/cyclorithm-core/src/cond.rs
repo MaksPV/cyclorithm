@@ -584,20 +584,17 @@ impl CxTy<'_> {
             // Поля данных динамические: статически не проверяются
             // (даже когда мапа известна) — только момент строки.
             // Исключение — голое имя под доступом (см. ниже).
-            Expr::Field { base, .. } | Expr::Index { base, .. } => {
-                // Базу выводим ради её проверок (вложенные доступы, unknown-name имён);
-                // сам доступ всегда Dyn (см. ниже).
-                self.infer(base)?;
-                if let Expr::Name(name) = base.as_ref() {
-                    // Параметр — динамика, пропускаем.
-                    if !self.vars.contains_key(name) {
-                        let defs = self.defs;
-                        let def = resolve(defs, name, self.scope.unit)?;
-                        if def.kind == DefKind::Const {
-                            let ty = self.const_body_ty(name, def)?;
-                            self.hide_data(name, ty)?;
-                        }
-                    }
+            Expr::Field { base, .. } => {
+                self.infer_access_base(base)?;
+                Ok(Ty::Dyn)
+            }
+            // Индекс — доступ к массиву; индекс обязан быть числом
+            // (или динамикой, форму добьёт момент строки).
+            Expr::Index { base, index } => {
+                self.infer_access_base(base)?;
+                match self.infer(index)? {
+                    Ty::Num | Ty::Dyn => {}
+                    _ => return Err(Error::type_mismatch()),
                 }
                 Ok(Ty::Dyn)
             }
@@ -754,6 +751,24 @@ impl CxTy<'_> {
         self.data = saved;
         self.scope.leave();
         ty
+    }
+
+    /// База доступа `.поле`/`[n]`: выводим тип и, для голого имени константы,
+    /// применяем правило видимости данных (`hide_data`). Сам доступ всегда `Dyn`.
+    fn infer_access_base(&mut self, base: &Expr) -> Result<(), Error> {
+        self.infer(base)?;
+        if let Expr::Name(name) = base {
+            // Параметр — динамика, пропускаем.
+            if !self.vars.contains_key(name) {
+                let defs = self.defs;
+                let def = resolve(defs, name, self.scope.unit)?;
+                if def.kind == DefKind::Const {
+                    let ty = self.const_body_ty(name, def)?;
+                    self.hide_data(name, ty)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Данные по голому имени в позиции условия невидимы: только unknown-name.
@@ -922,7 +937,8 @@ fn has_at(expr: &Expr) -> bool {
         Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_at(v)),
         Expr::Array(xs) => xs.iter().any(has_at),
-        Expr::Field { base, .. } | Expr::Index { base, .. } => has_at(base),
+        Expr::Field { base, .. } => has_at(base),
+        Expr::Index { base, index } => has_at(base) || has_at(index),
         Expr::Neg(x) => has_at(x),
         Expr::Truth(c) => has_cond_at(c),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -955,7 +971,8 @@ fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
         Expr::At | Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_param(v, cx)),
         Expr::Array(xs) => xs.iter().any(|x| has_param(x, cx)),
-        Expr::Field { base, .. } | Expr::Index { base, .. } => has_param(base, cx),
+        Expr::Field { base, .. } => has_param(base, cx),
+        Expr::Index { base, index } => has_param(base, cx) || has_param(index, cx),
         Expr::Neg(x) => has_param(x, cx),
         Expr::Truth(c) => has_cond_param(c, cx),
         Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
@@ -1168,7 +1185,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
         // Доступ — только в момент строки: нет ключа / не-мапа / не-массив —
-        // `unknown field`, выход за границы (и отрицательный) — `out of bounds`.
+        // `unknown field`; индекс вне границ — `out of bounds`.
         Expr::Field { base, field } => match eval_expr(base, at, cx)? {
             Value::Map(pairs) => pairs
                 .iter()
@@ -1178,20 +1195,21 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             _ => Err(Error::unknown_field(field)),
         },
         Expr::Index { base, index } => {
+            let i = match eval_expr(index, at, cx)? {
+                Value::Num(n) => n,
+                _ => return Err(Error::type_mismatch()),
+            };
             let items = match eval_expr(base, at, cx)? {
                 Value::Array(xs) => xs,
-                _ => return Err(Error::unknown_field(index)),
+                _ => return Err(Error::unknown_field(&i.to_string())),
             };
-            let i: i64 = index
-                .parse()
-                .map_err(|_| Error::integer_out_of_range(index))?;
-            if i < 0 {
-                return Err(Error::index_out_of_bounds(index));
+            // Питоновская адресация: отрицательный индекс считается с конца.
+            let len = items.len() as i64;
+            let pos = if i < 0 { len + i } else { i };
+            if pos < 0 || pos >= len {
+                return Err(Error::index_out_of_bounds(&i.to_string()));
             }
-            items
-                .get(i as usize)
-                .cloned()
-                .ok_or_else(|| Error::index_out_of_bounds(index))
+            Ok(items[pos as usize].clone())
         }
         Expr::At => Ok(Value::Num(at)),
         Expr::Name(name) => {
@@ -2144,6 +2162,28 @@ mod tests {
                 "type-mismatch",
                 "type mismatch: cannot mix number and string"
             )
+        );
+    }
+
+    #[test]
+    fn index_static_checks() {
+        // Индекс — выражение; тип и опасное деление проверяются статически.
+        defs_of("const TAGS = [\"a\", \"b\"]; const X = TAGS[0 + 1];")
+            .expect("числовой индекс обязан проходить");
+        let e = defs_of("const TAGS = [\"a\"]; const X = TAGS[\"a\"];")
+            .expect_err("строковый индекс — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+        let e = defs_of("const TAGS = [\"a\"]; const X = TAGS[1 / 0];")
+            .expect_err("ноль в индексе — ошибка");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("division-by-zero", "division by zero")
         );
     }
 
