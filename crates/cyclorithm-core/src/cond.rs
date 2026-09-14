@@ -18,18 +18,22 @@ use crate::Error;
 
 /// Значение выражения: число, строка или JSON-значение.
 /// Мапы хранятся вектором пар (порядок ключей — порядок объявления).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Num(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
     Map(Vec<(String, Value)>),
     Array(Vec<Value>),
 }
 
+impl Eq for Value {}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ty {
     Num,
+    Float,
     Str,
     /// Динамическое данное: параметр цикла или поле/индекс. Статика пропускает
     /// любые операции, ошибки — в момент строки (type-mismatch).
@@ -474,7 +478,7 @@ impl CxTy<'_> {
             // C-стиль: число/арифметика/`true`/`false` годятся напрямую
             // (ноль — ложь). Строки/словари/массивы — «забытое сравнение».
             Cond::Truthy(e) => match self.infer(e)? {
-                Ty::Num | Ty::Dyn | Ty::Bool => Ok(()),
+                Ty::Num | Ty::Float | Ty::Dyn | Ty::Bool => Ok(()),
                 _ => Err(Error::type_mismatch()),
             },
             Cond::Pred { name, args } => {
@@ -505,6 +509,7 @@ impl CxTy<'_> {
                             return Err(Error::type_mismatch());
                         }
                         let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array);
+                        let is_numeric = |t: Ty| matches!(t, Ty::Num | Ty::Float);
                         match (lt, rt) {
                             // Динамика: статика пропускает, разберётся строка.
                             (Ty::Dyn, _) | (_, Ty::Dyn) => Ok(()),
@@ -514,6 +519,7 @@ impl CxTy<'_> {
                                 Err(Error::maps_not_comparable())
                             }
                             (a, b) if a == b => Ok(()),
+                            (a, b) if is_numeric(a) && is_numeric(b) => Ok(()),
                             _ => {
                                 if let Some((_, lit)) = date_sides(left, r) {
                                     normalize_date_literal(lit)?;
@@ -539,7 +545,11 @@ impl CxTy<'_> {
                         for a in alts {
                             match (lt, self.infer(a)?) {
                                 (Ty::Dyn, _) | (_, Ty::Dyn) => {}
-                                (Ty::Num, Ty::Num) | (Ty::Str, Ty::Str) => {}
+                                (Ty::Num, Ty::Num)
+                                | (Ty::Float, Ty::Float)
+                                | (Ty::Num, Ty::Float)
+                                | (Ty::Float, Ty::Num)
+                                | (Ty::Str, Ty::Str) => {}
                                 (a, b) if collection(a) && collection(b) => {
                                     return Err(Error::maps_not_comparable());
                                 }
@@ -547,7 +557,7 @@ impl CxTy<'_> {
                             }
                         }
                         match lt {
-                            Ty::Num | Ty::Dyn | Ty::Str => Ok(()),
+                            Ty::Num | Ty::Float | Ty::Dyn | Ty::Str => Ok(()),
                             Ty::Map | Ty::Array => Err(Error::maps_not_comparable()),
                             _ => Err(Error::type_mismatch()),
                         }
@@ -563,6 +573,13 @@ impl CxTy<'_> {
                 raw.parse::<i64>()
                     .map_err(|_| Error::integer_out_of_range(raw))?;
                 Ok(Ty::Num)
+            }
+            Expr::Float(raw) => {
+                let f: f64 = raw.parse().map_err(|_| Error::float_out_of_range(raw))?;
+                if !f.is_finite() {
+                    return Err(Error::float_out_of_range(raw));
+                }
+                Ok(Ty::Float)
             }
             Expr::Str(_) => Ok(Ty::Str),
             Expr::Bool(_) => Ok(Ty::Bool),
@@ -617,6 +634,7 @@ impl CxTy<'_> {
             }
             Expr::Neg(x) => match self.infer(x)? {
                 Ty::Num => Ok(Ty::Num),
+                Ty::Float => Ok(Ty::Float),
                 Ty::Dyn => Ok(Ty::Dyn),
                 _ => Err(Error::type_mismatch()),
             },
@@ -627,7 +645,10 @@ impl CxTy<'_> {
             Expr::Bin { op, left, right } => {
                 let ty = match (self.infer(left)?, self.infer(right)?) {
                     (Ty::Num, Ty::Num) => Ty::Num,
-                    (Ty::Num | Ty::Dyn, Ty::Num | Ty::Dyn) => Ty::Dyn,
+                    (Ty::Float, Ty::Float) => Ty::Float,
+                    (Ty::Num, Ty::Float) | (Ty::Float, Ty::Num) => Ty::Float,
+                    // Динамика — пропускаем, разберётся в момент строки
+                    (Ty::Num | Ty::Float | Ty::Dyn, Ty::Num | Ty::Float | Ty::Dyn) => Ty::Dyn,
                     _ => return Err(Error::type_mismatch()),
                 };
                 // Ноль опасен только в делителе: `1 + 0` и `5 * 0` валидны.
@@ -667,10 +688,20 @@ impl CxTy<'_> {
             if args.len() != want {
                 return Err(Error::wrong_arguments(name));
             }
-            for a in args {
-                match self.infer(a)? {
-                    Ty::Num | Ty::Dyn => {}
-                    _ => return Err(Error::type_mismatch()),
+            // str принимает Num/Float, остальные — только Num (Float → type-mismatch)
+            if name == "str" {
+                for a in args {
+                    match self.infer(a)? {
+                        Ty::Num | Ty::Float | Ty::Dyn => {}
+                        _ => return Err(Error::type_mismatch()),
+                    }
+                }
+            } else {
+                for a in args {
+                    match self.infer(a)? {
+                        Ty::Num | Ty::Dyn => {}
+                        _ => return Err(Error::type_mismatch()),
+                    }
                 }
             }
             // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
@@ -783,6 +814,7 @@ impl CxTy<'_> {
         match const_eval(expr, self)? {
             Err(e) => Some(Err(e)),
             Ok(Value::Num(0)) => Some(Err(Error::division_by_zero())),
+            Ok(Value::Float(0.0)) => Some(Err(Error::division_by_zero())),
             Ok(_) => Some(Ok(())),
         }
     }
@@ -934,7 +966,7 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
 fn has_at(expr: &Expr) -> bool {
     match expr {
         Expr::At => true,
-        Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
+        Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_at(v)),
         Expr::Array(xs) => xs.iter().any(has_at),
         Expr::Field { base, .. } => has_at(base),
@@ -968,7 +1000,7 @@ fn has_cond_at(cond: &Cond) -> bool {
 fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
     match expr {
         Expr::Name(n) => cx.vars.contains_key(n),
-        Expr::At | Expr::Num(_) | Expr::Str(_) | Expr::Bool(_) => false,
+        Expr::At | Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => false,
         Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_param(v, cx)),
         Expr::Array(xs) => xs.iter().any(|x| has_param(x, cx)),
         Expr::Field { base, .. } => has_param(base, cx),
@@ -1073,6 +1105,7 @@ impl CxEv<'_> {
             // C-стиль: 0/`false` — ложь, ненулевое/`true` — истина.
             Cond::Truthy(e) => Ok(match eval_expr(e, at, self)? {
                 Value::Num(n) => n != 0,
+                Value::Float(f) => f != 0.0,
                 Value::Bool(b) => b,
                 _ => return Err(Error::type_mismatch()),
             }),
@@ -1150,6 +1183,36 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
             CmpOp::Gt => a > b,
             CmpOp::Ge => a >= b,
         }),
+        (Value::Float(a), Value::Float(b)) => Ok(match op {
+            CmpOp::Eq => a == b,
+            CmpOp::Ne => a != b,
+            CmpOp::Lt => a < b,
+            CmpOp::Le => a <= b,
+            CmpOp::Gt => a > b,
+            CmpOp::Ge => a >= b,
+        }),
+        (Value::Num(a), Value::Float(b)) => {
+            let a = *a as f64;
+            Ok(match op {
+                CmpOp::Eq => a == *b,
+                CmpOp::Ne => a != *b,
+                CmpOp::Lt => a < *b,
+                CmpOp::Le => a <= *b,
+                CmpOp::Gt => a > *b,
+                CmpOp::Ge => a >= *b,
+            })
+        }
+        (Value::Float(a), Value::Num(b)) => {
+            let b = *b as f64;
+            Ok(match op {
+                CmpOp::Eq => *a == b,
+                CmpOp::Ne => *a != b,
+                CmpOp::Lt => *a < b,
+                CmpOp::Le => *a <= b,
+                CmpOp::Gt => *a > b,
+                CmpOp::Ge => *a >= b,
+            })
+        }
         (Value::Str(a), Value::Str(b)) => Ok(match op {
             CmpOp::Eq => a == b,
             CmpOp::Ne => a != b,
@@ -1166,12 +1229,57 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
     }
 }
 
+/// Float-арифметика `+ - * /` с промоушеном; `%`/`floordiv`/`floormod` — только целые.
+fn float_bin(a: f64, b: f64, op: &ArithOp) -> Result<Value, Error> {
+    match op {
+        ArithOp::Add => {
+            let r = a + b;
+            if !r.is_finite() {
+                return Err(Error::float_out_of_range("arithmetic overflow"));
+            }
+            Ok(Value::Float(r))
+        }
+        ArithOp::Sub => {
+            let r = a - b;
+            if !r.is_finite() {
+                return Err(Error::float_out_of_range("arithmetic overflow"));
+            }
+            Ok(Value::Float(r))
+        }
+        ArithOp::Mul => {
+            let r = a * b;
+            if !r.is_finite() {
+                return Err(Error::float_out_of_range("arithmetic overflow"));
+            }
+            Ok(Value::Float(r))
+        }
+        ArithOp::Div => {
+            if b == 0.0 {
+                return Err(Error::division_by_zero());
+            }
+            let r = a / b;
+            if !r.is_finite() {
+                return Err(Error::float_out_of_range("arithmetic overflow"));
+            }
+            Ok(Value::Float(r))
+        }
+        ArithOp::Mod | ArithOp::FloorDiv | ArithOp::FloorMod => Err(Error::type_mismatch()),
+    }
+}
+
 /// Вычислить выражение для `at`. Переполнение — integer-out-of-range.
 fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     match expr {
         Expr::Num(raw) => Ok(Value::Num(
             raw.parse().map_err(|_| Error::integer_out_of_range(raw))?,
         )),
+        Expr::Float(raw) => {
+            let f: f64 = raw.parse().map_err(|_| Error::float_out_of_range(raw))?;
+            if !f.is_finite() {
+                return Err(Error::float_out_of_range(raw));
+            }
+            Ok(Value::Float(f))
+        }
         Expr::Str(s) => Ok(Value::Str(s.clone())),
         Expr::Bool(b) => Ok(Value::Bool(*b)),
         Expr::Map(pairs) => pairs
@@ -1234,45 +1342,59 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 .checked_neg()
                 .map(Value::Num)
                 .ok_or_else(|| Error::integer_out_of_range("negation overflow")),
+            Value::Float(v) => {
+                let r = -v;
+                if !r.is_finite() {
+                    return Err(Error::float_out_of_range("negation overflow"));
+                }
+                Ok(Value::Float(r))
+            }
             _ => Err(Error::type_mismatch()),
         },
         Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c, at)?))),
         Expr::Bin { op, left, right } => {
-            let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
-                (Value::Num(a), Value::Num(b)) => (a, b),
-                _ => return Err(Error::type_mismatch()),
-            };
-            let v = match op {
-                ArithOp::Add => a.checked_add(b),
-                ArithOp::Sub => a.checked_sub(b),
-                ArithOp::Mul => a.checked_mul(b),
-                ArithOp::Div => {
-                    if b == 0 {
-                        return Err(Error::division_by_zero());
-                    }
-                    a.checked_div(b)
+            let lv = eval_expr(left, at, cx)?;
+            let rv = eval_expr(right, at, cx)?;
+            match (&lv, &rv) {
+                (Value::Num(a), Value::Num(b)) => {
+                    let (a, b) = (*a, *b);
+                    let v = match op {
+                        ArithOp::Add => a.checked_add(b),
+                        ArithOp::Sub => a.checked_sub(b),
+                        ArithOp::Mul => a.checked_mul(b),
+                        ArithOp::Div => {
+                            if b == 0 {
+                                return Err(Error::division_by_zero());
+                            }
+                            a.checked_div(b)
+                        }
+                        ArithOp::Mod => {
+                            if b == 0 {
+                                return Err(Error::division_by_zero());
+                            }
+                            a.checked_rem(b)
+                        }
+                        ArithOp::FloorDiv => {
+                            if b == 0 {
+                                return Err(Error::division_by_zero());
+                            }
+                            a.checked_div_euclid(b)
+                        }
+                        ArithOp::FloorMod => {
+                            if b == 0 {
+                                return Err(Error::division_by_zero());
+                            }
+                            a.checked_rem_euclid(b)
+                        }
+                    };
+                    v.map(Value::Num)
+                        .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
                 }
-                ArithOp::Mod => {
-                    if b == 0 {
-                        return Err(Error::division_by_zero());
-                    }
-                    a.checked_rem(b)
-                }
-                ArithOp::FloorDiv => {
-                    if b == 0 {
-                        return Err(Error::division_by_zero());
-                    }
-                    a.checked_div_euclid(b)
-                }
-                ArithOp::FloorMod => {
-                    if b == 0 {
-                        return Err(Error::division_by_zero());
-                    }
-                    a.checked_rem_euclid(b)
-                }
-            };
-            v.map(Value::Num)
-                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
+                (Value::Float(a), Value::Float(b)) => float_bin(*a, *b, op),
+                (Value::Num(a), Value::Float(b)) => float_bin(*a as f64, *b, op),
+                (Value::Float(a), Value::Num(b)) => float_bin(*a, *b as f64, op),
+                _ => Err(Error::type_mismatch()),
+            }
         }
         // Битовые (см. docs/reference/expressions.md): two's complement с wrap'ом, ошибок нет по построению.
         // `>>` — логический (добивка нулями), величина сдвига — по модулю 64.
@@ -1309,6 +1431,17 @@ fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> 
     cx.eval_cond(cond, at)
 }
 
+fn float_to_string(f: f64) -> String {
+    // Убираем trailing zeros через ryu-подобный формат: to_string достаточно для f64
+    // Гарантируем, что inf/nan не попадут (проверяется при парсинге/вычислении)
+    let s = format!("{:?}", f);
+    // Rust Debug для f64 даёт "20.02", "1e6" → уже число без кавычек
+    // Для целых float (20.0) оставляем как "20.0" (serde_json также сохранит .0 при необходимости)
+    // Но format!("{:?}", 20.0) = "20.0" — ок.
+    // Если используется "20", то это int путь, не float.
+    s
+}
+
 fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     let defs = cx.defs;
     // Видимое объявление затеняет встроенную — то же правило, что в infer
@@ -1324,6 +1457,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             }
             match eval_expr(a, at, cx)? {
                 Value::Num(n) => Ok(Value::Str(n.to_string())),
+                Value::Float(f) => Ok(Value::Str(float_to_string(f))),
                 _ => Err(Error::type_mismatch()),
             }
         }

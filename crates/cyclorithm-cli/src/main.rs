@@ -447,6 +447,9 @@ fn attrs_json(pairs: &[(String, Value)]) -> serde_json::Value {
 fn value_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Num(n) => (*n).into(),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         Value::Str(s) => s.clone().into(),
         Value::Bool(b) => (*b).into(),
         Value::Map(pairs) => attrs_json(pairs),

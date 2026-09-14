@@ -16,6 +16,7 @@ name = "cyclorithm-core"
 version = "0.3.1"
 dependencies = [
  "cyclorithm-parser",
+ "serde_json",
 ]
 
 [[package]]
