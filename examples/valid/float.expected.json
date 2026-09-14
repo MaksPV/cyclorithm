@@ -1,0 +1,10 @@
+{
+  "schedule": "float",
+  "start": "2026-01-01T00:00:00",
+  "end": "2026-01-02T00:00:00",
+  "events": [
+    {"time": "2026-01-01T06:00:00", "action": "stop", "point": "KULICHKI", "point_attrs": {"name": "Кулички", "loc": {"lat": 20.02, "lon": 23.43}}, "action_attrs": {"lat": 20.02, "sum": 21.02, "label": "20.02"}},
+    {"time": "2026-01-01T06:20:00", "action": "b", "point": "X", "point_attrs": {}, "action_attrs": {}},
+    {"time": "2026-01-01T06:30:00", "action": "a", "point": "X", "point_attrs": {}, "action_attrs": {"e": 1000.0, "tiny": 0.02, "neg": -3.14}}
+  ]
+}
