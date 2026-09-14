@@ -45,6 +45,11 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
+# Переключатель версий (mike): stable из main, dev из dev.
+extra:
+  version:
+    provider: mike
+
 plugins:
   - search:
       lang: ru
