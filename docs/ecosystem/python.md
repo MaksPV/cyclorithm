@@ -1,14 +1,25 @@
 # Python-биндинги
 
 Нативные биндинги ядра (PyO3, крейт `crates/cyclorithm-python`): `check`
-и `run` без subprocess. Только локальная сборка, в PyPI не публикуется.
+и `run` без subprocess. В PyPI пакета нет — установка из wheel релиза,
+разработка из исходников.
+
+## Установка
+
+Скачать `cyclorithm-*-abi3-*.whl` под свою платформу из
+[релизов](https://github.com/MaksPV/cyclorithm/releases) и поставить
+в свой venv (Rust не нужен, abi3 работает на любом Python ≥3.10):
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install cyclorithm-0.3.1-cp310-abi3-manylinux_2_34_x86_64.whl
+.venv/bin/python -c "import cyclorithm; print(cyclorithm.__version__)"
+```
 
 ## Сборка для разработки
 
-Контрибьютору движка, которому нужно собрать и потестировать биндинг.
-В PyPI пакет не публикуется — сторонней установки нет, только из исходников.
-
-Пререквизиты: стабильный Rust (`rustup`), Python ≥3.10. Команды — из корня репо:
+Чтобы править сам биндинг. Пререквизиты: стабильный Rust (`rustup`),
+Python ≥3.10. Команды — из корня репо:
 
 ```sh
 python3 -m venv crates/cyclorithm-python/.venv

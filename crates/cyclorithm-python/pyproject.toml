@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cyclorithm"
-version = "0.3.1"
+dynamic = ["version"]
 description = "Python-биндинги движка расписаний Cyclorithm"
 readme = "README.md"
 requires-python = ">=3.10"
