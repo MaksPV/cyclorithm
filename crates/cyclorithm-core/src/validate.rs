@@ -702,8 +702,7 @@ pub(crate) fn plan_stmts_with(
                 // Кап точен для валидных программ: при `end <= limit` влезают все.
                 let materialized = if step > 0 && offset <= limit {
                     let room: u64 = ((limit as i128 - offset as i128) / step as i128)
-                        .clamp(0, u64::MAX as i128)
-                        as u64;
+                        .clamp(0, u64::MAX as i128) as u64;
                     count.min(room.saturating_add(1))
                 } else if step == 0 && offset > limit {
                     0

@@ -48,11 +48,7 @@ pub fn parse_datetime(s: &str) -> Result<i64, Error> {
         .ok_or_else(bad)?
         .checked_mul(MS_PER_DAY)
         .ok_or_else(bad)?;
-    Ok(day_ms
-        + h * MS_PER_HOUR
-        + mi * MS_PER_MIN
-        + se * MS_PER_SEC
-        + milli)
+    Ok(day_ms + h * MS_PER_HOUR + mi * MS_PER_MIN + se * MS_PER_SEC + milli)
 }
 
 /// Разбор даты из аргументов CLI: короткие формы и относительные дельты.
@@ -242,7 +238,9 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
         .checked_add(yoe / 4)?
         .checked_sub(yoe / 100)?
         .checked_add(doy)?;
-    era.checked_mul(146097)?.checked_add(doe)?.checked_sub(719468)
+    era.checked_mul(146097)?
+        .checked_add(doe)?
+        .checked_sub(719468)
 }
 
 /// Обратное преобразование дней в дату.
