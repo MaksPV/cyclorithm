@@ -7,7 +7,7 @@
 
 ```console
 $ cyclo --version
-cyclo 0.3.1
+cyclo 0.3.2
 ```
 
 ## Из исходников

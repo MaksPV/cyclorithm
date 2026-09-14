@@ -12,7 +12,7 @@
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install cyclorithm-0.3.1-cp310-abi3-manylinux_2_34_x86_64.whl
+.venv/bin/pip install cyclorithm-0.3.2-cp310-abi3-manylinux_2_34_x86_64.whl
 .venv/bin/python -c "import cyclorithm; print(cyclorithm.__version__)"
 ```
 
