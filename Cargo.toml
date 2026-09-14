@@ -3,6 +3,7 @@ members = [
     "crates/cyclorithm-parser",
     "crates/cyclorithm-core",
     "crates/cyclorithm-cli",
+    "crates/cyclorithm-python",
 ]
 resolver = "2"
 

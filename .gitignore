@@ -22,7 +22,9 @@ site/
 # Python packaging artefacts (docs/extra/pygments-cyclo)
 build/
 *.egg-info/
+*.so
 __pycache__/
+.venv/
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
