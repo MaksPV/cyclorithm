@@ -1,0 +1,3 @@
+mkdocs-material>=9.0
+mkdocs>=1.6
+./docs/extra/pygments-cyclo
