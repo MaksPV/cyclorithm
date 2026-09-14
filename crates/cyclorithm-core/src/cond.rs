@@ -2066,6 +2066,25 @@ mod tests {
     }
 
     #[test]
+    fn mkdate_huge_year_overflows_instead_of_panicking() {
+        // Год — весь `i64`: константа ловится сразу, выражение — в момент строки.
+        for y in ["9223372036854775807", "(0 - 9223372036854775807 - 1)"] {
+            let e = static_err(&format!("mkdate({y}, 1, 1, 0, 0, 0, 0) == 0"));
+            assert_eq!(e.code, "integer-out-of-range", "для года {y}");
+            assert!(
+                e.message.starts_with("integer out of range"),
+                "для года {y}: {}",
+                e.message
+            );
+        }
+        let c = cond_of("mkdate(at - at + 9000000000000000000, 1, 1, 0, 0, 0, 0) == 0");
+        let d = test_defs();
+        check_single(&c, &d).expect("год не константа — статика проходит");
+        let e = eval_cond(&c, 0, &d).expect_err("год вне диапазона — ошибка");
+        assert_eq!(e.code, "integer-out-of-range");
+    }
+
+    #[test]
     fn mkdate_runtime_invalid_is_error_not_skip() {
         // 29 февраля невисокосного через выражение: статика проходит,
         // в момент строки — ошибка (как деление на ноль выражением).
