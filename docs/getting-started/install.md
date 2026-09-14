@@ -7,12 +7,12 @@
 
 ```console
 $ cyclo --version
-cyclo 0.3.0
+cyclo 0.3.2
 ```
 
 ## Из исходников
 
-Требуется стабильный Rust (`rustup`):
+Требуется стабильный Rust (`rustup`). Команды — из корня репо:
 
 ```console
 $ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo \

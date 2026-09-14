@@ -3,11 +3,12 @@ members = [
     "crates/cyclorithm-parser",
     "crates/cyclorithm-core",
     "crates/cyclorithm-cli",
+    "crates/cyclorithm-python",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/MaksPV/cyclorithm"

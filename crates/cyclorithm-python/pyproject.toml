@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cyclorithm"
+dynamic = ["version"]
+description = "Python-биндинги движка расписаний Cyclorithm"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "python"
+module-name = "cyclorithm._cyclorithm"
+features = ["pyo3/extension-module"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F"]

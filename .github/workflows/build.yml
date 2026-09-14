@@ -59,10 +59,49 @@ jobs:
           path: dist/cyclo-*.tar.gz
           if-no-files-found: error
 
+  # Колёса Python-биндинга (abi3: один wheel на платформу для Python ≥3.10).
+  # Матрица уже, чем у бинаря: macOS нет и там, и там (паритет с релизами).
+  wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64
+          - os: windows-latest
+            target: x64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --manifest-path crates/cyclorithm-python/Cargo.toml --out dist
+      - name: smoke test
+        shell: bash
+        run: |
+          pip install cyclorithm --no-index --find-links dist --force-reinstall
+          python -c "import cyclorithm; print(cyclorithm.__version__)"
+          python -c "import cyclorithm as c; out = c.run_file('examples/valid/route.cyclo', '2026-09-07T00:00:00', '2026-09-08T00:00:00'); print(len(out['events']), 'events')"
+      - name: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
   # Только на тегах v*: прикладывает 4 бинарника к GitHub Release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build]
+    needs: [build, wheels]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -71,9 +110,15 @@ jobs:
         with:
           pattern: cyclo-*
           path: dist
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          path: dist-wheels
       - name: show
-        run: ls -R dist
+        run: ls -R dist dist-wheels
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/cyclo-*/*.tar.gz
+          files: |
+            dist/cyclo-*/*.tar.gz
+            dist-wheels/wheels-*/*.whl
           generate_release_notes: true

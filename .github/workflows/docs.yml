@@ -22,6 +22,8 @@ jobs:
       - name: build (strict)
         run: mkdocs build --strict
 
+  # Версионированные доки (mike): main → версия + алиас stable,
+  # dev → версия dev; корень сайта редиректит на stable (default).
   deploy:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     needs: [build]
@@ -30,10 +32,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
       - name: install
         run: pip install -r docs/requirements.txt
-      - name: deploy to gh-pages
-        run: mkdocs gh-deploy --force
+      - name: deploy versions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+            mike deploy --push --update-aliases "$VER" stable
+            mike set-default --push stable
+          else
+            mike deploy --push dev
+          fi
