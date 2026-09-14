@@ -678,9 +678,13 @@ pub(crate) fn plan_stmts_with(
             Repeat::FillGaps { until } => {
                 let step = gaps_step_of(&st.invocation, tables)?;
                 let horizon = fill_horizon(until, limit, limit_raw)?;
+                // `until` раньше старта строки — out of bounds (вина — на `until`).
+                // Без `until` горизонт — конец родителя: строка за горизонтом даёт
+                // ноль экземпляров, как обычный `fill`, — это не баг, а не паника.
                 if offset > horizon {
-                    let u = until.as_ref().expect("until объявлен: offset > horizon");
-                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                    if let Some(u) = until {
+                        return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                    }
                 }
                 plans.push(Placement {
                     starts: Vec::new(),
@@ -690,8 +694,28 @@ pub(crate) fn plan_stmts_with(
             }
             _ => {
                 let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
-                let starts: Vec<i64> = (0..count).map(|j| offset + j as i64 * step).collect();
                 let end = saturating_add_mul(offset, count, step);
+                // Материализация только влезающих стартов: всё, что за лимитом,
+                // отсечёт `check_bounds` по точному `end` (тот же `blame`).
+                // Без капа `repeat 99999999999` собирает Vec до проверки границ
+                // (OOM), а `j as i64 * step` переполняется в debug (паника).
+                // Кап точен для валидных программ: при `end <= limit` влезают все.
+                let materialized = if step > 0 && offset <= limit {
+                    let room: u64 = ((limit as i128 - offset as i128) / step as i128)
+                        .clamp(0, u64::MAX as i128) as u64;
+                    count.min(room.saturating_add(1))
+                } else if step == 0 && offset > limit {
+                    0
+                } else {
+                    count
+                };
+                let starts: Vec<i64> = (0..materialized)
+                    .map(|j| {
+                        let t = offset as i128 + j as i128 * step as i128;
+                        // Инвариант капа: `t <= limit <= i64::MAX`, `t >= offset >= 0`.
+                        i64::try_from(t).expect("материализация только влезающих стартов")
+                    })
+                    .collect();
                 if count > 0 && step > 0 {
                     occupied.push((offset, end));
                 }
@@ -1664,6 +1688,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_astronomic_repeat_without_oom() {
+        // `repeat 99999999999`: кап материализации — быстрый cycle-overruns
+        // с тем же blame, а не OOM на сборке Vec (см. bad_cycle-overruns-repeat).
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle D duration = 10m { 0m: A.x(); } \
+            cycle C duration = 1h { 0m: repeat 99999999999 D(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "cycle-overruns",
+                "cycle 'D' overruns 'C' by 999999999930m (999999999990m > 60m)"
+            )
+        );
+    }
+
+    #[test]
     fn rejects_repeat_chain_overrun() {
         // 23h + 2*80m = 25:40 > 24h.
         let e = bounds_err(
@@ -1769,6 +1812,25 @@ mod tests {
         check_recursion(ast, &t).expect("рекурсии нет");
         check_bounds(ast, &t).expect("filler в границах");
         assert_eq!(root_actual_ms(ast, &t), Ok(18_000_000));
+    }
+
+    #[test]
+    fn gaps_without_until_after_horizon_gives_zero_instances() {
+        // Строка за концом родителя без `until`: ноль экземпляров, как у `fill`, —
+        // раньше здесь паниковал `expect` (until объявлен).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle D duration = 10m { 0m: A.x(); } \
+            cycle C duration = 1h { 2h: fill gaps D(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(); } }";
+        let (ast, t) = tables(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_bounds(ast, &t).expect("строка за горизонтом — ноль экземпляров, не ошибка");
+        let plans = {
+            let c = ast.cycles.iter().find(|c| c.name == "C").expect("цикл C");
+            plan_stmts(&c.stmts, 3_600_000, "1h", &t).expect("план строится")
+        };
+        assert!(plans[0].starts.is_empty());
+        assert_eq!(plans[0].end, None);
     }
 
     #[test]

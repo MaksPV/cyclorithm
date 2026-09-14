@@ -71,6 +71,7 @@
 | `unknown-field` | `unknown field 'name'` | Проверить ключ и цепочку доступа |
 | `index-out-of-bounds` | `index out of bounds '5'` | Держать индекс внутри массива (минус считается с конца) |
 | `maps-not-comparable` | `cannot compare maps or arrays` | Сравнивать только числа и строки |
+| `string-too-long` | `string too long '...'` | Уменьшить ширину `pad` (лимит — 1024) |
 
 ## Импорты
 

@@ -73,6 +73,10 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Максимальная ширина `pad(n, w)`: легитимный pad — даты и счётчики
+/// (единицы символов), всё большее — `string-too-long`, а не гигабайты нулей.
+const MAX_PAD_WIDTH: usize = 1024;
+
 /// Разобранная прелюдия — один раз на процесс (каждый `resolve_units`
 /// раньше парсил её заново). Битая сборка — `broken-prelude`, не паника.
 static SYSTEM: LazyLock<Result<Vec<Decl>, Error>> = LazyLock::new(|| resolve_system(PRELUDE));
@@ -660,6 +664,13 @@ impl CxTy<'_> {
                         return Err(e);
                     }
                 }
+                // Константный `MIN floordiv -1` / `MIN floormod -1` переполняет i64:
+                // ловим сразу, как константный ноль (иначе — в момент строки).
+                if matches!(op, ArithOp::FloorDiv | ArithOp::FloorMod) {
+                    if let Some(e) = self.const_euclid_overflow(left, right) {
+                        return Err(e);
+                    }
+                }
                 Ok(ty)
             }
             // Битовые — те же числовые операнды, но деления нет:
@@ -706,10 +717,13 @@ impl CxTy<'_> {
             }
             // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
             if name == "floordiv" || name == "floormod" {
-                let [_, b] = args else {
+                let [a, b] = args else {
                     return Err(Error::wrong_arguments(name));
                 };
                 if let Some(Err(e)) = self.const_div(b) {
+                    return Err(e);
+                }
+                if let Some(e) = self.const_euclid_overflow(a, b) {
                     return Err(e);
                 }
                 return Ok(Ty::Num);
@@ -816,6 +830,18 @@ impl CxTy<'_> {
             Ok(Value::Num(0)) => Some(Err(Error::division_by_zero())),
             Ok(Value::Float(0.0)) => Some(Err(Error::division_by_zero())),
             Ok(_) => Some(Ok(())),
+        }
+    }
+
+    /// Константное переполнение `MIN floordiv -1` / `MIN floormod -1`
+    /// (единственная переполняющая пара евклидова деления).
+    /// `None` — хотя бы один операнд неконстантен: поймает рантайм.
+    fn const_euclid_overflow(&mut self, left: &Expr, right: &Expr) -> Option<Error> {
+        match (const_eval(left, self)?, const_eval(right, self)?) {
+            (Ok(Value::Num(a)), Ok(Value::Num(b))) if a == i64::MIN && b == -1 => {
+                Some(Error::integer_out_of_range("arithmetic overflow"))
+            }
+            _ => None,
         }
     }
 }
@@ -1469,6 +1495,12 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
                 (Value::Num(n), Value::Num(w)) => (n, w),
                 _ => return Err(Error::type_mismatch()),
             };
+            // Ширина без лимита — аллокация гигабайтов (`"0".repeat(w)`)
+            // и паника `capacity overflow` на `i64::MAX`: легитимный pad —
+            // даты и счётчики, им 1024 за глаза (см. docs/reference/errors.md).
+            if w > MAX_PAD_WIDTH as i64 {
+                return Err(Error::string_too_long(&w.to_string()));
+            }
             let s = n.to_string();
             let w = w.max(0) as usize;
             if s.len() >= w {
@@ -1488,11 +1520,14 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             if y == 0 {
                 return Err(Error::division_by_zero());
             }
-            Ok(Value::Num(if name == "floordiv" {
-                x.div_euclid(y)
+            // `MIN / -1` переполняет i64: только checked-версии, иначе паника на вводе.
+            let v = if name == "floordiv" {
+                x.checked_div_euclid(y)
             } else {
-                x.rem_euclid(y)
-            }))
+                x.checked_rem_euclid(y)
+            };
+            v.map(Value::Num)
+                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
         }
         "mkdate" => {
             if args.len() != 7 {
@@ -1711,6 +1746,32 @@ mod tests {
         assert!(yes("pad(6, 2) == \"06\"", 0));
         assert!(yes("pad(2026, 4) == \"2026\"", 0));
         assert!(yes("\"b\" > \"a\" and \"a\" < \"b\"", 0));
+    }
+
+    #[test]
+    fn pad_huge_width_is_runtime_error() {
+        // Ширина без лимита — гигабайты нулей / паника `capacity overflow`:
+        // граница лимита работает, за ним — string-too-long в момент строки.
+        assert!(yes("pad(6, 1024) == pad(6, 1024)", 0));
+        for (row, width) in [
+            ("pad(1, 1025) == \"x\"", "1025"),
+            ("pad(1, 1000000000) == \"x\"", "1000000000"),
+            (
+                "pad(1, 9223372036854775807) == \"x\"",
+                "9223372036854775807",
+            ),
+        ] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("ширина не константа границ — статика проходит");
+            let e = eval_cond(&c, 0, &d).expect_err("ширина за лимитом — ошибка");
+            assert_eq!(e.code, "string-too-long", "для {row}");
+            assert_eq!(
+                e.message.as_str(),
+                format!("string too long '{width}'"),
+                "для {row}"
+            );
+        }
     }
 
     #[test]
@@ -2041,6 +2102,25 @@ mod tests {
     }
 
     #[test]
+    fn mkdate_huge_year_overflows_instead_of_panicking() {
+        // Год — весь `i64`: константа ловится сразу, выражение — в момент строки.
+        for y in ["9223372036854775807", "(0 - 9223372036854775807 - 1)"] {
+            let e = static_err(&format!("mkdate({y}, 1, 1, 0, 0, 0, 0) == 0"));
+            assert_eq!(e.code, "integer-out-of-range", "для года {y}");
+            assert!(
+                e.message.starts_with("integer out of range"),
+                "для года {y}: {}",
+                e.message
+            );
+        }
+        let c = cond_of("mkdate(at - at + 9000000000000000000, 1, 1, 0, 0, 0, 0) == 0");
+        let d = test_defs();
+        check_single(&c, &d).expect("год не константа — статика проходит");
+        let e = eval_cond(&c, 0, &d).expect_err("год вне диапазона — ошибка");
+        assert_eq!(e.code, "integer-out-of-range");
+    }
+
+    #[test]
     fn mkdate_runtime_invalid_is_error_not_skip() {
         // 29 февраля невисокосного через выражение: статика проходит,
         // в момент строки — ошибка (как деление на ноль выражением).
@@ -2134,6 +2214,50 @@ mod tests {
                 "integer out of range 'arithmetic overflow'"
             )
         );
+    }
+
+    #[test]
+    fn euclid_min_div_neg_one_is_static_error() {
+        // `MIN floordiv -1` / `MIN floormod -1` — единственная переполняющая пара:
+        // константа ловится сразу, как константный ноль.
+        for row in [
+            "floordiv((1 << 63), 0 - 1) == 0",
+            "floormod((1 << 63), 0 - 1) == 0",
+            "(1 << 63) floordiv (0 - 1) == 0",
+            "(1 << 63) floormod (0 - 1) == 0",
+        ] {
+            let e = static_err(row);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "integer-out-of-range",
+                    "integer out of range 'arithmetic overflow'"
+                ),
+                "для {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn euclid_min_div_neg_one_is_runtime_error() {
+        // Неконстантный делитель: статика пропускает, падает вычисление (не паника).
+        for row in [
+            "floordiv((1 << 63), at - at - 1) == 0",
+            "floormod((1 << 63), at - at - 1) == 0",
+        ] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("делитель не константа — статика проходит");
+            let e = eval_cond(&c, 0, &d).expect_err("MIN / -1 в момент строки — ошибка");
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "integer-out-of-range",
+                    "integer out of range 'arithmetic overflow'"
+                ),
+                "для {row}"
+            );
+        }
     }
 
     #[test]

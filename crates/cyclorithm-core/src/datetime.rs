@@ -42,11 +42,13 @@ pub fn parse_datetime(s: &str) -> Result<i64, Error> {
     {
         return Err(bad());
     }
-    Ok(days_from_civil(y, mo, d) * MS_PER_DAY
-        + h * MS_PER_HOUR
-        + mi * MS_PER_MIN
-        + se * MS_PER_SEC
-        + milli)
+    // Год из строки — ровно 4 цифры, переполнения нет по построению;
+    // checked — единый контракт с `make_datetime`.
+    let day_ms = days_from_civil(y, mo, d)
+        .ok_or_else(bad)?
+        .checked_mul(MS_PER_DAY)
+        .ok_or_else(bad)?;
+    Ok(day_ms + h * MS_PER_HOUR + mi * MS_PER_MIN + se * MS_PER_SEC + milli)
 }
 
 /// Разбор даты из аргументов CLI: короткие формы и относительные дельты.
@@ -213,6 +215,7 @@ pub(crate) fn make_datetime(
         return Err(Invalid);
     }
     let day_ms = days_from_civil(y, mo, d)
+        .ok_or(Overflow)?
         .checked_mul(MS_PER_DAY)
         .ok_or(Overflow)?;
     // Время суток влезает всегда (< суток); переполнение — только от даты.
@@ -222,14 +225,22 @@ pub(crate) fn make_datetime(
 }
 
 /// Дни от unix epoch (алгоритм Хиннанта; `div_euclid` корректен и до epoch).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
+/// `None` — год из `mkdate` вне представимого диапазона (весь `i64`):
+/// промежуточные `era * 146097` переполняются раньше финального `checked_mul`.
+fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+    let y = if m <= 2 { y.checked_sub(1)? } else { y };
     let era = y.div_euclid(400);
-    let yoe = y - era * 400;
+    let yoe = y.checked_sub(era.checked_mul(400)?)?;
     let mp = (m + 9) % 12;
     let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    era.checked_mul(146097)?
+        .checked_add(doe)?
+        .checked_sub(719468)
 }
 
 /// Обратное преобразование дней в дату.
@@ -328,6 +339,26 @@ mod tests {
             assert_eq!(err.code, "invalid-datetime", "для {s:?}");
             assert_eq!(err.message, format!("invalid datetime '{s}'"), "для {s:?}");
         }
+    }
+
+    #[test]
+    fn huge_years_overflow_instead_of_panicking() {
+        // Год из `mkdate` — весь `i64`: сборка даёт Overflow, а не панику.
+        for y in [i64::MAX, i64::MIN, 9_000_000_000_000_000_000] {
+            assert_eq!(
+                make_datetime(y, 1, 1, 0, 0, 0, 0),
+                Err(DateBuildErr::Overflow),
+                "для года {y}"
+            );
+        }
+        // Граничные представимые годы по-прежнему собираются
+        // (200M лет ≈ 6.3e18 мс < i64::MAX, а 300M лет ≈ 9.5e18 мс — уже нет).
+        assert!(make_datetime(9999, 12, 31, 23, 59, 59, 999).is_ok());
+        assert!(make_datetime(200_000_000, 1, 1, 0, 0, 0, 0).is_ok());
+        assert_eq!(
+            make_datetime(300_000_000, 1, 1, 0, 0, 0, 0),
+            Err(DateBuildErr::Overflow)
+        );
     }
 
     #[test]

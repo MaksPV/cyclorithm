@@ -400,6 +400,11 @@ fn validation_errors_go_to_stderr() {
             "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
         ),
         (
+            "bad_cycle-overruns-repeat",
+            "cycle-overruns",
+            "cycle 'D' overruns 'C' by 999999999930m (999999999990m > 60m)",
+        ),
+        (
             "bad_until-out-of-bounds",
             "until-out-of-bounds",
             "until '30h' out of bounds (duration 24h)",
@@ -513,9 +518,24 @@ fn validation_errors_go_to_stderr() {
         ),
         ("bad_unknown-slot", "unknown-slot", "unknown slot '8th'"),
         (
+            "bad_string-too-long",
+            "string-too-long",
+            "string too long '1000000000'",
+        ),
+        (
             "bad_float-out-of-range",
             "float-out-of-range",
             "float out of range '1e400'",
+        ),
+        (
+            "bad_integer-out-of-range",
+            "integer-out-of-range",
+            "integer out of range 'arithmetic overflow'",
+        ),
+        (
+            "bad_integer-out-of-range_mkdate",
+            "integer-out-of-range",
+            "integer out of range '9223372036854775807-1-1T0:0:0.0'",
         ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
