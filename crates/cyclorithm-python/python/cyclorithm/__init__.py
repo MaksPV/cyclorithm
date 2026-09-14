@@ -48,6 +48,7 @@ CycloError.__str__ = _error_str
 
 __all__ = [
     "CycloError",
+    "Schedule",
     "check_file",
     "check_text",
     "run_file",
@@ -129,3 +130,38 @@ def run_text(text, start: DateLike, end: DateLike, base_dir=None):
             "" if base_dir is None else str(base_dir),
         )
     )
+
+
+class Schedule:
+    """Расписание как объект: текст читается один раз, дальше — методы.
+
+    Тонкая обёртка поверх функций (тот же выход и те же ошибки);
+    конструктор лёгкий и не валидирует — ошибка только в `check`/`run`.
+    """
+
+    def __init__(self, path):
+        """Программа из файла; `use` — от директории файла."""
+        self._text, self._base = _read_file(path)
+
+    @classmethod
+    def from_text(cls, text, base_dir=None):
+        """Программа строкой; `use` — от `base_dir` (по умолчанию cwd)."""
+        sched = cls.__new__(cls)
+        sched._text = text
+        sched._base = "" if base_dir is None else str(base_dir)
+        return sched
+
+    def check(self):
+        """Валидация: молча OK или `CycloError`."""
+        _check_text(self._text, self._base)
+
+    def run(self, start: DateLike, end: DateLike):
+        """Окно событий: dict как JSON-объект `cyclo run`."""
+        return _json.loads(
+            _run_text(
+                self._text,
+                _as_datetime_str(start, "start"),
+                _as_datetime_str(end, "end"),
+                self._base,
+            )
+        )

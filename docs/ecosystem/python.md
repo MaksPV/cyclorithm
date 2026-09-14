@@ -37,4 +37,16 @@ window = c.run_file("route.cyclo", datetime(2026, 9, 7), timedelta(days=1))
 - Ошибки — `CycloError` с полями `code` (слаг главы ошибок; ошибка парсера — `syntax`)
   и `message`; `str` — `слаг: сообщение`, как stderr CLI. Отсутствие файла — штатный `OSError`.
 
+## Класс Schedule
+
+ООП-обёртка поверх функций (тот же выход и те же ошибки); текст программы
+читается один раз, конструктор лёгкий и не валидирует:
+
+```python
+sched = c.Schedule("route.cyclo")
+sched = c.Schedule.from_text(text, base_dir="examples/valid")
+sched.check()
+window = sched.run(datetime(2026, 9, 7), timedelta(days=1))
+```
+
 Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.
