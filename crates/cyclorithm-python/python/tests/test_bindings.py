@@ -26,7 +26,9 @@ def test_check_file_ok():
 
 
 def test_check_text_ok():
-    assert c.check_text(VALID.read_text(encoding="utf-8"), base_dir=VALID.parent) is None
+    assert (
+        c.check_text(VALID.read_text(encoding="utf-8"), base_dir=VALID.parent) is None
+    )
 
 
 def test_check_core_error_has_slug():
@@ -51,8 +53,18 @@ def test_run_matches_cli_byte_for_byte():
     start, end = "2026-09-07T00:00:00", "2026-09-08T00:00:00"
     cli = subprocess.run(
         [
-            "cargo", "run", "-q", "-p", "cyclorithm-cli", "--",
-            "run", str(VALID), "--start", start, "--end", end,
+            "cargo",
+            "run",
+            "-q",
+            "-p",
+            "cyclorithm-cli",
+            "--",
+            "run",
+            str(VALID),
+            "--start",
+            start,
+            "--end",
+            end,
         ],
         capture_output=True,
         text=True,
@@ -70,13 +82,14 @@ def test_run_text_uses_base_dir_for_use():
     with pytest.raises(c.CycloError) as exc:
         c.run_text(text, start, end)
     assert exc.value.code == "cannot-read-import"
-    assert (
-        c.run_text(text, start, end, base_dir=VALID.parent)
-        == c.run_file(VALID, start, end)
+    assert c.run_text(text, start, end, base_dir=VALID.parent) == c.run_file(
+        VALID, start, end
     )
 
 
 def test_run_error_propagates_slug():
     with pytest.raises(c.CycloError) as exc:
-        c.run_file(INVALID / "bad_integer-out-of-range.cyclo", "2026-01-01", "2026-01-02")
+        c.run_file(
+            INVALID / "bad_integer-out-of-range.cyclo", "2026-01-01", "2026-01-02"
+        )
     assert exc.value.code == "integer-out-of-range"
