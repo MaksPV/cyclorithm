@@ -694,8 +694,29 @@ pub(crate) fn plan_stmts_with(
             }
             _ => {
                 let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
-                let starts: Vec<i64> = (0..count).map(|j| offset + j as i64 * step).collect();
                 let end = saturating_add_mul(offset, count, step);
+                // Материализация только влезающих стартов: всё, что за лимитом,
+                // отсечёт `check_bounds` по точному `end` (тот же `blame`).
+                // Без капа `repeat 99999999999` собирает Vec до проверки границ
+                // (OOM), а `j as i64 * step` переполняется в debug (паника).
+                // Кап точен для валидных программ: при `end <= limit` влезают все.
+                let materialized = if step > 0 && offset <= limit {
+                    let room: u64 = ((limit as i128 - offset as i128) / step as i128)
+                        .clamp(0, u64::MAX as i128)
+                        as u64;
+                    count.min(room.saturating_add(1))
+                } else if step == 0 && offset > limit {
+                    0
+                } else {
+                    count
+                };
+                let starts: Vec<i64> = (0..materialized)
+                    .map(|j| {
+                        let t = offset as i128 + j as i128 * step as i128;
+                        // Инвариант капа: `t <= limit <= i64::MAX`, `t >= offset >= 0`.
+                        i64::try_from(t).expect("материализация только влезающих стартов")
+                    })
+                    .collect();
                 if count > 0 && step > 0 {
                     occupied.push((offset, end));
                 }
@@ -1664,6 +1685,25 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             ("fill-zero-duration", "fill of zero-duration cycle 'EMPTY'")
+        );
+    }
+
+    #[test]
+    fn rejects_astronomic_repeat_without_oom() {
+        // `repeat 99999999999`: кап материализации — быстрый cycle-overruns
+        // с тем же blame, а не OOM на сборке Vec (см. bad_cycle-overruns-repeat).
+        let e = bounds_err(
+            "schedule \"T\" { point A { actions = [x]; } \
+            cycle D duration = 10m { 0m: A.x(); } \
+            cycle C duration = 1h { 0m: repeat 99999999999 D(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(); } }",
+        );
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "cycle-overruns",
+                "cycle 'D' overruns 'C' by 999999999930m (999999999990m > 60m)"
+            )
         );
     }
 

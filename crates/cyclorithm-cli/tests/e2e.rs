@@ -400,6 +400,11 @@ fn validation_errors_go_to_stderr() {
             "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
         ),
         (
+            "bad_cycle-overruns-repeat",
+            "cycle-overruns",
+            "cycle 'D' overruns 'C' by 999999999930m (999999999990m > 60m)",
+        ),
+        (
             "bad_until-out-of-bounds",
             "until-out-of-bounds",
             "until '30h' out of bounds (duration 24h)",
