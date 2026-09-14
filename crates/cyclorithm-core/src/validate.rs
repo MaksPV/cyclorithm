@@ -678,9 +678,13 @@ pub(crate) fn plan_stmts_with(
             Repeat::FillGaps { until } => {
                 let step = gaps_step_of(&st.invocation, tables)?;
                 let horizon = fill_horizon(until, limit, limit_raw)?;
+                // `until` раньше старта строки — out of bounds (вина — на `until`).
+                // Без `until` горизонт — конец родителя: строка за горизонтом даёт
+                // ноль экземпляров, как обычный `fill`, — это не баг, а не паника.
                 if offset > horizon {
-                    let u = until.as_ref().expect("until объявлен: offset > horizon");
-                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                    if let Some(u) = until {
+                        return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                    }
                 }
                 plans.push(Placement {
                     starts: Vec::new(),
@@ -1769,6 +1773,25 @@ mod tests {
         check_recursion(ast, &t).expect("рекурсии нет");
         check_bounds(ast, &t).expect("filler в границах");
         assert_eq!(root_actual_ms(ast, &t), Ok(18_000_000));
+    }
+
+    #[test]
+    fn gaps_without_until_after_horizon_gives_zero_instances() {
+        // Строка за концом родителя без `until`: ноль экземпляров, как у `fill`, —
+        // раньше здесь паниковал `expect` (until объявлен).
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle D duration = 10m { 0m: A.x(); } \
+            cycle C duration = 1h { 2h: fill gaps D(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: C(); } }";
+        let (ast, t) = tables(src);
+        check_recursion(ast, &t).expect("рекурсии нет");
+        check_bounds(ast, &t).expect("строка за горизонтом — ноль экземпляров, не ошибка");
+        let plans = {
+            let c = ast.cycles.iter().find(|c| c.name == "C").expect("цикл C");
+            plan_stmts(&c.stmts, 3_600_000, "1h", &t).expect("план строится")
+        };
+        assert!(plans[0].starts.is_empty());
+        assert_eq!(plans[0].end, None);
     }
 
     #[test]
