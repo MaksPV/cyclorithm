@@ -517,6 +517,11 @@ fn validation_errors_go_to_stderr() {
             "float-out-of-range",
             "float out of range '1e400'",
         ),
+        (
+            "bad_integer-out-of-range",
+            "integer-out-of-range",
+            "integer out of range 'arithmetic overflow'",
+        ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[

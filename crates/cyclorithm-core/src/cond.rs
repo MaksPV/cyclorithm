@@ -660,6 +660,13 @@ impl CxTy<'_> {
                         return Err(e);
                     }
                 }
+                // Константный `MIN floordiv -1` / `MIN floormod -1` переполняет i64:
+                // ловим сразу, как константный ноль (иначе — в момент строки).
+                if matches!(op, ArithOp::FloorDiv | ArithOp::FloorMod) {
+                    if let Some(e) = self.const_euclid_overflow(left, right) {
+                        return Err(e);
+                    }
+                }
                 Ok(ty)
             }
             // Битовые — те же числовые операнды, но деления нет:
@@ -706,10 +713,13 @@ impl CxTy<'_> {
             }
             // Делимые функции — те же операторы, вызванные явно (так пишет прелюдия).
             if name == "floordiv" || name == "floormod" {
-                let [_, b] = args else {
+                let [a, b] = args else {
                     return Err(Error::wrong_arguments(name));
                 };
                 if let Some(Err(e)) = self.const_div(b) {
+                    return Err(e);
+                }
+                if let Some(e) = self.const_euclid_overflow(a, b) {
                     return Err(e);
                 }
                 return Ok(Ty::Num);
@@ -816,6 +826,18 @@ impl CxTy<'_> {
             Ok(Value::Num(0)) => Some(Err(Error::division_by_zero())),
             Ok(Value::Float(0.0)) => Some(Err(Error::division_by_zero())),
             Ok(_) => Some(Ok(())),
+        }
+    }
+
+    /// Константное переполнение `MIN floordiv -1` / `MIN floormod -1`
+    /// (единственная переполняющая пара евклидова деления).
+    /// `None` — хотя бы один операнд неконстантен: поймает рантайм.
+    fn const_euclid_overflow(&mut self, left: &Expr, right: &Expr) -> Option<Error> {
+        match (const_eval(left, self)?, const_eval(right, self)?) {
+            (Ok(Value::Num(a)), Ok(Value::Num(b))) if a == i64::MIN && b == -1 => {
+                Some(Error::integer_out_of_range("arithmetic overflow"))
+            }
+            _ => None,
         }
     }
 }
@@ -1488,11 +1510,14 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             if y == 0 {
                 return Err(Error::division_by_zero());
             }
-            Ok(Value::Num(if name == "floordiv" {
-                x.div_euclid(y)
+            // `MIN / -1` переполняет i64: только checked-версии, иначе паника на вводе.
+            let v = if name == "floordiv" {
+                x.checked_div_euclid(y)
             } else {
-                x.rem_euclid(y)
-            }))
+                x.checked_rem_euclid(y)
+            };
+            v.map(Value::Num)
+                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
         }
         "mkdate" => {
             if args.len() != 7 {
@@ -2134,6 +2159,50 @@ mod tests {
                 "integer out of range 'arithmetic overflow'"
             )
         );
+    }
+
+    #[test]
+    fn euclid_min_div_neg_one_is_static_error() {
+        // `MIN floordiv -1` / `MIN floormod -1` — единственная переполняющая пара:
+        // константа ловится сразу, как константный ноль.
+        for row in [
+            "floordiv((1 << 63), 0 - 1) == 0",
+            "floormod((1 << 63), 0 - 1) == 0",
+            "(1 << 63) floordiv (0 - 1) == 0",
+            "(1 << 63) floormod (0 - 1) == 0",
+        ] {
+            let e = static_err(row);
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "integer-out-of-range",
+                    "integer out of range 'arithmetic overflow'"
+                ),
+                "для {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn euclid_min_div_neg_one_is_runtime_error() {
+        // Неконстантный делитель: статика пропускает, падает вычисление (не паника).
+        for row in [
+            "floordiv((1 << 63), at - at - 1) == 0",
+            "floormod((1 << 63), at - at - 1) == 0",
+        ] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("делитель не константа — статика проходит");
+            let e = eval_cond(&c, 0, &d).expect_err("MIN / -1 в момент строки — ошибка");
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                (
+                    "integer-out-of-range",
+                    "integer out of range 'arithmetic overflow'"
+                ),
+                "для {row}"
+            );
+        }
     }
 
     #[test]
