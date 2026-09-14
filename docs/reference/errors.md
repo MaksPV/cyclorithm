@@ -66,6 +66,7 @@
 | `recursive-definition` | `recursive definition 'a'` | Разорвать рекурсию в объявлениях |
 | `not-a-predicate` | `'hour' is not a predicate` | В позиции условия вызывать только предикат |
 | `integer-out-of-range` | `integer out of range '...'` | Уложиться в `i64` |
+| `float-out-of-range` | `float out of range '...'` | Уложиться в конечный `f64` |
 | `invalid-date` | `invalid date '...'` | Проверить компоненты даты |
 | `unknown-field` | `unknown field 'name'` | Проверить ключ и цепочку доступа |
 | `index-out-of-bounds` | `index out of bounds '5'` | Держать индекс внутри массива (минус считается с конца) |
