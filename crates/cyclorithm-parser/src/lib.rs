@@ -826,6 +826,7 @@ fn build_postfix_base(pair: Pair<Rule>) -> Expr {
     debug_assert_eq!(pair.as_rule(), Rule::postfix_base);
     let pair = pair.into_inner().next().expect("postfix_base: содержимое");
     match pair.as_rule() {
+        Rule::float => Expr::Float(pair.as_str().to_owned()),
         Rule::number => Expr::Num(pair.as_str().to_owned()),
         Rule::string => {
             let s = pair.as_str();
@@ -1167,6 +1168,7 @@ pub enum CondRhs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Num(String),
+    Float(String),
     Str(String),
     Bool(bool),
     Map(Vec<(String, Expr)>),
