@@ -232,6 +232,11 @@ impl Error {
         )
     }
 
+    /// `float-out-of-range`: число вне диапазона `f64` в условии.
+    pub fn float_out_of_range(raw: &str) -> Self {
+        Self::coded("float-out-of-range", format!("float out of range '{raw}'"))
+    }
+
     /// `invalid-date`: кривой литерал даты в условии.
     pub fn invalid_date(raw: &str) -> Self {
         Self::coded("invalid-date", format!("invalid date '{raw}'"))

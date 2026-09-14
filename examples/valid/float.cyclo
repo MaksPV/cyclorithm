@@ -1,0 +1,21 @@
+schedule "float" {
+  point KULICHKI {
+    actions = [stop];
+    attrs = {"name": "Кулички", "loc": {"lat": 20.02, "lon": 23.43}};
+  }
+
+  point X {
+    actions = [a, b];
+  }
+
+  cycle C duration = 1h {
+    [20.02 > 20] 0m: KULICHKI.stop() {"lat": 20.02, "sum": 1 + 20.02, "label": str(20.02)};
+    [0.0] 10m: X.a();
+    [1.5] 20m: X.b();
+    [2.5 == 2.5] 30m: X.a() {"e": 1e3, "tiny": 0.02, "neg": -3.14};
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    6h: C();
+  }
+}

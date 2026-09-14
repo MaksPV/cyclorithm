@@ -289,6 +289,14 @@ fn attrs_text(pairs: &[(String, Value)]) -> String {
 fn value_text(v: &Value) -> String {
     match v {
         Value::Num(n) => n.to_string(),
+        Value::Float(f) => {
+            // Сохраняем как JSON-число без кавычек
+            if let Some(n) = serde_json::Number::from_f64(*f) {
+                n.to_string()
+            } else {
+                "null".to_owned()
+            }
+        }
         Value::Str(s) => esc(s),
         Value::Bool(b) => b.to_string(),
         Value::Map(pairs) => attrs_text(pairs),

@@ -162,7 +162,8 @@ postfix     = { postfix_base ~ postfix_suffix* }
 // читается именем. Арифметическая скобка раньше `truth`: `(2+3)` — число 5,
 // а не истина от `5`; условие в скобках (`(at>=K)`) не разбирается как
 // `bitor` и падает в `truth` как раньше.
-postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
+// `float` раньше `number`: иначе `20.02` режется на `20` + `.02` (field_access).
+postfix_base = { float | number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
 postfix_suffix = { field_access | index_access }
 field_access = { "." ~ IDENT }
 // Индекс — выражение: `m[0]`, `m[i + 1]`, `m[-1]`; пробелы внутри — обычные.
@@ -233,6 +234,10 @@ duration_unit = { "ms" | "w" | "d" | "h" | "m" | "s" }
 // `duration_item` (`1h` резалось бы на `1` + `h`). Граница нужна только
 // в `repeat_count`, где число стоит перед вызовом.
 number        = @{ ASCII_DIGIT+ }
+// Float — с точкой и/или экспонентой; `20.` с хвостовой точкой разрешена
+// только когда за точкой не буква/`_` (иначе `20.foo` режется на float).
+// Покрывает `20.02`, `.02`, `1e6`, `1.2e-3`, `20.` (без `20.foo`).
+float         = @{ ((ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ | ASCII_DIGIT+ ~ "." ~ !word_tail | "." ~ ASCII_DIGIT+) ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? | ASCII_DIGIT+ ~ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+) }
 // Атомарное: комментарии `//` и пробелы внутрь строк не проникают.
 string      = @{ "\"" ~ string_char* ~ "\"" }
 string_char = _{ !("\"" | "\n" | "\r") ~ ANY }

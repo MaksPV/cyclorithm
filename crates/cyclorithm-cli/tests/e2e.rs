@@ -306,6 +306,25 @@ fn routines_matches_expected_json() {
 }
 
 #[test]
+fn float_matches_expected_json() {
+    // Float-литералы: точка/экспонента в attrs и блоках, арифметика с
+    // промоушеном, сравнения, str(), 0.0 — ложь в условии.
+    let out = run(&[
+        "run",
+        "../../examples/valid/float.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/float.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn imports_matches_expected_json() {
     // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
     let out = run(&[
@@ -493,6 +512,11 @@ fn validation_errors_go_to_stderr() {
             "unknown table 'SHORT'",
         ),
         ("bad_unknown-slot", "unknown-slot", "unknown slot '8th'"),
+        (
+            "bad_float-out-of-range",
+            "float-out-of-range",
+            "float out of range '1e400'",
+        ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
