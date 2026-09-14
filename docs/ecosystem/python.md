@@ -3,13 +3,26 @@
 Нативные биндинги ядра (PyO3, крейт `crates/cyclorithm-python`): `check`
 и `run` без subprocess. Только локальная сборка, в PyPI не публикуется.
 
-## Установка
+## Сборка для разработки
+
+Контрибьютору движка, которому нужно собрать и потестировать биндинг.
+В PyPI пакет не публикуется — сторонней установки нет, только из исходников.
+
+Пререквизиты: стабильный Rust (`rustup`), Python ≥3.10. Команды — из корня репо:
 
 ```sh
 python3 -m venv crates/cyclorithm-python/.venv
-crates/cyclorithm-python/.venv/bin/pip install maturin pytest
+crates/cyclorithm-python/.venv/bin/pip install maturin pytest ruff
 cd crates/cyclorithm-python
 .venv/bin/maturin develop --release
+```
+
+Проверка (`maturin develop` ставит пакет в venv редактируемо):
+
+```sh
+.venv/bin/python -c "import cyclorithm; print(cyclorithm.__version__)"
+.venv/bin/python -m pytest python/tests/ -q
+.venv/bin/ruff check python/
 ```
 
 ## API
