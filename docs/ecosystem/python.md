@@ -22,9 +22,17 @@ c.check_text(text, base_dir="examples/valid")  # use — от base_dir (по у�
 
 window = c.run_file("route.cyclo", "2026-09-07", "+1d")
 window = c.run_text(text, "2026-09-07T00:00:00", "2026-09-08T00:00:00")
+
+from datetime import date, datetime, timedelta
+
+window = c.run_file("route.cyclo", datetime(2026, 9, 7), timedelta(days=1))
 ```
 
-- Даты — короткие формы CLI (см. главу CLI): `2026-09-07`, `+1d` (для `end` — от `start`).
+- Границы окна — `str` (короткие формы CLI: `2026-09-07`, `+1d`),
+  `datetime` (aware — в UTC), `date` (полночь) или `timedelta` (дельта:
+  для `start` — от now, для `end` — от `start`, как `+DURATION` в CLI).
+  Микросекунды усекаются до миллисекунд (точность движка); чужие типы
+  и отрицательный `timedelta` — `TypeError` до вызова ядра.
 - Возврат `run_*` — dict, побайтово равный JSON-объекту `cyclo run` (см. главу вывода).
 - Ошибки — `CycloError` с полями `code` (слаг главы ошибок; ошибка парсера — `syntax`)
   и `message`; `str` — `слаг: сообщение`, как stderr CLI. Отсутствие файла — штатный `OSError`.
