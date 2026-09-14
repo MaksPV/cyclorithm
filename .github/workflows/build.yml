@@ -59,8 +59,9 @@ jobs:
           path: dist/cyclo-*.tar.gz
           if-no-files-found: error
 
-  # Колёса Python-биндинга (abi3: один wheel на платформу для Python ≥3.10).
+  # Python-библиотека: колёса abi3 (один wheel на платформу для Python ≥3.10).
   # Матрица уже, чем у бинаря: macOS нет и там, и там (паритет с релизами).
+  # Имена артефактов — с триплетом, как у бинарей `cyclo-<триплет>`.
   wheels:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -68,11 +69,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            target: x86_64
+            target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
-            target: aarch64
+            target: aarch64-unknown-linux-gnu
           - os: windows-latest
-            target: x64
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -94,11 +95,11 @@ jobs:
       - name: upload
         uses: actions/upload-artifact@v5
         with:
-          name: wheels-${{ matrix.target }}
+          name: python-wheels-${{ matrix.target }}
           path: dist/*.whl
           if-no-files-found: error
 
-  # Только на тегах v*: прикладывает 4 бинарника к GitHub Release.
+  # Только на тегах v*: прикладывает 4 бинарника и 3 колёса к GitHub Release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, wheels]
@@ -112,7 +113,7 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v5
         with:
-          pattern: wheels-*
+          pattern: python-wheels-*
           path: dist-wheels
       - name: show
         run: ls -R dist dist-wheels
@@ -120,5 +121,5 @@ jobs:
         with:
           files: |
             dist/cyclo-*/*.tar.gz
-            dist-wheels/wheels-*/*.whl
+            dist-wheels/python-wheels-*/*.whl
           generate_release_notes: true
