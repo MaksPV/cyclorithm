@@ -274,6 +274,12 @@ impl Error {
         )
     }
 
+    /// `string-too-long`: ширина `pad` вне лимита (защита от аллокации
+    /// гигабайтов нулями; см. `MAX_PAD_WIDTH` в `cond.rs`).
+    pub fn string_too_long(raw: &str) -> Self {
+        Self::coded("string-too-long", format!("string too long '{raw}'"))
+    }
+
     /// `broken-prelude`: встроенная прелюдия не разобралась (битый `std.cyclo`
     /// в сборке — вместо паники аккуратная ошибка).
     pub fn broken_prelude(details: &str) -> Self {

@@ -73,6 +73,10 @@ pub struct Defs {
 
 static PRELUDE: &str = include_str!("std.cyclo");
 
+/// Максимальная ширина `pad(n, w)`: легитимный pad — даты и счётчики
+/// (единицы символов), всё большее — `string-too-long`, а не гигабайты нулей.
+const MAX_PAD_WIDTH: usize = 1024;
+
 /// Разобранная прелюдия — один раз на процесс (каждый `resolve_units`
 /// раньше парсил её заново). Битая сборка — `broken-prelude`, не паника.
 static SYSTEM: LazyLock<Result<Vec<Decl>, Error>> = LazyLock::new(|| resolve_system(PRELUDE));
@@ -1491,6 +1495,12 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
                 (Value::Num(n), Value::Num(w)) => (n, w),
                 _ => return Err(Error::type_mismatch()),
             };
+            // Ширина без лимита — аллокация гигабайтов (`"0".repeat(w)`)
+            // и паника `capacity overflow` на `i64::MAX`: легитимный pad —
+            // даты и счётчики, им 1024 за глаза (см. docs/reference/errors.md).
+            if w > MAX_PAD_WIDTH as i64 {
+                return Err(Error::string_too_long(&w.to_string()));
+            }
             let s = n.to_string();
             let w = w.max(0) as usize;
             if s.len() >= w {
@@ -1736,6 +1746,29 @@ mod tests {
         assert!(yes("pad(6, 2) == \"06\"", 0));
         assert!(yes("pad(2026, 4) == \"2026\"", 0));
         assert!(yes("\"b\" > \"a\" and \"a\" < \"b\"", 0));
+    }
+
+    #[test]
+    fn pad_huge_width_is_runtime_error() {
+        // Ширина без лимита — гигабайты нулей / паника `capacity overflow`:
+        // граница лимита работает, за ним — string-too-long в момент строки.
+        assert!(yes("pad(6, 1024) == pad(6, 1024)", 0));
+        for (row, width) in [
+            ("pad(1, 1025) == \"x\"", "1025"),
+            ("pad(1, 1000000000) == \"x\"", "1000000000"),
+            ("pad(1, 9223372036854775807) == \"x\"", "9223372036854775807"),
+        ] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("ширина не константа границ — статика проходит");
+            let e = eval_cond(&c, 0, &d).expect_err("ширина за лимитом — ошибка");
+            assert_eq!(e.code, "string-too-long", "для {row}");
+            assert_eq!(
+                e.message.as_str(),
+                format!("string too long '{width}'"),
+                "для {row}"
+            );
+        }
     }
 
     #[test]

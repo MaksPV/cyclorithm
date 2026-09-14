@@ -518,6 +518,11 @@ fn validation_errors_go_to_stderr() {
         ),
         ("bad_unknown-slot", "unknown-slot", "unknown slot '8th'"),
         (
+            "bad_string-too-long",
+            "string-too-long",
+            "string too long '1000000000'",
+        ),
+        (
             "bad_float-out-of-range",
             "float-out-of-range",
             "float out of range '1e400'",
