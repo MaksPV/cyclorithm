@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use cyclorithm_core::cond::{check_conditions, resolve_units, Value};
 use cyclorithm_core::datetime::{format_datetime, parse_cli_datetime};
-use cyclorithm_core::expand::{Event, expand};
-use cyclorithm_core::imports::{ImportError, collect_units};
+use cyclorithm_core::expand::{expand, Event};
+use cyclorithm_core::imports::{collect_units, ImportError};
 use cyclorithm_core::validate::{check_bounds, check_recursion, check_tables, validate_names};
 use pyo3::prelude::*;
 
@@ -47,14 +47,11 @@ impl From<Fail> for PyErr {
 /// заимствуют локальные данные — вернуть их наружу нельзя, как в `setup!` CLI).
 macro_rules! setup {
     ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
-        let mut src =
-            cyclorithm_parser::parse($text).map_err(|e| Fail::Syntax(e.to_string()))?;
-        cyclorithm_core::reverse::materialize_reverse(&mut src.schedule)
-            .map_err(Fail::Core)?;
+        let mut src = cyclorithm_parser::parse($text).map_err(|e| Fail::Syntax(e.to_string()))?;
+        cyclorithm_core::reverse::materialize_reverse(&mut src.schedule).map_err(Fail::Core)?;
         let $ast = &src.schedule;
-        let mut groups =
-            collect_units(&src.uses, $base, &mut |p| std::fs::read_to_string(p))
-                .map_err(Fail::from)?;
+        let mut groups = collect_units(&src.uses, $base, &mut |p| std::fs::read_to_string(p))
+            .map_err(Fail::from)?;
         groups.push(src.decls.clone());
         let ($defs, reg) = resolve_units(&groups).map_err(Fail::Core)?;
         let $tables = validate_names($ast, &reg)
@@ -144,20 +141,13 @@ fn core_version() -> &'static str {
 #[pyfunction]
 #[pyo3(signature = (text, base))]
 fn check_text(py: Python<'_>, text: &str, base: PathBuf) -> PyResult<()> {
-    py.detach(|| check_inner(text, &base))
-        .map_err(PyErr::from)
+    py.detach(|| check_inner(text, &base)).map_err(PyErr::from)
 }
 
 /// Окно событий текстом программы; возврат — JSON-строка объекта CLI.
 #[pyfunction]
 #[pyo3(signature = (text, start, end, base))]
-fn run_text(
-    py: Python<'_>,
-    text: &str,
-    start: &str,
-    end: &str,
-    base: PathBuf,
-) -> PyResult<String> {
+fn run_text(py: Python<'_>, text: &str, start: &str, end: &str, base: PathBuf) -> PyResult<String> {
     py.detach(|| run_inner(text, &base, start, end))
         .map_err(PyErr::from)
 }

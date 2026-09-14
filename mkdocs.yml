@@ -67,5 +67,6 @@ nav:
   - Экосистема:
       - Интеграции: ecosystem/integrations.md
       - Библиотеки и use: ecosystem/libraries.md
+      - Python-биндинги: ecosystem/python.md
   - Глоссарий: glossary.md
   - Планы: todo.md
