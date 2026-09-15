@@ -691,6 +691,33 @@ fn stdin_source_matches_file() {
 }
 
 #[test]
+fn tz_offsets_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_offsets.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // aware-окно — те же инстанты, но с суффиксом зоны окна
+    let out_z = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00+03:00",
+        "--end",
+        "2026-01-10T00:00:00+03:00",
+    ]);
+    let got_z = stdout_json(&out_z);
+    assert_eq!(got_z["events"][0]["time"], "2026-01-09T09:00:00+03:00");
+}
+
+#[test]
 fn next_command() {
     let cron = "../../examples/real/cron.cyclo";
     // Первые 3 события понедельника — часовые пинги с полуночи.

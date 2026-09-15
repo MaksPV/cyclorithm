@@ -7,8 +7,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::Path;
 
-use cyclorithm_core::datetime::parse_cli_datetime;
-use cyclorithm_core::pipeline::{check_source, event_to_json, expand_window, PipelineError};
+use cyclorithm_core::datetime::parse_cli_datetime_zoned;
+use cyclorithm_core::pipeline::{check_source, event_to_json_zoned, expand_window, PipelineError};
 
 /// Результат вызова (см. `cyclorithm.h`): успех — `json != NULL`;
 /// ошибка — `json == NULL`, `code`/`message` заполнены.
@@ -108,11 +108,11 @@ pub unsafe extern "C" fn cyclo_run(
         Some((((t, b), s), e)) => (t, Path::new(b), s, e),
         None => return err("syntax", "null or non-utf8 input"),
     };
-    let start_ms = match parse_cli_datetime(start_raw, now_ms()) {
+    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now_ms()) {
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };
-    let end_ms = match parse_cli_datetime(end_raw, start_ms) {
+    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms) {
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn cyclo_run(
             "schedule": window.schedule,
             "start": start_raw,
             "end": end_raw,
-            "events": window.events.iter().map(event_to_json).collect::<Vec<_>>(),
+            "events": window.events.iter().map(|e| event_to_json_zoned(e, zone)).collect::<Vec<_>>(),
         })),
         Err(e) => err_pipeline(e),
     }

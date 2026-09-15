@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::cond::{check_conditions, resolve_units, Value};
-use crate::datetime::format_datetime;
+use crate::datetime::format_datetime_tz;
 use crate::expand::{expand, next_events, Event};
 use crate::imports::{collect_units, ImportError};
 use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
@@ -128,10 +128,15 @@ pub fn next_window(
 }
 
 /// Событие в JSON-объект (ключи — как в `docs/reference/output.md`;
-/// порядок ключей словарей — порядок объявления).
+/// порядок ключей словарей — порядок объявления). Без зоны — наивное.
 pub fn event_to_json(e: &Event) -> serde_json::Value {
+    event_to_json_zoned(e, None)
+}
+
+/// Событие в JSON-объект с зоной окна (`None` — наивное, `Some(0)` → `Z`).
+pub fn event_to_json_zoned(e: &Event, zone: Option<i16>) -> serde_json::Value {
     serde_json::json!({
-        "time": format_datetime(e.time),
+        "time": format_datetime_tz(e.time, zone),
         "action": e.action,
         "point": e.point,
         "point_attrs": attrs_json(&e.point_attrs),
