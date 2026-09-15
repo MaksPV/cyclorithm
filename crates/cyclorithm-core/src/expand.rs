@@ -13,13 +13,13 @@
 
 use std::collections::HashMap;
 
-use cyclorithm_parser::{Expr, Invocation, Schedule};
+use crate::parser::{Expr, Invocation, Schedule};
 
-use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
+use crate::Error;
+use crate::cond::{Defs, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs};
 use crate::datetime::{parse_file_datetime, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
-use crate::validate::{instantiate, plan_stmts, plan_stmts_with, root_actual_ms, NameTables};
-use crate::Error;
+use crate::validate::{NameTables, instantiate, plan_stmts, plan_stmts_with, root_actual_ms};
 
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
 /// `[start, end)` в мс epoch (конец — по объявленной длительности).
@@ -197,11 +197,11 @@ pub fn next_events(
             };
             if heap.len() < n {
                 heap.push(top);
-            } else if let Some(worst) = heap.peek() {
-                if top < *worst {
-                    heap.pop();
-                    heap.push(top);
-                }
+            } else if let Some(worst) = heap.peek()
+                && top < *worst
+            {
+                heap.pop();
+                heap.push(top);
             }
         }
         k += 1;
@@ -301,7 +301,7 @@ struct Ctx<'a, 'n, 'o, 'm> {
 /// (валидация прошла, счёт конечен). Порядок обхода задаёт `seq` для сортировки.
 /// `env` — динамическое окружение параметров цепочки вызовов.
 fn unfold_stmt(
-    stmt: &cyclorithm_parser::Stmt,
+    stmt: &crate::parser::Stmt,
     starts: &[i64],
     base: i128,
     k: i128,
@@ -467,7 +467,7 @@ fn unfold_routine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{check_conditions, resolve_units, Defs, TableReg};
+    use crate::cond::{Defs, TableReg, check_conditions, resolve_units};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
     use std::collections::HashMap;
@@ -476,14 +476,14 @@ mod tests {
     fn setup(
         src: &str,
     ) -> (
-        &'static cyclorithm_parser::Schedule,
+        &'static crate::parser::Schedule,
         NameTables<'static>,
         &'static Defs,
     ) {
-        let file: &'static mut cyclorithm_parser::SourceFile =
-            Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        let file: &'static mut crate::parser::SourceFile =
+            Box::leak(Box::new(crate::parser::parse(src).unwrap()));
         crate::reverse::materialize_reverse(&mut file.schedule).unwrap();
-        let ast: &'static cyclorithm_parser::Schedule = &file.schedule;
+        let ast: &'static crate::parser::Schedule = &file.schedule;
         // Импорты — из памяти: route_lib.cyclo лежит в libs/ рядом с route.cyclo.
         // Без `use` чтение не вызывается, остальные фикстуры не меняются.
         let libs: HashMap<PathBuf, String> = HashMap::from([(
@@ -805,7 +805,7 @@ schedule "Редкое" {
             cycle LESSON(subj) duration = 1h { 0m: B.ring() {\"subject\": subj.name}; } \
             cycle INNER duration = 30m { 0m: B.ring() {\"subject\": subj.name}; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 9h: INNER(); } }";
-        let file = Box::leak(Box::new(cyclorithm_parser::parse(src).unwrap()));
+        let file = Box::leak(Box::new(crate::parser::parse(src).unwrap()));
         crate::reverse::materialize_reverse(&mut file.schedule).unwrap();
         let ast = &file.schedule;
         let groups = vec![file.decls.clone()];
@@ -882,7 +882,7 @@ schedule "Редкое" {
                 root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 6h: A.x(); }} }}"
             );
             let file = Box::leak(src.into_boxed_str());
-            let parsed = Box::leak(Box::new(cyclorithm_parser::parse(file).unwrap()));
+            let parsed = Box::leak(Box::new(crate::parser::parse(file).unwrap()));
             let ast = &parsed.schedule;
             let groups = vec![parsed.decls.clone()];
             let (defs, reg) = resolve_units(&groups).unwrap();
@@ -1271,9 +1271,9 @@ schedule "Редкое" {
         for case in [("2026-09-07T00:00:00", 1), ("2026-09-13T00:00:00", 7)] {
             let at = parse_datetime(case.0).unwrap();
             let v = eval_expr_with_env(
-                &cyclorithm_parser::Expr::Call {
+                &crate::parser::Expr::Call {
                     name: "day_of_week".to_owned(),
-                    args: vec![cyclorithm_parser::Expr::At],
+                    args: vec![crate::parser::Expr::At],
                 },
                 at,
                 d,

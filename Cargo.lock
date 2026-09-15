@@ -7,7 +7,6 @@ name = "cyclorithm-cli"
 version = "0.3.2"
 dependencies = [
  "cyclorithm-core",
- "cyclorithm-parser",
  "serde_json",
 ]
 
@@ -15,7 +14,8 @@ dependencies = [
 name = "cyclorithm-core"
 version = "0.3.2"
 dependencies = [
- "cyclorithm-parser",
+ "pest",
+ "pest_derive",
  "serde_json",
 ]
 
@@ -28,19 +28,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "cyclorithm-parser"
-version = "0.3.2"
-dependencies = [
- "pest",
- "pest_derive",
-]
-
-[[package]]
 name = "cyclorithm-python"
 version = "0.3.2"
 dependencies = [
  "cyclorithm-core",
- "cyclorithm-parser",
  "pyo3",
  "serde_json",
 ]

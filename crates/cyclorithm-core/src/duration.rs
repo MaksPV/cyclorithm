@@ -6,7 +6,7 @@
 //! Ноль (`0m`) сам по себе валиден; запрет нулевого *периода* `root_cycle`
 //! (деление на ноль в решётке) проверяется отдельно, тоже invalid-duration.
 
-use cyclorithm_parser::{Duration, DurationItem, DurationUnit, RootCycle};
+use crate::parser::{Duration, DurationItem, DurationUnit, RootCycle};
 
 use crate::Error;
 
@@ -90,7 +90,7 @@ pub fn root_period_ms(root: &RootCycle) -> Result<i64, Error> {
 /// `parent_raw` — сырой текст длительности родителя для сообщения.
 /// Невалидная запись самого смещения (`1h2h`) — сначала invalid-duration.
 pub fn effective_offset_ms(
-    stmt: &cyclorithm_parser::Stmt,
+    stmt: &crate::parser::Stmt,
     parent_ms: i64,
     parent_raw: &str,
 ) -> Result<i64, Error> {
@@ -157,7 +157,7 @@ mod tests {
             raw: raw.to_owned(),
             items: items
                 .iter()
-                .map(|(n, u)| cyclorithm_parser::DurationItem {
+                .map(|(n, u)| crate::parser::DurationItem {
                     number: n.to_string(),
                     unit: *u,
                 })
@@ -221,13 +221,13 @@ mod tests {
 
     #[test]
     fn resolves_negative_offsets() {
-        use cyclorithm_parser::Stmt;
+        use crate::parser::Stmt;
         let stmt = |negative: bool, raw: &str, items: &[(&str, DurationUnit)]| Stmt {
             offset: dur(raw, items),
             negative,
-            repeat: cyclorithm_parser::Repeat::Once,
+            repeat: crate::parser::Repeat::Once,
             condition: None,
-            invocation: cyclorithm_parser::Invocation::CycleCall {
+            invocation: crate::parser::Invocation::CycleCall {
                 name: "R".to_owned(),
                 args: Vec::new(),
             },
@@ -251,15 +251,15 @@ mod tests {
 
     #[test]
     fn rejects_negative_out_of_bounds() {
-        use cyclorithm_parser::Stmt;
+        use crate::parser::Stmt;
         use DurationUnit::*;
         // -2h при родителе 1h20m: эффективное -40m — offset-out-of-bounds, слаг и сообщение по главе ошибок.
         let st = Stmt {
             offset: dur("2h", &[("2", Hour)]),
             negative: true,
-            repeat: cyclorithm_parser::Repeat::Once,
+            repeat: crate::parser::Repeat::Once,
             condition: None,
-            invocation: cyclorithm_parser::Invocation::CycleCall {
+            invocation: crate::parser::Invocation::CycleCall {
                 name: "R".to_owned(),
                 args: Vec::new(),
             },
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_root_period() {
-        use cyclorithm_parser::{RootCycle, Stmt};
+        use crate::parser::{RootCycle, Stmt};
         use DurationUnit::*;
         let root = |raw: &str, items: &[(&str, DurationUnit)]| RootCycle {
             start_time: "2026-01-01T00:00:00".to_owned(),

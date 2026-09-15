@@ -15,11 +15,11 @@
 5. `expand` — разворачивание в события, сортировка `(time, k, порядок объявления)`, один JSON в stdout.
 - Якоря, которые легко перепутать: `fill until T` — горизонт от старта **родителя**, не от строки; `-0m` ≡ длительность цикла; условие на `repeat`/`fill` проверяется на **каждый экземпляр** в его старте (дыры, не сдвиг); `at` в телах объявлений — время **вызова**; `__`-имена видны только своему юниту (чужое — `unknown-name`).
 
-## Карта модулей (Cargo workspace, edition 2021)
-- `crates/cyclorithm-parser` — грамматика (`grammar.pest`, формальный EBNF) + AST (`lib.rs`: `SourceFile`, `Decl`, `Cond`/`Expr`, фикстура `route_ast`). Решено: парсер на `pest`.
-- `crates/cyclorithm-core` — `validate.rs` (слаги главы ошибок), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::*`: `unknown_point`, `cycle_overruns`, …).
+## Карта модулей (Cargo workspace, edition 2024)
+- `crates/cyclorithm-core` — ядро как библиотека (`api` — публичный фасад `check`/`run`/`next` для программ, `engine` — единый конвейер валидации, `parser` — внутренний `parser::grammar.pest` + AST `SourceFile`/`Schedule`/`Cond`/`Expr`/`route_ast` на `pest`, `validate.rs` — слаги главы ошибок, `cond.rs` — объявления/выражения/`resolve_units`, `imports.rs` — `collect_units`/`clean_join`, `std.cyclo` — прелюдия календарь/словарь, `expand.rs` — решётка, `datetime.rs`/`duration.rs`, `Error::*` в `lib.rs`). Парсер — внутренний модуль `core::parser`, отдельного крейта нет (удалён как shim).
+- `crates/cyclorithm-core::api` — библиотечный фасад для встраивания (ранее `schedule.rs`): `run_schedule`/`run_timeline`/`next_steps` поверх `engine`, без ФС (`libs` в памяти); `core::pipeline` — тонкий ФС-фасад для `cli`/`python`/`cpp` поверх того же `engine`.
 - `crates/cyclorithm-cli` — бинарь `cyclo` (`run`): читает файл + `use` через `dir_fs` от директории файла; контракт CLI — глава CLI вики + примеры. Exit-коды: `0` — успех, `1` — ввод/парсинг/валидация (текст в stderr, в stdout ничего), `2` — неверные аргументы (usage в stderr).
-- Время внутри — `i64` миллисекунды от unix epoch, наивное (без таймзон); длительности фиксированные (`w=7d`, `d=24h`).
+- Время внутри — `i64` миллисекунды от unix epoch; длительности фиксированные (`w=7d`, `d=24h`); `timezone` файла (`Z`/±HH:MM) сдвигает наивные литералы, окно форматируется в зоне `start`/`from` иначе в зоне файла.
 
 ## Тесты (три уровня)
 - Unit в крейтах: семантика условий (`cond.rs`), развёртка (`expand.rs` — вход через `setup()` с `Box::leak`, импорты подменяются картой из памяти), AST (`route_ast` обязан зеркалить `route.cyclo` — см. `ast_fixture_covers_spec_example`).

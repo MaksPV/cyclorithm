@@ -570,7 +570,7 @@ mod tests {
             parse_cli_datetime_zoned("2026-09-07T09:00:00+03:00", base).unwrap();
         assert_eq!(off_cli, Some(180));
         assert_eq!(ms_cli, naive + 3 * 3_600_000 - 3 * 3_600_000); // 09:00+03:00 == 06:00 naive
-                                                                   // Битые офсеты — invalid-datetime.
+        // Битые офсеты — invalid-datetime.
         for s in [
             "2026-09-07T00:00:00+03",
             "2026-09-07T00:00:00+24:00",

@@ -11,5 +11,6 @@ name = "cyclorithm_core"
 path = "src/lib.rs"
 
 [dependencies]
-cyclorithm-parser = { path = "../cyclorithm-parser" }
+pest = "2"
+pest_derive = "2"
 serde_json = { version = "1", features = ["preserve_order"] }

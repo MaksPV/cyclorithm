@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use cyclorithm_core::datetime::parse_cli_datetime_zoned;
-use cyclorithm_core::pipeline::{check_source, event_to_json_zoned, expand_window, PipelineError};
+use cyclorithm_core::pipeline::{PipelineError, check_source, event_to_json_zoned, expand_window};
 use pyo3::prelude::*;
 
 pyo3::create_exception!(_cyclorithm, CycloError, pyo3::exceptions::PyException);
