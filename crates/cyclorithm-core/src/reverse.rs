@@ -6,7 +6,7 @@
 //! Дальше узел — обычный цикл: все проверки идут общим порядком
 //! (см. docs/reference/semantics.md).
 
-use cyclorithm_parser::{Cycle, Schedule, Stmt};
+use crate::parser::{Cycle, Schedule, Stmt};
 
 use crate::Error;
 use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
@@ -100,21 +100,21 @@ fn mirror_rows(src: &Cycle, limit: i64) -> Result<Vec<Stmt>, Error> {
 mod tests {
     use super::*;
 
-    fn mirror_of(body: &str) -> cyclorithm_parser::Schedule {
+    fn mirror_of(body: &str) -> crate::parser::Schedule {
         let src = format!(
             "schedule \"T\" {{ point A {{ actions = [x]; }} \
             cycle R duration = 1h {{ {body} }} \
             cycle BACK reverse R; \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 6h: BACK(); }} }}"
         );
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         materialize_reverse(&mut schedule).expect("десугар обязан срабатывать");
         schedule
     }
 
-    fn offsets(schedule: &cyclorithm_parser::Schedule) -> Vec<String> {
+    fn offsets(schedule: &crate::parser::Schedule) -> Vec<String> {
         schedule.cycles[1]
             .stmts
             .iter()
@@ -146,7 +146,7 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle BACK reverse NOPE; \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: BACK(); } }";
-        let mut schedule = cyclorithm_parser::parse(src)
+        let mut schedule = crate::parser::parse(src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("источника нет");
@@ -163,7 +163,7 @@ mod tests {
         let tail =
             " root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: BACK(); } }";
         let src = format!("{head} cycle BACK reverse M; {tail}");
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("рутина не цикл");
@@ -176,7 +176,7 @@ mod tests {
             "{head} cycle MID reverse R; cycle BACK reverse MID; \
             cycle R duration = 1h {{ 0m: A.x(); }} {tail}"
         );
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("цепочка запрещена");

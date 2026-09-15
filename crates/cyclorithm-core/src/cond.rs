@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-use cyclorithm_parser::{
+use crate::parser::{
     ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
 };
 
@@ -83,7 +83,7 @@ static SYSTEM: LazyLock<Result<Vec<Decl>, Error>> = LazyLock::new(|| resolve_sys
 
 /// Разобрать системный файл в объявления. Публична для тестов битой прелюдии.
 fn resolve_system(src: &str) -> Result<Vec<Decl>, Error> {
-    cyclorithm_parser::parse_decls(src).map_err(|e| {
+    crate::parser::parse_decls(src).map_err(|e| {
         let first = e.to_string().lines().next().unwrap_or("").to_owned();
         Error::broken_prelude(&first)
     })
@@ -848,7 +848,7 @@ impl CxTy<'_> {
 /// Дубли ключей в литерале мапы — duplicate-attribute (первый повтор в порядке объявления).
 /// Вызывается из `infer`, поэтому покрывает все позиции литералов:
 /// тела объявлений, условия, аргументы, блоки.
-fn check_map_dupes(pairs: &[(String, cyclorithm_parser::Expr)]) -> Result<(), Error> {
+fn check_map_dupes(pairs: &[(String, crate::parser::Expr)]) -> Result<(), Error> {
     let mut seen = HashSet::new();
     for (k, _) in pairs {
         if !seen.insert(k) {
@@ -1609,7 +1609,7 @@ fn eval_def_call(
 mod tests {
     use super::*;
     use crate::validate::validate_names;
-    use cyclorithm_parser as p;
+    use crate::parser as p;
 
     fn cond_of(row: &str) -> Cond {
         let src = format!(

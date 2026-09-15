@@ -8,6 +8,7 @@ pub mod datetime;
 pub mod duration;
 pub mod expand;
 pub mod imports;
+pub mod parser;
 pub mod pipeline;
 pub mod reverse;
 pub mod schedule;

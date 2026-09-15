@@ -63,7 +63,7 @@ impl From<ImportError> for PipelineError {
 macro_rules! setup {
     ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
         let mut src =
-            cyclorithm_parser::parse($text).map_err(|e| PipelineError::Syntax(e.to_string()))?;
+            crate::parser::parse($text).map_err(|e| PipelineError::Syntax(e.to_string()))?;
         crate::reverse::materialize_reverse(&mut src.schedule).map_err(PipelineError::Core)?;
         let $ast = &src.schedule;
         if let Some(raw) = &$ast.timezone {

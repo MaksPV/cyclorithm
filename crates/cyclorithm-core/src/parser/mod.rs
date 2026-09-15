@@ -6,7 +6,7 @@ use pest_derive::Parser;
 
 /// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
 #[derive(Parser)]
-#[grammar = "grammar.pest"]
+#[grammar = "parser/grammar.pest"]
 pub struct CycloParser;
 
 /// Ошибка — синтаксическая, без слага
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn parse_route_matches_fixture() {
-        let src = include_str!("../../../examples/valid/route.cyclo");
+        let src = include_str!("../../../../examples/valid/route.cyclo");
         let got = parse(src).expect("route.cyclo обязан разбираться");
         assert_eq!(got.schedule, route_ast());
     }
@@ -1904,7 +1904,7 @@ mod tests {
     #[test]
     fn parse_rejects_missing_root_cycle() {
         // bad_syntax.cyclo: нет root_cycle → ошибка парсера без слага.
-        let src = include_str!("../../../examples/invalid/bad_syntax.cyclo");
+        let src = include_str!("../../../../examples/invalid/bad_syntax.cyclo");
         assert!(parse(src).is_err());
     }
 
@@ -1922,26 +1922,26 @@ mod tests {
         // Граница парсер/ядро: негативные файлы синтаксически корректны,
         // их ошибки — валидация (слаги главы ошибок), а не синтаксис.
         for src in [
-            include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
-            include_str!("../../../examples/invalid/bad_action-not-allowed.cyclo"),
-            include_str!("../../../examples/invalid/bad_unknown-cycle.cyclo"),
-            include_str!("../../../examples/invalid/bad_duplicate.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-duration.cyclo"),
-            include_str!("../../../examples/invalid/bad_recursive.cyclo"),
-            include_str!("../../../examples/invalid/bad_cycle-overruns.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-datetime.cyclo"),
-            include_str!("../../../examples/invalid/bad_wrong-kind.cyclo"),
-            include_str!("../../../examples/invalid/bad_offset-out-of-bounds.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-repeat-count.cyclo"),
-            include_str!("../../../examples/invalid/bad_fill-zero-duration.cyclo"),
-            include_str!("../../../examples/invalid/bad_repeat-point-action.cyclo"),
-            include_str!("../../../examples/invalid/bad_cycle-overruns-chain.cyclo"),
-            include_str!("../../../examples/invalid/bad_until-out-of-bounds.cyclo"),
-            include_str!("../../../examples/invalid/bad_unknown-name.cyclo"),
-            include_str!("../../../examples/invalid/bad_type-mismatch.cyclo"),
-            include_str!("../../../examples/invalid/bad_division-by-zero.cyclo"),
-            include_str!("../../../examples/invalid/bad_duplicate-attribute.cyclo"),
-            include_str!("../../../examples/invalid/bad_reserved-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-point.cyclo"),
+            include_str!("../../../../examples/invalid/bad_action-not-allowed.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-cycle.cyclo"),
+            include_str!("../../../../examples/invalid/bad_duplicate.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-duration.cyclo"),
+            include_str!("../../../../examples/invalid/bad_recursive.cyclo"),
+            include_str!("../../../../examples/invalid/bad_cycle-overruns.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-datetime.cyclo"),
+            include_str!("../../../../examples/invalid/bad_wrong-kind.cyclo"),
+            include_str!("../../../../examples/invalid/bad_offset-out-of-bounds.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-repeat-count.cyclo"),
+            include_str!("../../../../examples/invalid/bad_fill-zero-duration.cyclo"),
+            include_str!("../../../../examples/invalid/bad_repeat-point-action.cyclo"),
+            include_str!("../../../../examples/invalid/bad_cycle-overruns-chain.cyclo"),
+            include_str!("../../../../examples/invalid/bad_until-out-of-bounds.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_type-mismatch.cyclo"),
+            include_str!("../../../../examples/invalid/bad_division-by-zero.cyclo"),
+            include_str!("../../../../examples/invalid/bad_duplicate-attribute.cyclo"),
+            include_str!("../../../../examples/invalid/bad_reserved-name.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
@@ -2732,7 +2732,7 @@ mod tests {
 
     #[test]
     fn parses_system_prelude() {
-        let src = include_str!("../../cyclorithm-core/src/std.cyclo");
+        let src = include_str!("../std.cyclo");
         let decls = parse_decls(src).expect("прелюдия обязана разбираться");
         assert!(decls.len() >= 20, "в прелюдии десятки объявлений");
         assert!(decls.iter().any(|d| matches!(

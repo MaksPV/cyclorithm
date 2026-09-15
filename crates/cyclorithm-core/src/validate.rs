@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cyclorithm_parser::{
+use crate::parser::{
     Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
 };
 
@@ -27,9 +27,9 @@ use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_pe
 #[derive(Debug)]
 pub struct NameTables<'a> {
     /// Точка → её объявление (список `actions`).
-    pub points: HashMap<&'a str, &'a cyclorithm_parser::Point>,
+    pub points: HashMap<&'a str, &'a crate::parser::Point>,
     /// Цикл → его объявление.
-    pub cycles: HashMap<&'a str, &'a cyclorithm_parser::Cycle>,
+    pub cycles: HashMap<&'a str, &'a crate::parser::Cycle>,
     /// Рутина → её объявление.
     pub routines: HashMap<&'a str, &'a Routine>,
     /// Реестр таблиц (`time_const`) из объявлений.
@@ -879,7 +879,7 @@ fn cycle_or_table_ms(name: &str, args: &[Expr], tables: &NameTables<'_>) -> Resu
 }
 
 /// Объявление вызываемого цикла (имена уже проверены).
-fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a cyclorithm_parser::Cycle {
+fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a crate::parser::Cycle {
     tables.cycles.get(name).expect("имена уже проверены")
 }
 
@@ -909,8 +909,8 @@ fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
 mod tests {
     use super::*;
 
-    fn parsed(src: &str) -> cyclorithm_parser::Schedule {
-        cyclorithm_parser::parse(src)
+    fn parsed(src: &str) -> crate::parser::Schedule {
+        crate::parser::parse(src)
             .expect("фикстура обязана разбираться")
             .schedule
     }
@@ -1064,17 +1064,17 @@ mod tests {
 
     /// Разобранная фикстура + таблицы имён. `Box::leak` — тестовый приём,
     /// чтобы таблицы жили `'static` рядом со своим AST.
-    fn tables(src: &str) -> (&'static cyclorithm_parser::Schedule, NameTables<'static>) {
-        let ast: &'static cyclorithm_parser::Schedule = Box::leak(Box::new(parsed(src)));
+    fn tables(src: &str) -> (&'static crate::parser::Schedule, NameTables<'static>) {
+        let ast: &'static crate::parser::Schedule = Box::leak(Box::new(parsed(src)));
         let reg: &'static TableReg = Box::leak(Box::new(TableReg::default()));
         let t = validate_names(ast, reg).expect("имена обязаны проходить");
         (ast, t)
     }
 
     /// Полный разбор программы с объявлениями: таблицы — через `resolve_units`.
-    fn full(src: &str) -> (&'static cyclorithm_parser::Schedule, NameTables<'static>) {
-        let file: &'static cyclorithm_parser::SourceFile = Box::leak(Box::new(
-            cyclorithm_parser::parse(src).expect("фикстура обязана разбираться"),
+    fn full(src: &str) -> (&'static crate::parser::Schedule, NameTables<'static>) {
+        let file: &'static crate::parser::SourceFile = Box::leak(Box::new(
+            crate::parser::parse(src).expect("фикстура обязана разбираться"),
         ));
         let (_, reg) = crate::cond::resolve_units(std::slice::from_ref(&file.decls))
             .expect("объявления обязаны проверяться");
@@ -1085,7 +1085,7 @@ mod tests {
 
     /// Первая ошибка программы с объявлениями (объявления или имена).
     fn full_err(src: &str) -> Error {
-        let file = cyclorithm_parser::parse(src).expect("фикстура обязана разбираться");
+        let file = crate::parser::parse(src).expect("фикстура обязана разбираться");
         match crate::cond::resolve_units(std::slice::from_ref(&file.decls)) {
             Ok((_, reg)) => validate_names(&file.schedule, &reg).expect_err("ожидалась ошибка"),
             Err(e) => e,
