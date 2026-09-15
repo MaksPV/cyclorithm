@@ -540,7 +540,7 @@ fn validation_errors_go_to_stderr() {
         (
             "bad_invalid-timezone",
             "invalid-timezone",
-            "invalid timezone 'MSKX'",
+            "invalid timezone 'MSK'",
         ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
@@ -736,7 +736,7 @@ fn tz_file_matches_expected_json() {
     let expected = include_str!("../../../examples/valid/tz_file.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
-    // naive-окно с файлом MSK → fallback к зоне файла (+03:00)
+    // naive-окно с файлом +03:00 → fallback к зоне файла
     assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00+03:00");
 }
 

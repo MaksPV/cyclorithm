@@ -93,7 +93,7 @@
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
 | `invalid-datetime` | `invalid datetime '...'` | В файле — строгая форма `YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]` |
-| `invalid-timezone` | `invalid timezone '...'` | `timezone` — только `Z`/±HH:MM` или закрытая таблица (`MSK` +03:00 и т.п.), верхний регистр |
+| `invalid-timezone` | `invalid timezone '...'` | `timezone` — только `Z`/±HH:MM`; имена (`MSK`, `Europe/...`) не поддерживаются, IANA с DST — в [todo](../todo.md) |
 
 Негативные примеры: `examples/invalid/bad_*.cyclo` — не менее одного файла
 на ситуацию. Правило проекта: новая ситуация требует пример, строку

@@ -244,25 +244,9 @@ pub fn parse_file_datetime(raw: &str, file_zone: Option<i16>) -> Result<i64, Err
     }
 }
 
-/// Разбор значения `timezone` расписания: `Z`/±HH:MM` или аббревиатура
-/// закрытой таблицы без DST (только верхний регистр). `None` — поле отсутствует.
+/// Разбор значения `timezone` расписания: только `Z` или числовой `±HH:MM`.
+/// Имена (`MSK`, `Europe/...`) — `invalid-timezone` (см. docs/reference/syntax.md).
 pub fn parse_timezone(raw: &str) -> Result<i16, Error> {
-    match raw {
-        "Z" | "UTC" | "GMT" => return Ok(0),
-        "KALT" => return Ok(120),
-        "MSK" => return Ok(180),
-        "SAMT" => return Ok(240),
-        "YEKT" => return Ok(300),
-        "OMST" => return Ok(360),
-        "KRAT" => return Ok(420),
-        "IRKT" => return Ok(480),
-        "YAKT" => return Ok(540),
-        "VLAT" => return Ok(600),
-        "MAGT" => return Ok(660),
-        "PETT" => return Ok(720),
-        _ => {}
-    }
-    // Числовой офсет `±HH:MM` или `Z` уже обработан.
     if raw == "Z" {
         return Ok(0);
     }
@@ -534,8 +518,25 @@ mod tests {
     }
 
     #[test]
+    fn timezone_accepts_only_z_and_numeric() {
+        assert_eq!(parse_timezone("Z"), Ok(0));
+        assert_eq!(parse_timezone("+03:00"), Ok(180));
+        assert_eq!(parse_timezone("-05:00"), Ok(-300));
+        // Имена зон — invalid-timezone (аббревиатур нет, IANA — в todo).
+        for raw in ["MSK", "UTC", "msk", "EST", "Europe/Moscow", "+03", "+24:00"] {
+            let err = parse_timezone(raw).expect_err("ожидалась invalid-timezone");
+            assert_eq!(err.code, "invalid-timezone", "для {raw:?}");
+            assert_eq!(
+                err.message,
+                format!("invalid timezone '{raw}'"),
+                "для {raw:?}"
+            );
+        }
+    }
+
+    #[test]
     fn zoned_offsets_roundtrip() {
-        // Наивное и aware одного инстанта: 09:00 MSK == 06:00Z.
+        // Наивное и aware одного инстанта: 09:00+03:00 == 06:00Z.
         let naive = ok("2026-09-07T06:00:00");
         let (ms_msk, off_msk) = parse_datetime_zoned("2026-09-07T09:00:00+03:00").unwrap();
         let (ms_z, off_z) = parse_datetime_zoned("2026-09-07T06:00:00Z").unwrap();

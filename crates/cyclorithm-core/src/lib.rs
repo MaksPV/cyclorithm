@@ -315,8 +315,8 @@ impl Error {
         Self::coded("unknown-slot", format!("unknown slot '{label}'"))
     }
 
-    /// `invalid-timezone`: `invalid timezone 'MSKX'` (неизвестная аббревиатура
-    /// или битый офсет — только `Z`/±HH:MM` и закрытая таблица без DST).
+    /// `invalid-timezone`: `invalid timezone 'MSK'` (только `Z`/±HH:MM`;
+    /// имена зон, включая аббревиатуры и IANA, не поддерживаются).
     pub fn invalid_timezone(raw: &str) -> Self {
         Self::coded("invalid-timezone", format!("invalid timezone '{raw}'"))
     }
