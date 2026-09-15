@@ -50,4 +50,31 @@ std::string json =
   Отсутствие файла — `std::runtime_error`.
 - Возврат `run` — строка JSON-объекта `cyclo run` (см. главу вывода).
 
+## Разбор JSON
+
+Свой парсер библиотека не везёт: окно — обычная JSON-строка, разбирайте
+чем удобно (ниже — системный `nlohmann/json`, проверено сборкой):
+
+```cpp
+#include <iostream>
+#include <nlohmann/json.hpp>
+#include "cyclorithm.hpp"
+
+int main() {
+  cyclo::Schedule sched("route.cyclo");
+  sched.check();
+  const nlohmann::json w =
+      nlohmann::json::parse(sched.run("2026-09-07", "+1d"));
+  for (const auto& e : w["events"]) {
+    std::cout << e["time"].get<std::string>() << " "
+              << e["point"].get<std::string>() << "."
+              << e["action"].get<std::string>() << "\n";
+  }
+}
+```
+
+```sh
+g++ -std=c++17 -I <путь к include> prog.cpp -L <путь к lib> -lcyclorithm -o prog
+```
+
 Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.
