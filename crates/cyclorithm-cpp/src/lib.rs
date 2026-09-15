@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::path::Path;
 
 use cyclorithm_core::datetime::parse_cli_datetime;
-use cyclorithm_core::pipeline::{PipelineError, check_source, event_to_json, expand_window};
+use cyclorithm_core::pipeline::{check_source, event_to_json, expand_window, PipelineError};
 
 /// Результат вызова (см. `cyclorithm.h`): успех — `json != NULL`;
 /// ошибка — `json == NULL`, `code`/`message` заполнены.
@@ -22,7 +22,9 @@ pub struct CycloResult {
 
 /// Указатель-владелец Rust-строки для C (освобождение — `cyclo_result_free`).
 fn into_c(text: &str) -> *mut c_char {
-    CString::new(text).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+    CString::new(text)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
 }
 
 fn ok_json(value: serde_json::Value) -> CycloResult {
@@ -68,7 +70,11 @@ fn now_ms() -> i64 {
 }
 
 /// Валидация текста программы (`base` — директория для `use`).
-/// Указатели обязаны быть не-NULL валидными C-строками (см. заголовок).
+///
+/// # Safety
+///
+/// Указатели обязаны быть не-NULL и указывать на валидные NUL-терминированные
+/// UTF-8 C-строки, живые весь вызов.
 #[no_mangle]
 pub unsafe extern "C" fn cyclo_check(text: *const c_char, base: *const c_char) -> CycloResult {
     let (text, base) = match c_str(text).zip(c_str(base)) {
@@ -82,7 +88,11 @@ pub unsafe extern "C" fn cyclo_check(text: *const c_char, base: *const c_char) -
 }
 
 /// Окно событий: JSON-строка объекта CLI (`schedule/start/end/events`).
-/// Даты — короткие формы CLI; указатели — как в `cyclo_check`.
+/// Даты — короткие формы CLI.
+///
+/// # Safety
+///
+/// Как в `cyclo_check`: все четыре указателя — живые NUL-терминированные строки.
 #[no_mangle]
 pub unsafe extern "C" fn cyclo_run(
     text: *const c_char,
@@ -90,11 +100,14 @@ pub unsafe extern "C" fn cyclo_run(
     start: *const c_char,
     end: *const c_char,
 ) -> CycloResult {
-    let (text, base, start_raw, end_raw) =
-        match c_str(text).zip(c_str(base)).zip(c_str(start)).zip(c_str(end)) {
-            Some((((t, b), s), e)) => (t, Path::new(b), s, e),
-            None => return err("syntax", "null or non-utf8 input"),
-        };
+    let (text, base, start_raw, end_raw) = match c_str(text)
+        .zip(c_str(base))
+        .zip(c_str(start))
+        .zip(c_str(end))
+    {
+        Some((((t, b), s), e)) => (t, Path::new(b), s, e),
+        None => return err("syntax", "null or non-utf8 input"),
+    };
     let start_ms = match parse_cli_datetime(start_raw, now_ms()) {
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
@@ -115,6 +128,11 @@ pub unsafe extern "C" fn cyclo_run(
 }
 
 /// Освобождение всех не-NULL полей результата (и только их).
+///
+/// # Safety
+///
+/// Каждое не-NULL поле обязано быть указателем, выданным `into_c`
+/// (владеющий `CString`), и освобождаться ровно один раз здесь.
 #[no_mangle]
 pub unsafe extern "C" fn cyclo_result_free(r: CycloResult) {
     for ptr in [r.json, r.code, r.message] {
