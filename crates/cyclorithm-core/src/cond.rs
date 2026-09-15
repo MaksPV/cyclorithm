@@ -1608,8 +1608,8 @@ fn eval_def_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validate::validate_names;
     use crate::parser as p;
+    use crate::validate::validate_names;
 
     fn cond_of(row: &str) -> Cond {
         let src = format!(

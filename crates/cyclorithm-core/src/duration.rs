@@ -251,8 +251,8 @@ mod tests {
 
     #[test]
     fn rejects_negative_out_of_bounds() {
-        use DurationUnit::*;
         use crate::parser::Stmt;
+        use DurationUnit::*;
         // -2h при родителе 1h20m: эффективное -40m — offset-out-of-bounds, слаг и сообщение по главе ошибок.
         let st = Stmt {
             offset: dur("2h", &[("2", Hour)]),
@@ -271,8 +271,8 @@ mod tests {
 
     #[test]
     fn rejects_zero_root_period() {
-        use DurationUnit::*;
         use crate::parser::{RootCycle, Stmt};
+        use DurationUnit::*;
         let root = |raw: &str, items: &[(&str, DurationUnit)]| RootCycle {
             start_time: "2026-01-01T00:00:00".to_owned(),
             duration: dur(raw, items),

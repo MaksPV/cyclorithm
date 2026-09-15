@@ -10,16 +10,14 @@
 //! (`invalid-datetime`) → развёртка.
 //! Тексты ошибок совпадают со stderr CLI дословно.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-
 use crate::Error;
-use crate::cond::{Defs, Value, check_conditions, resolve_units};
-use crate::datetime::{format_datetime_tz, parse_datetime_zoned, parse_timezone};
+use crate::cond::{Defs, Value};
+use crate::datetime::{format_datetime_tz, parse_datetime_zoned};
+use crate::engine::{EngineError, with_validated_mem};
 use crate::expand::{Event, expand, next_events};
-use crate::imports::{ImportError, collect_units};
-use crate::validate::{NameTables, check_bounds, check_recursion, check_tables, validate_names};
+use crate::imports::ImportError;
 use crate::parser::Schedule;
+use crate::validate::NameTables;
 
 /// Диагностика для редактора: что сломалось и где (если позиция известна).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,46 +82,26 @@ impl Diag {
     }
 }
 
+fn engine_to_diag(e: EngineError) -> Diag {
+    match e {
+        EngineError::Syntax(text, line_col) => {
+            let (l, c) = line_col.unzip();
+            Diag::parse(text, l, c)
+        }
+        EngineError::Core(err) => Diag::valid(err),
+        EngineError::Import(imp) => Diag::import(imp),
+    }
+}
+
 /// Общий setup фаз главы ошибок для фасадов: разбор → импорты → объявления → решётка.
 /// Даты окон и развёртка — в замыкании вызывателя (заимствования живут
 /// внутри: вернуть их наружу нельзя, поэтому общий код — через замыкание).
 fn with_setup<R>(
     src: &str,
     libs: &[(&str, &str)],
-    f: impl FnOnce(&Schedule, &NameTables<'_>, &Defs) -> Result<R, Diag>,
+    f: impl FnOnce(&Schedule, &NameTables<'_>, &Defs, Option<i16>) -> Result<R, Error>,
 ) -> Result<R, Diag> {
-    let mut file = match crate::parser::parse(src) {
-        Ok(f) => f,
-        Err(e) => {
-            let (line, col) = crate::parser::error_position(&e);
-            return Err(Diag::parse(e.to_string(), Some(line), Some(col)));
-        }
-    };
-    crate::reverse::materialize_reverse(&mut file.schedule).map_err(Diag::valid)?;
-    let ast = &file.schedule;
-    if let Some(raw) = &ast.timezone {
-        parse_timezone(raw).map_err(Diag::valid)?;
-    }
-    let mem: HashMap<PathBuf, &str> = libs
-        .iter()
-        .map(|(name, text)| (PathBuf::from(name), *text))
-        .collect();
-    let mut groups = collect_units(&file.uses, Path::new(""), &mut |p| {
-        mem.get(p)
-            .copied()
-            .map(str::to_owned)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "нет в памяти"))
-    })
-    .map_err(Diag::import)?;
-    groups.push(file.decls.clone());
-    let (defs, reg) = resolve_units(&groups).map_err(Diag::valid)?;
-    let tables = validate_names(ast, &reg)
-        .and_then(|t| check_recursion(ast, &t).map(|()| t))
-        .and_then(|t| check_tables(ast, &t).map(|()| t))
-        .and_then(|t| check_bounds(ast, &t).map(|()| t))
-        .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
-        .map_err(Diag::valid)?;
-    f(ast, &tables, &defs)
+    with_validated_mem(src, libs, f).map_err(engine_to_diag)
 }
 
 /// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
@@ -135,14 +113,10 @@ fn pipeline(
     end_raw: &str,
     libs: &[(&str, &str)],
 ) -> Result<(String, Vec<Event>, Option<i16>), Diag> {
-    with_setup(src, libs, |ast, tables, defs| {
-        let file_zone = match &ast.timezone {
-            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
-            None => None,
-        };
-        let (start_ms, win_zone) = parse_datetime_zoned(start_raw).map_err(Diag::valid)?;
-        let (end_ms, _) = parse_datetime_zoned(end_raw).map_err(Diag::valid)?;
-        let events = expand(ast, tables, defs, start_ms, end_ms).map_err(Diag::valid)?;
+    with_setup(src, libs, |ast, tables, defs, file_zone| {
+        let (start_ms, win_zone) = parse_datetime_zoned(start_raw)?;
+        let (end_ms, _) = parse_datetime_zoned(end_raw)?;
+        let events = expand(ast, tables, defs, start_ms, end_ms)?;
         let effective = win_zone.or(file_zone);
         Ok((ast.name.clone(), events, effective))
     })
@@ -204,12 +178,8 @@ pub fn next_steps_zoned(
     n: usize,
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
-    let (name, events, effective) = with_setup(src, libs, |ast, tables, defs| {
-        let file_zone = match &ast.timezone {
-            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
-            None => None,
-        };
-        let events = next_events(ast, tables, defs, from_ms, within_ms, n).map_err(Diag::valid)?;
+    let (name, events, effective) = with_setup(src, libs, |ast, tables, defs, file_zone| {
+        let events = next_events(ast, tables, defs, from_ms, within_ms, n)?;
         let effective = from_zone.or(file_zone);
         Ok((ast.name.clone(), events, effective))
     })?;

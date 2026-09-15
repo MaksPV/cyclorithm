@@ -8,11 +8,11 @@ use std::fmt;
 use std::path::Path;
 
 use crate::Error;
-use crate::cond::{Value, check_conditions, resolve_units};
-use crate::datetime::{format_datetime_tz, parse_timezone};
+use crate::cond::Value;
+use crate::datetime::format_datetime_tz;
+use crate::engine::{EngineError, with_validated_fs};
 use crate::expand::{Event, expand, next_events};
-use crate::imports::{ImportError, collect_units};
-use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
+use crate::imports::ImportError;
 
 /// Провал конвейера: ошибка ядра (со слагом главы ошибок)
 /// или ошибка парсера (текст pest / импортированного файла как есть, без слага).
@@ -57,35 +57,18 @@ impl From<ImportError> for PipelineError {
     }
 }
 
-/// Общий проход parse → reverse → импорты → объявления → решётка главы ошибок.
-/// Продолжение `$then` выполняется в той же области видимости (таблицы
-/// заимствуют локальные данные — вернуть их наружу нельзя).
-macro_rules! setup {
-    ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
-        let mut src =
-            crate::parser::parse($text).map_err(|e| PipelineError::Syntax(e.to_string()))?;
-        crate::reverse::materialize_reverse(&mut src.schedule).map_err(PipelineError::Core)?;
-        let $ast = &src.schedule;
-        if let Some(raw) = &$ast.timezone {
-            parse_timezone(raw).map_err(PipelineError::Core)?;
-        }
-        let mut groups = collect_units(&src.uses, $base, &mut |p| std::fs::read_to_string(p))
-            .map_err(PipelineError::from)?;
-        groups.push(src.decls.clone());
-        let ($defs, reg) = resolve_units(&groups).map_err(PipelineError::Core)?;
-        let $tables = validate_names($ast, &reg)
-            .and_then(|t| check_recursion($ast, &t).map(|()| t))
-            .and_then(|t| check_tables($ast, &t).map(|()| t))
-            .and_then(|t| check_bounds($ast, &t).map(|()| t))
-            .and_then(|t| check_conditions($ast, &$defs, &t).map(|()| t))
-            .map_err(PipelineError::Core)?;
-        $then
-    }};
+fn engine_to_pipeline(e: EngineError) -> PipelineError {
+    match e {
+        EngineError::Syntax(text, _) => PipelineError::Syntax(text),
+        EngineError::Core(err) => PipelineError::Core(err),
+        EngineError::Import(imp) => imp.into(),
+    }
 }
 
 /// Валидация программы (`base` — директория для `use`).
 pub fn check_source(text: &str, base: &Path) -> Result<(), PipelineError> {
-    setup!(text, base, _ast, _tables, _defs, { Ok(()) })
+    with_validated_fs(text, base, |_ast, _tables, _defs, _file_zone| Ok(()))
+        .map_err(engine_to_pipeline)
 }
 
 /// Окно развёртки: имя расписания (для конверта CLI) и события.
@@ -105,18 +88,16 @@ pub fn expand_window(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Window, PipelineError> {
-    setup!(text, base, ast, tables, defs, {
-        let events = expand(ast, &tables, &defs, start_ms, end_ms).map_err(PipelineError::Core)?;
-        let file_zone = match &ast.timezone {
-            Some(raw) => Some(parse_timezone(raw).map_err(PipelineError::Core)?),
-            None => None,
-        };
-        Ok(Window {
-            schedule: ast.name.clone(),
-            events,
-            file_zone,
-        })
+    with_validated_fs(text, base, |ast, tables, defs, file_zone| {
+        let events = expand(ast, tables, defs, start_ms, end_ms)?;
+        Ok((ast.name.clone(), events, file_zone))
     })
+    .map(|(schedule, events, file_zone)| Window {
+        schedule,
+        events,
+        file_zone,
+    })
+    .map_err(engine_to_pipeline)
 }
 
 /// Первые `n` событий от `from_ms` в пределах `within_ms`.
@@ -127,19 +108,16 @@ pub fn next_window(
     within_ms: i64,
     n: usize,
 ) -> Result<Window, PipelineError> {
-    setup!(text, base, ast, tables, defs, {
-        let events =
-            next_events(ast, &tables, &defs, from_ms, within_ms, n).map_err(PipelineError::Core)?;
-        let file_zone = match &ast.timezone {
-            Some(raw) => Some(parse_timezone(raw).map_err(PipelineError::Core)?),
-            None => None,
-        };
-        Ok(Window {
-            schedule: ast.name.clone(),
-            events,
-            file_zone,
-        })
+    with_validated_fs(text, base, |ast, tables, defs, file_zone| {
+        let events = next_events(ast, tables, defs, from_ms, within_ms, n)?;
+        Ok((ast.name.clone(), events, file_zone))
     })
+    .map(|(schedule, events, file_zone)| Window {
+        schedule,
+        events,
+        file_zone,
+    })
+    .map_err(engine_to_pipeline)
 }
 
 /// Событие в JSON-объект (ключи — как в `docs/reference/output.md`;

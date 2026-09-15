@@ -3,15 +3,16 @@
 
 use std::fmt;
 
+pub mod api;
 pub mod cond;
 pub mod datetime;
 pub mod duration;
+pub mod engine;
 pub mod expand;
 pub mod imports;
 pub mod parser;
 pub mod pipeline;
 pub mod reverse;
-pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
