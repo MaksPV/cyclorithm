@@ -116,7 +116,7 @@ fn pipeline(
     with_setup(src, libs, |ast, tables, defs, file_zone| {
         let (start_ms, win_zone) = parse_datetime_zoned(start_raw)?;
         let (end_ms, _) = parse_datetime_zoned(end_raw)?;
-        let events = expand(ast, tables, defs, start_ms, end_ms)?;
+        let events = expand(ast, tables, defs, start_ms, end_ms, win_zone)?;
         let effective = win_zone.or(file_zone);
         Ok((ast.name.clone(), events, effective))
     })
@@ -179,7 +179,7 @@ pub fn next_steps_zoned(
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
     let (name, events, effective) = with_setup(src, libs, |ast, tables, defs, file_zone| {
-        let events = next_events(ast, tables, defs, from_ms, within_ms, n)?;
+        let events = next_events(ast, tables, defs, from_ms, within_ms, n, from_zone)?;
         let effective = from_zone.or(file_zone);
         Ok((ast.name.clone(), events, effective))
     })?;

@@ -289,7 +289,7 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
             return 1;
         }
     };
-    let window = match expand_window(&text, &base, start_ms, end_ms) {
+    let window = match expand_window(&text, &base, start_ms, end_ms, zone) {
         Ok(window) => window,
         Err(e) => {
             print_error(&e);
@@ -358,7 +358,7 @@ fn cmd_next(
             }
         },
     };
-    let window = match next_window(&text, &base, from_ms, within_ms, n) {
+    let window = match next_window(&text, &base, from_ms, within_ms, n, from_zone) {
         Ok(window) => window,
         Err(e) => {
             print_error(&e);

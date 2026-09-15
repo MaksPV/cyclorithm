@@ -20,24 +20,29 @@ def test_naive_datetime_matches_string():
     )
 
 
-def test_aware_datetime_converts_to_utc():
+def test_aware_window_inherits_naive_walls():
+    # Наивный файл + aware-окно: стены стоят (06:00 остаётся 06:00 в зоне
+    # окна), инстанты = стена − зона окна (см. docs/reference/semantics.md).
+    tz = REPO / "examples" / "valid" / "tz_offsets.cyclo"
     msk = timezone(timedelta(hours=3))
-    aware = c.run_file(VALID, datetime(2026, 9, 7, 9, 0, tzinfo=msk), END)
-    naive = c.run_file(VALID, "2026-09-07T06:00:00", END)
-    # Один инстант, но окно aware форматируется в своей зоне (+03:00).
-    assert aware["events"][0]["time"].endswith("+03:00")
-    assert naive["events"][0]["time"] == "2026-09-07T06:00:00"
-    # Инстанты совпадают: 09:00+03:00 == 06:00Z.
-    from datetime import timezone as _tz
-
-    def to_utc(s):
-        # s вида YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]; наивное — трактуем как UTC.
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=_tz.utc)
-        return dt.astimezone(_tz.utc)
-
-    assert to_utc(aware["events"][0]["time"]) == to_utc(naive["events"][0]["time"])
+    aware = c.run_file(
+        tz,
+        datetime(2026, 1, 9, 0, 0, tzinfo=msk),
+        datetime(2026, 1, 10, 0, 0, tzinfo=msk),
+    )
+    naive = c.run_file(tz, "2026-01-09T00:00:00", "2026-01-10T00:00:00")
+    assert [e["time"] for e in aware["events"]] == [
+        "2026-01-09T06:00:00+03:00",
+        "2026-01-09T07:00:00+03:00",
+        "2026-01-09T18:00:00+03:00",
+        "2026-01-09T19:00:00+03:00",
+    ]
+    assert [e["time"] for e in naive["events"]] == [
+        "2026-01-09T06:00:00",
+        "2026-01-09T07:00:00",
+        "2026-01-09T18:00:00",
+        "2026-01-09T19:00:00",
+    ]
 
 
 def test_date_means_midnight():

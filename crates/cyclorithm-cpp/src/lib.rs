@@ -116,7 +116,7 @@ pub unsafe extern "C" fn cyclo_run(
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };
-    match expand_window(text, base, start_ms, end_ms) {
+    match expand_window(text, base, start_ms, end_ms, zone) {
         Ok(window) => {
             let effective = zone.or(window.file_zone);
             ok_json(serde_json::json!({

@@ -709,7 +709,8 @@ fn tz_offsets_matches_expected_json() {
     let expected = include_str!("../../../examples/valid/tz_offsets.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
-    // aware-окно — те же инстанты, но с суффиксом зоны окна
+    // aware-окно на наивном файле — наследование кадра: стены стоят
+    // (06:00 остаётся 06:00 в зоне окна), см. docs/reference/semantics.md
     let out_z = run(&[
         "run",
         "../../examples/valid/tz_offsets.cyclo",
@@ -719,7 +720,7 @@ fn tz_offsets_matches_expected_json() {
         "2026-01-10T00:00:00+03:00",
     ]);
     let got_z = stdout_json(&out_z);
-    assert_eq!(got_z["events"][0]["time"], "2026-01-09T09:00:00+03:00");
+    assert_eq!(got_z["events"][0]["time"], "2026-01-09T06:00:00+03:00");
 }
 
 #[test]

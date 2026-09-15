@@ -44,7 +44,7 @@ fn run_inner(
     let (start_ms, zone) =
         parse_cli_datetime_zoned(start_raw, now_ms()).map_err(PipelineError::Core)?;
     let (end_ms, _) = parse_cli_datetime_zoned(end_raw, start_ms).map_err(PipelineError::Core)?;
-    let window = expand_window(text, base, start_ms, end_ms)?;
+    let window = expand_window(text, base, start_ms, end_ms, zone)?;
     let effective = zone.or(window.file_zone);
     let out = serde_json::json!({
         "schedule": window.schedule,
