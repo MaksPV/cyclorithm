@@ -82,14 +82,17 @@ pub struct Window {
 }
 
 /// Окно событий в миллисекундах epoch (наивных, как внутри движка).
+/// `query_zone` — зона окна (`start`/`from`): кадр наивных дат файла,
+/// когда в файле нет `timezone` (см. docs/reference/semantics.md).
 pub fn expand_window(
     text: &str,
     base: &Path,
     start_ms: i64,
     end_ms: i64,
+    query_zone: Option<i16>,
 ) -> Result<Window, PipelineError> {
     with_validated_fs(text, base, |ast, tables, defs, file_zone| {
-        let events = expand(ast, tables, defs, start_ms, end_ms)?;
+        let events = expand(ast, tables, defs, start_ms, end_ms, query_zone)?;
         Ok((ast.name.clone(), events, file_zone))
     })
     .map(|(schedule, events, file_zone)| Window {
@@ -101,15 +104,18 @@ pub fn expand_window(
 }
 
 /// Первые `n` событий от `from_ms` в пределах `within_ms`.
+/// `query_zone` — зона окна (`from`): кадр наивных дат файла,
+/// когда в файле нет `timezone` (см. docs/reference/semantics.md).
 pub fn next_window(
     text: &str,
     base: &Path,
     from_ms: i64,
     within_ms: i64,
     n: usize,
+    query_zone: Option<i16>,
 ) -> Result<Window, PipelineError> {
     with_validated_fs(text, base, |ast, tables, defs, file_zone| {
-        let events = next_events(ast, tables, defs, from_ms, within_ms, n)?;
+        let events = next_events(ast, tables, defs, from_ms, within_ms, n, query_zone)?;
         Ok((ast.name.clone(), events, file_zone))
     })
     .map(|(schedule, events, file_zone)| Window {
