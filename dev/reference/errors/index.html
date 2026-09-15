@@ -1655,7 +1655,12 @@
 <tr>
 <td><code>invalid-datetime</code></td>
 <td><code>invalid datetime '...'</code></td>
-<td>В файле — строгая форма <code>YYYY-MM-DDTHH:MM:SS[.mmm]</code></td>
+<td>В файле — строгая форма <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code></td>
+</tr>
+<tr>
+<td><code>invalid-timezone</code></td>
+<td><code>invalid timezone '...'</code></td>
+<td><code>timezone</code> — только <code>Z</code>/±HH:MM<code>; имена (</code>MSK<code>,</code>Europe/...`) не поддерживаются, IANA с DST — в <a href="../../todo/">todo</a></td>
 </tr>
 </tbody>
 </table>

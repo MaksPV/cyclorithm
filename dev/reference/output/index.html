@@ -1298,8 +1298,11 @@
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"time"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-10T06:00:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"depart"</span><span class="p">,</span><span class="w"> </span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="s2">"DEPOT"</span><span class="p">,</span><span class="w"> </span><span class="nt">"point_attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span><span class="w"> </span><span class="nt">"action_attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}}</span>
 </code></pre></div>
 <ul>
-<li><code>time</code> — наивная строка ISO8601 <code>YYYY-MM-DDTHH:MM:SS</code>; при наличии
-  миллисекунд — с суффиксом <code>.mmm</code>.</li>
+<li><code>time</code> — строка ISO8601 <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>; зона
+  — офсет <code>start</code> окна (<code>Z</code>/±HH:MM<code>— с суффиксом); при наивном</code>start<code>—
+  зона</code>timezone<code>файла, иначе — без. При</code>start = "+1d"<code>(дельта, зоны нет)
+  — наивное или зона файла.</code>end` с другим офсетом влияет только на свой
+  инстант, зону не меняет.</li>
 <li><code>action</code> — имя из <code>actions</code> точки. <code>point</code> — имя точки (<code>IDENT</code> исходника).</li>
 <li><code>point_attrs</code> — копия атрибутов точки <code>attrs</code>; при отсутствии — пустой <code>{}</code>.</li>
 <li><code>action_attrs</code> — вычисленные атрибуты действия строки; при отсутствии — <code>{}</code>.</li>
@@ -1320,7 +1323,7 @@
 <code>VCALENDAR</code>, каждое событие — <code>VEVENT</code> без <code>DTEND</code> (события мгновенны).
 Соответствие полей: <code>UID</code> — детерминированный (хеш расписания, времени,
 действия, точки и порядкового номера); <code>DTSTAMP</code> — момент формирования;
-<code>DTSTART</code> — время события с суффиксом <code>Z</code> (наивное время трактуется как UTC);
+<code>DTSTART</code> — aware-окно: время в UTC с <code>Z</code>, naive-окно: плавающее время без <code>Z</code>;
 <code>SUMMARY</code> — <code>action @ point</code>; <code>DESCRIPTION</code> — компактный JSON <code>action_attrs</code>.
 Пример — <code>examples/valid/route.ics</code>. Комбинация с <code>--ndjson</code> запрещена
 (код возврата <code>2</code>).</p>

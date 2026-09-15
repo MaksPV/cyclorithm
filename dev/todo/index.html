@@ -1155,6 +1155,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#iana-dst" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Часовые пояса IANA и DST
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1222,6 +1233,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#iana-dst" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Часовые пояса IANA и DST
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1252,6 +1274,12 @@
 <p><code>--format ics</code> в <code>run</code>/<code>next</code>, функция <code>events_ics</code> в core, golden <code>examples/valid/route.ics</code>. Доки: <code>docs/reference/output.md</code>.</p>
 <h2 id="http-">HTTP-сервер<a class="headerlink" href="#http-" title="Permanent link">&para;</a></h2>
 <p>Крейт <code>cyclorithm-serve</code> на <code>tiny_http</code> (<code>POST /run</code>, <code>POST /next</code>, <code>GET /health</code>), Docker multi-stage. Интеграция описана в <code>docs/ecosystem/integrations.md:3-14</code>.</p>
+<h2 id="iana-dst">Часовые пояса IANA и DST<a class="headerlink" href="#iana-dst" title="Permanent link">&para;</a></h2>
+<p><strong>Статус:</strong> задумано.
+<code>timezone = "Europe/Moscow"</code> (имена IANA, база в бинаре через <code>chrono-tz</code>),
+wall-clock решётка, gap → сдвиг вперёд, fold → первое вхождение,
+DST-фикстуры на переходах. Сейчас: только фикс-офсеты <code>Z</code>/±HH:MM<code>,
+переходы DST отклоняются (</code>invalid-timezone`), сутки всегда 24 часа.</p>
 
 
 

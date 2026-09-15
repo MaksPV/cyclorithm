@@ -1351,15 +1351,19 @@
   <span class="p">...</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Порядок членов расписания строгий: точки, затем рутины, затем циклы,
-затем корневой цикл (ровно один):</p>
+<p>Порядок членов расписания строгий: опциональная <code>timezone</code>, затем точки,
+затем рутины, затем циклы, затем корневой цикл (ровно один):</p>
 <div class="highlight"><pre><span></span><code><span class="k">schedule</span> <span class="s">"Автобусный парк"</span> <span class="p">{</span>
-  <span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// сначала точки</span>
+  <span class="n">timezone</span> <span class="o">=</span> <span class="s">"+03:00"</span><span class="p">,</span>  <span class="c1">// или "Z" — опционально, первой строкой</span>
+  <span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем точки</span>
   <span class="k">routine</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">TC</span><span class="p">)</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем рутины</span>
   <span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем циклы</span>
   <span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// корневой — последний</span>
 <span class="p">}</span>
 </code></pre></div>
+<p><code>timezone</code> — только <code>Z</code> или числовой <code>±HH:MM</code>. Имена зон (<code>MSK</code>,
+<code>Europe/...</code>) — ошибка <code>invalid-timezone</code>: пишите числовой офсет.
+Имена IANA с переходами DST — в <a href="../../todo/">todo</a>.</p>
 <p>Комментарии <code>//</code> до конца строки лексер выбрасывает как пробелы — разрешены
 между любыми токенами. Внутри строк <code>"..."</code> двойной слеш — обычный текст.</p>
 <h2 id="_3">Имена<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>

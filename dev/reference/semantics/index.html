@@ -761,7 +761,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Решётка корневого цикла
+        Часовые пояса
       
     </span>
   </a>
@@ -770,6 +770,17 @@
       
         <li class="md-nav__item">
   <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Решётка корневого цикла
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Строки и вложенность
@@ -791,7 +802,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -802,7 +813,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -813,7 +824,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -824,7 +835,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -835,7 +846,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1255,7 +1266,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Решётка корневого цикла
+        Часовые пояса
       
     </span>
   </a>
@@ -1264,6 +1275,17 @@
       
         <li class="md-nav__item">
   <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Решётка корневого цикла
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Строки и вложенность
@@ -1285,7 +1307,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -1296,7 +1318,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -1307,7 +1329,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -1318,7 +1340,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -1329,7 +1351,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1361,9 +1383,21 @@
 
 <h1 id="_1">Семантика<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <p>Как циклы разворачиваются в события.</p>
-<h2 id="_2">Решётка корневого цикла<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Корневой цикл задаёт бесконечную решётку стартов: якорь <code>start_time</code>,
-период <code>duration</code>.</p>
+<h2 id="_2">Часовые пояса<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<div class="admonition danger">
+<p class="admonition-title">Переходы DST не поддерживаются</p>
+<p>Движок не знает летнего/зимнего времени: сутки всегда ровно 24 часа,
+офсеты постоянны. Зоны с переходами (IANA-имена вроде <code>Europe/Berlin</code>)
+отклоняются ошибкой <code>invalid-timezone</code>; правильное DST — в <a href="../../todo/">todo</a>.</p>
+</div>
+<p><code>timezone</code> расписания (опционально) — только <code>Z</code> или числовой <code>±HH:MM</code>.
+Наивные литералы файла (<code>start_time</code>, <code>mkdate</code> без суффикса)
+интерпретируются в этой зоне (<code>wall − offset</code>); aware-литералы с собственным
+суффиксом — абсолютны сами. Окно вывода форматируется в зоне <code>start</code>/<code>from</code>,
+иначе — в зоне файла, иначе — наивно. Сравнение дат — по абсолютным мс.</p>
+<h2 id="_3">Решётка корневого цикла<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>Корневой цикл задаёт бесконечную решётку стартов: якорь <code>start_time</code>
+(с учётом <code>timezone</code> файла), период <code>duration</code>.</p>
 <div class="arithmatex">\[
 T(k) = T_0 + k \cdot P, \quad k = 0, 1, 2, \dots
 \]</div>
@@ -1371,7 +1405,7 @@ T(k) = T_0 + k \cdot P, \quad k = 0, 1, 2, \dots
 в вывод идут события со временем в <code>[start, end)</code>. Окно 10.01–11.01 (суббота)
 пересекает решётку маршрута в старте <code>k = 9</code> (10.01 00:00): работают рейсы
 6:00 и 12:00 — всего 8 событий, будние ветки молчат.</p>
-<h2 id="_3">Строки и вложенность<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="_4">Строки и вложенность<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>Строка выполняется в момент «старт объемлющего цикла плюс смещение».
 Смещения накапливаются вниз по вложенности: вызов <code>CITY_ROUTE</code> на <code>6h</code>,
 внутри строка на <code>40m</code> — событие в 6:40 (<code>arrive</code>, <code>AIRPORT</code>).</p>
@@ -1398,7 +1432,7 @@ actual(C) = \max_i (o_i + d(X_i))
 </code></pre></div>
 <p>Цепочки, пересекающие границу периода корневого цикла, запрещены; для них
 выбирается больший <code>duration</code> или сдвинутый <code>start_time</code>.</p>
-<h2 id="_4">Повторы<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<h2 id="_5">Повторы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p>Про <code>repeat</code> и <code>fill</code> — в <a href="../concepts/">концептах</a>. Здесь формальные
 детали: горизонт <code>fill</code> — конец объемлющего цикла, граница включительная
 (<code>старт + duration ≤ горизонт</code>); <code>fill X()</code> эквивалентен
@@ -1413,7 +1447,7 @@ actual(C) = \max_i (o_i + d(X_i))
 видит занятость обычных строк и предыдущих filler-ов. <code>o &gt; h</code> — окно
 пустое и это ошибка. Условие на <code>fill gaps</code> проверяется на каждый
 экземпляр в его старте; влезло ноль — ноль событий, это не ошибка.</p>
-<h2 id="_5">Разворот циклов<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_6">Разворот циклов<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p><code>cycle BACK reverse FWD;</code> разворачивается в обычный цикл до всех проверок:
 смещения зеркалятся относительно длительности (<code>o' = duration − o</code>
 от эффективного смещения — минус уже разрешён), вызовы, условия, повторы,
@@ -1426,7 +1460,7 @@ actual(C) = \max_i (o_i + d(X_i))
 ошибка. Цепочки запрещены — источник обязан быть явным циклом
 (иначе <code>recursive</code>); рутина или точка как источник — <code>wrong-kind</code>,
 нет имени — <code>unknown-cycle</code>.</p>
-<h2 id="_6">Условия и момент строки<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Условия и момент строки<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>Момент строки <code>at</code> — абсолютное время строки. В телах объявлений <code>fun</code>/<code>pred</code>
 <code>at</code> означает время места вызова: предикат ниже в строке <code>[commute(at)] 18h</code>
 вычисляется для момента строки — старта плюс 18h.</p>
@@ -1439,7 +1473,7 @@ actual(C) = \max_i (o_i + d(X_i))
 по готовому моменту.</p>
 <p>Статический расчёт фактической длительности и проверка границ идут
 в предположении истинности всех условий.</p>
-<h2 id="_7">Параметры и данные<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">Параметры и данные<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>Аргументы вызова вычисляются в момент строки — и текут вниз по цепочке
 вызовов вместе с окружением. Область видимости динамическая: вызванный цикл
 видит параметры вызывающего, даже если своих у него нет.</p>
@@ -1463,7 +1497,7 @@ actual(C) = \max_i (o_i + d(X_i))
 именем. Имя константы-данных прямо в условии запрещено (<code>unknown-name</code>) — данные
 входят в условие только через параметр. Табличный параметр рутины в условиях
 и атрибутах действия невидим (<code>unknown-name</code>).</p>
-<h2 id="_8">Таблицы времени и рутины<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<h2 id="_9">Таблицы времени и рутины<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <p>Вызов <code>ИМЯ(ТАБЛИЦА, …)</code> заменяет метки тела смещениями таблицы, вызовы
 таблицы добавляются после строк тела; длительность вызова равна длительности
 таблицы. Рутина ниже на таблице <code>SHORT_DAY</code> даёт звонки в 9:00 и 10:30:</p>
