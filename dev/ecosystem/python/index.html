@@ -1311,10 +1311,12 @@ crates/cyclorithm-python/.venv/bin/pip<span class="w"> </span>install<span class
 </code></pre></div>
 <ul>
 <li>Границы окна — <code>str</code> (короткие формы CLI: <code>2026-09-07</code>, <code>+1d</code>),
-  <code>datetime</code> (aware — в UTC), <code>date</code> (полночь) или <code>timedelta</code> (дельта:
-  для <code>start</code> — от now, для <code>end</code> — от <code>start</code>, как <code>+DURATION</code> в CLI).
+  <code>datetime</code> (наивное — как есть, aware — стена + офсет <code>Z</code>/±HH:MM<code>;
+  зона</code>start<code>задаёт кадр наивных дат файла — см. [семантику](../reference/semantics.md)),</code>date<code>(полночь) или</code>timedelta<code>(дельта:
+  для</code>start<code>— от now, для</code>end<code>— от</code>start<code>, как</code>+DURATION<code>в CLI).
+  Якорь now — в системной зоне ОС (как дефолтный</code>--from<code>в CLI).
   Микросекунды усекаются до миллисекунд (точность движка); чужие типы
-  и отрицательный <code>timedelta</code> — <code>TypeError</code> до вызова ядра.</li>
+  и отрицательный</code>timedelta<code>—</code>TypeError` до вызова ядра.</li>
 <li>Возврат <code>run_*</code> — dict, побайтово равный JSON-объекту <code>cyclo run</code> (см. главу вывода).</li>
 <li>Ошибки — <code>CycloError</code> с полями <code>code</code> (слаг главы ошибок; ошибка парсера — <code>syntax</code>)
   и <code>message</code>; <code>str</code> — <code>слаг: сообщение</code>, как stderr CLI. Отсутствие файла — штатный <code>OSError</code>.</li>

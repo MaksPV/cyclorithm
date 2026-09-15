@@ -1395,11 +1395,15 @@
 <div class="highlight"><pre><span></span><code><span class="k">pred</span> <span class="nf">holiday</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">=</span> <span class="nf">datestr</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="s">"2026-11-04"</span> <span class="k">or</span> <span class="s">"2026-12-31"</span><span class="p">);</span>
 </code></pre></div>
 <h2 id="_6">Даты<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<p>Литералы дат — <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>; без суффикса — наивное
-(1:1 как написано), с <code>Z</code>/±HH:MM<code>— aware (инстант</code>wall − offset<code>). Аббревиатуры
+<p>Литералы дат — <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>; aware (<code>Z</code>/±HH:MM<code>) —
+инстант</code>wall − offset<code>всегда. Наивный литерал файла читается в кадре запроса
+(зона файла, иначе зона окна</code>start<code>/</code>from<code>, иначе 1:1 как написано —
+см. [семантику](../semantics.md)). Аббревиатуры
 типа</code>MSK<code>не поддерживаются — пишите числовой офсет</code>+03:00<code>. Сравнение дат
-идёт по абсолютным миллисекундам: наивное</code>06:00<code>≡</code>06:00Z<code>, но</code>06:00<code>≠</code>06:00+03:00`.</p>
-<p>Конструктор <code>mkdate(y, mo, d, h, mi, s, ms)</code> собирает наивное время:
+идёт по абсолютным миллисекундам: в одном кадре наивное</code>06:00<code>≡</code>06:00Z<code>,
+но</code>06:00<code>≠</code>06:00+03:00`.</p>
+<p>Конструктор <code>mkdate(y, mo, d, h, mi, s, ms)</code> собирает время всегда 1:1
+как написано (кадру не подчиняется — граница модели, см. семантику):
 месяц <code>1..12</code>, день в пределах месяца, часы <code>0..23</code>, минуты и секунды
 <code>0..59</code>, миллисекунды <code>0..999</code>. Кривые компоненты — ошибка <code>invalid-date</code>:</p>
 <div class="highlight"><pre><span></span><code>invalid date '2026-13-40T0:0:0.0'

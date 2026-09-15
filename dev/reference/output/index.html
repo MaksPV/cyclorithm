@@ -1303,12 +1303,81 @@
   зона</code>timezone<code>файла, иначе — без. При</code>start = "+1d"<code>(дельта, зоны нет)
   — наивное или зона файла.</code>end` с другим офсетом влияет только на свой
   инстант, зону не меняет.</li>
-<li><code>action</code> — имя из <code>actions</code> точки. <code>point</code> — имя точки (<code>IDENT</code> исходника).</li>
-<li><code>point_attrs</code> — копия атрибутов точки <code>attrs</code>; при отсутствии — пустой <code>{}</code>.</li>
-<li><code>action_attrs</code> — вычисленные атрибуты действия строки; при отсутствии — <code>{}</code>.</li>
-<li>Порядок событий: <code>(time, k, порядок объявления)</code>, где <code>k</code> — номер экземпляра
-  корневого цикла. Совпавшие события сохраняются, схлопывания нет.</li>
+<li>Зона <code>time</code> одной таблицей (<code>effective = win_zone.or(file_zone)</code>,
+  проверено исполнением на движке):</li>
 </ul>
+<table>
+<thead>
+<tr>
+<th>файл \ окно</th>
+<th>наивный старт</th>
+<th>старт <code>Z</code></th>
+<th>старт <code>+HH:MM</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>наивный файл</td>
+<td>наивно</td>
+<td><code>Z</code></td>
+<td><code>+HH:MM</code> окна</td>
+</tr>
+<tr>
+<td>файл <code>timezone = "Z"</code></td>
+<td><code>Z</code></td>
+<td><code>Z</code></td>
+<td><code>+HH:MM</code> окна</td>
+</tr>
+<tr>
+<td>файл <code>timezone = "+HH:MM"</code></td>
+<td><code>+HH:MM</code> файла</td>
+<td><code>Z</code></td>
+<td><code>+HH:MM</code> окна</td>
+</tr>
+</tbody>
+</table>
+<p>Суффикс — только представление (<code>effective = win_zone.or(file_zone)</code>),
+  а инстанты зависят от кадра (см. <a href="../semantics/">семантику</a>,
+  проверено исполнением на движке):</p>
+<table>
+<thead>
+<tr>
+<th>файл \ окно</th>
+<th>наивный старт</th>
+<th>старт <code>Z</code></th>
+<th>старт <code>+HH:MM</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>наивный файл</td>
+<td>наивно, стены как в файле</td>
+<td><code>Z</code>, стены как в файле</td>
+<td><code>+HH:MM</code> окна, стены как в файле</td>
+</tr>
+<tr>
+<td>файл <code>timezone = "Z"</code></td>
+<td><code>Z</code></td>
+<td><code>Z</code></td>
+<td><code>+HH:MM</code> окна</td>
+</tr>
+<tr>
+<td>файл <code>timezone = "+HH:MM"</code></td>
+<td><code>+HH:MM</code> файла</td>
+<td><code>Z</code></td>
+<td><code>+HH:MM</code> окна</td>
+</tr>
+</tbody>
+</table>
+<p>Наивный файл + aware-окно — наследование кадра: стены стоят
+  (<code>06:00</code> остаётся <code>06:00</code> в зоне окна, инстанты = стена − зона окна),
+  а не сдвиг на офсет. Наивное ≡ UTC численно только при наивном окне.
+  Aware-литералы файла абсолютны всегда.
+- <code>action</code> — имя из <code>actions</code> точки. <code>point</code> — имя точки (<code>IDENT</code> исходника).
+- <code>point_attrs</code> — копия атрибутов точки <code>attrs</code>; при отсутствии — пустой <code>{}</code>.
+- <code>action_attrs</code> — вычисленные атрибуты действия строки; при отсутствии — <code>{}</code>.
+- Порядок событий: <code>(time, k, порядок объявления)</code>, где <code>k</code> — номер экземпляра
+  корневого цикла. Совпавшие события сохраняются, схлопывания нет.</p>
 <h2 id="run">Объект команды run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"schedule"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Автобусный парк"</span><span class="p">,</span><span class="w"> </span><span class="nt">"start"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"end"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"events"</span><span class="p">:</span><span class="w"> </span><span class="p">[]}</span>
 </code></pre></div>

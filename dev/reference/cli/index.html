@@ -1151,7 +1151,7 @@
   список <code>events</code>, код возврата <code>0</code>.</li>
 <li>Команда <code>next</code> — первые <code>K</code> событий от момента <code>from</code> (включительно)
   в пределах <code>[from, from+within)</code>. Значения по умолчанию: <code>from</code> — текущий
-  момент (UTC, наивный), <code>within</code> — <code>366d</code>, <code>n</code> — <code>1</code>.</li>
+  момент в системной зоне ОС (с суффиксом зоны), <code>within</code> — <code>366d</code>, <code>n</code> — <code>1</code>.</li>
 <li>Команда <code>check</code> — только проверки без окна: при успехе печатает <code>ok</code>,
   код возврата <code>0</code>.</li>
 <li>Источник <code>-</code> вместо файла — стандартный ввод; импорты <code>use</code> разрешаются
@@ -1163,8 +1163,10 @@
   (<code>MSK</code>, <code>Europe/...</code>) не поддерживаются нигде — только числовой офсет.</li>
 <li>Зона окна — офсет <code>start</code>/<code>from</code> (aware → с суффиксом, <code>Z</code> для <code>+00:00</code>);
   при наивном окне — зона <code>timezone</code> файла, иначе — без. <code>end</code> с другим офсетом
-  — только свой инстант. Дефолтный <code>--from</code> (<code>next</code> без аргумента) — now в UTC
-  (наивное, но с <code>timezone</code> файла — в зоне файла).</li>
+  — только свой инстант. Дефолтный <code>--from</code> (<code>next</code> без аргумента) — now
+  в системной зоне ОС (берется текущий офсет числом; IANA/DST движок не знает,
+  см. <a href="../semantics/">семантику</a>). Дельта <code>+DURATION</code> в <code>--start</code> — от now
+  вместе с его зоной.</li>
 <li>Коды возврата: <code>0</code> — успех; <code>1</code> — ошибка ввода, парсинга или валидации
   (текст в stderr, stdout пуст); <code>2</code> — некорректные аргументы (usage в stderr).</li>
 <li>Нечитаемый файл — <code>cannot read 'FILE': …</code>, код возврата <code>1</code>.</li>
