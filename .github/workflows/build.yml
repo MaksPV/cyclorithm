@@ -98,10 +98,53 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
 
-  # Только на тегах v*: прикладывает 4 бинарника к GitHub Release.
+  # C++-библиотека: shared-библиотека (.so/.dll) + заголовки в архив
+  # `cyclo-cpp-<версия>-<триплет>.tar.gz`. Платформы — паритет с колёсами.
+  cpp:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            libs: "*.so"
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            libs: "*.so"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            libs: "*.dll*"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: cpp-${{ matrix.target }}
+      - name: build
+        run: cargo build --release -p cyclorithm-cpp --target ${{ matrix.target }}
+      - name: package
+        shell: bash
+        run: |
+          VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          NAME="cyclo-cpp-$VER-${{ matrix.target }}"
+          mkdir -p "dist/$NAME/include"
+          cp target/${{ matrix.target }}/release/${{ matrix.libs }} "dist/$NAME/"
+          cp crates/cyclorithm-cpp/include/cyclorithm.h crates/cyclorithm-cpp/include/cyclorithm.hpp "dist/$NAME/include/"
+          tar -czf "dist/$NAME.tar.gz" -C dist "$NAME"
+      - name: upload
+        uses: actions/upload-artifact@v5
+        with:
+          name: cpp-${{ matrix.target }}
+          path: dist/cyclo-cpp-*.tar.gz
+          if-no-files-found: error
+
+  # Только на тегах v*: прикладывает бинарники, колёса и C++-библиотеку к GitHub Release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, wheels]
+    needs: [build, wheels, cpp]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,11 +157,16 @@ jobs:
         with:
           pattern: wheels-*
           path: dist-wheels
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: cpp-*
+          path: dist-cpp
       - name: show
-        run: ls -R dist dist-wheels
+        run: ls -R dist dist-wheels dist-cpp
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/cyclo-*/*.tar.gz
             dist-wheels/wheels-*/*.whl
+            dist-cpp/cpp-*/*.tar.gz
           generate_release_notes: true

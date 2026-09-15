@@ -20,6 +20,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cyclorithm-cpp"
+version = "0.3.2"
+dependencies = [
+ "cyclorithm-core",
+ "serde_json",
+]
+
+[[package]]
 name = "cyclorithm-parser"
 version = "0.3.2"
 dependencies = [
