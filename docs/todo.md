@@ -14,3 +14,10 @@
 ## HTTP-сервер
 Крейт `cyclorithm-serve` на `tiny_http` (`POST /run`, `POST /next`, `GET /health`), Docker multi-stage. Интеграция описана в `docs/ecosystem/integrations.md:3-14`.
 
+## Часовые пояса IANA и DST
+**Статус:** задумано.
+`timezone = "Europe/Moscow"` (имена IANA, база в бинаре через `chrono-tz`),
+wall-clock решётка, gap → сдвиг вперёд, fold → первое вхождение,
+DST-фикстуры на переходах. Сейчас: только фикс-офсеты `Z`/±HH:MM`,
+переходы DST отклоняются (`invalid-timezone`), сутки всегда 24 часа.
+

@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use cyclorithm_core::datetime::parse_cli_datetime;
-use cyclorithm_core::pipeline::{check_source, event_to_json, expand_window, PipelineError};
+use cyclorithm_core::datetime::parse_cli_datetime_zoned;
+use cyclorithm_core::pipeline::{check_source, event_to_json_zoned, expand_window, PipelineError};
 use pyo3::prelude::*;
 
 pyo3::create_exception!(_cyclorithm, CycloError, pyo3::exceptions::PyException);
@@ -33,23 +33,24 @@ fn now_ms() -> i64 {
 fn check_inner(text: &str, base: &Path) -> Result<(), PipelineError> {
     check_source(text, base)
 }
-
 /// Окно событий: JSON-строка того же объекта, что CLI печатает в stdout
-/// (`schedule/start/end/events`).
+/// (`schedule/start/end/events`). Зона окна — офсет `start`, иначе зона файла.
 fn run_inner(
     text: &str,
     base: &Path,
     start_raw: &str,
     end_raw: &str,
 ) -> Result<String, PipelineError> {
-    let start_ms = parse_cli_datetime(start_raw, now_ms()).map_err(PipelineError::Core)?;
-    let end_ms = parse_cli_datetime(end_raw, start_ms).map_err(PipelineError::Core)?;
+    let (start_ms, zone) =
+        parse_cli_datetime_zoned(start_raw, now_ms()).map_err(PipelineError::Core)?;
+    let (end_ms, _) = parse_cli_datetime_zoned(end_raw, start_ms).map_err(PipelineError::Core)?;
     let window = expand_window(text, base, start_ms, end_ms)?;
+    let effective = zone.or(window.file_zone);
     let out = serde_json::json!({
         "schedule": window.schedule,
         "start": start_raw,
         "end": end_raw,
-        "events": window.events.iter().map(event_to_json).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     Ok(out.to_string())
 }

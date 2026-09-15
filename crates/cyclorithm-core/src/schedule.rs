@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::cond::{check_conditions, resolve_units, Defs, Value};
-use crate::datetime::{format_datetime, parse_datetime};
+use crate::datetime::{format_datetime_tz, parse_datetime_zoned, parse_timezone};
 use crate::expand::{expand, next_events, Event};
 use crate::imports::{collect_units, ImportError};
 use crate::validate::{check_bounds, check_recursion, check_tables, validate_names, NameTables};
@@ -101,6 +101,9 @@ fn with_setup<R>(
     };
     crate::reverse::materialize_reverse(&mut file.schedule).map_err(Diag::valid)?;
     let ast = &file.schedule;
+    if let Some(raw) = &ast.timezone {
+        parse_timezone(raw).map_err(Diag::valid)?;
+    }
     let mem: HashMap<PathBuf, &str> = libs
         .iter()
         .map(|(name, text)| (PathBuf::from(name), *text))
@@ -124,18 +127,24 @@ fn with_setup<R>(
 }
 
 /// Общий конвейер `run_schedule`/`run_timeline`: имя расписания и события.
-/// Порядок фаз — как в `cyclo run` (глава ошибок).
+/// Порядок фаз — как в `cyclo run` (глава ошибок). Возвращает также зону окна
+/// (офсет `start`, `None` — наивное).
 fn pipeline(
     src: &str,
     start_raw: &str,
     end_raw: &str,
     libs: &[(&str, &str)],
-) -> Result<(String, Vec<Event>), Diag> {
+) -> Result<(String, Vec<Event>, Option<i16>), Diag> {
     with_setup(src, libs, |ast, tables, defs| {
-        let start_ms = parse_datetime(start_raw).map_err(Diag::valid)?;
-        let end_ms = parse_datetime(end_raw).map_err(Diag::valid)?;
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
+            None => None,
+        };
+        let (start_ms, win_zone) = parse_datetime_zoned(start_raw).map_err(Diag::valid)?;
+        let (end_ms, _) = parse_datetime_zoned(end_raw).map_err(Diag::valid)?;
         let events = expand(ast, tables, defs, start_ms, end_ms).map_err(Diag::valid)?;
-        Ok((ast.name.clone(), events))
+        let effective = win_zone.or(file_zone);
+        Ok((ast.name.clone(), events, effective))
     })
 }
 
@@ -150,7 +159,7 @@ pub fn run_schedule(
     end_raw: &str,
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
-    let (name, events) = pipeline(src, start_raw, end_raw, libs)?;
+    let (name, events, zone) = pipeline(src, start_raw, end_raw, libs)?;
     let mut out = String::from("{\"schedule\":");
     out.push_str(&esc(&name));
     out.push_str(",\"start\":");
@@ -163,7 +172,7 @@ pub fn run_schedule(
             out.push(',');
         }
         out.push('{');
-        push_event_fields(&mut out, e);
+        push_event_fields(&mut out, e, zone);
         out.push('}');
     }
     out.push_str("]}");
@@ -172,9 +181,10 @@ pub fn run_schedule(
 
 /// Первые `n` событий от `from_ms` (включительно) в пределах
 /// `[from_ms, from_ms + within_ms)` — JSON (см. docs/reference/output.md; компактный, ключи
-/// `schedule,from,within,events`; `from` — резолвленная ISO-строка,
+/// `schedule,from,within,events`; `from` — резолвленная ISO-строка с зоной окна,
 /// `within` — миллисекунды числом; без завершающего `\n`).
 /// Пусто — `"events":[]`. Ошибки строк за пределами ответа не срабатывают.
+/// `from_zone` — офсет окна (`None` — наивное), им форматируются `from` и `time` событий.
 pub fn next_steps(
     src: &str,
     from_ms: i64,
@@ -182,14 +192,31 @@ pub fn next_steps(
     n: usize,
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
-    let (name, events) = with_setup(src, libs, |ast, tables, defs| {
+    next_steps_zoned(src, from_ms, None, within_ms, n, libs)
+}
+
+/// Вариант `next_steps` с зоной окна (для aware-`from`).
+pub fn next_steps_zoned(
+    src: &str,
+    from_ms: i64,
+    from_zone: Option<i16>,
+    within_ms: i64,
+    n: usize,
+    libs: &[(&str, &str)],
+) -> Result<String, Diag> {
+    let (name, events, effective) = with_setup(src, libs, |ast, tables, defs| {
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
+            None => None,
+        };
         let events = next_events(ast, tables, defs, from_ms, within_ms, n).map_err(Diag::valid)?;
-        Ok((ast.name.clone(), events))
+        let effective = from_zone.or(file_zone);
+        Ok((ast.name.clone(), events, effective))
     })?;
     let mut out = String::from("{\"schedule\":");
     out.push_str(&esc(&name));
     out.push_str(",\"from\":");
-    out.push_str(&esc(&format_datetime(from_ms)));
+    out.push_str(&esc(&format_datetime_tz(from_ms, effective)));
     out.push_str(",\"within\":");
     out.push_str(&within_ms.to_string());
     out.push_str(",\"events\":[");
@@ -198,7 +225,7 @@ pub fn next_steps(
             out.push(',');
         }
         out.push('{');
-        push_event_fields(&mut out, e);
+        push_event_fields(&mut out, e, effective);
         out.push('}');
     }
     out.push_str("]}");
@@ -215,7 +242,7 @@ pub fn run_timeline(
     end_raw: &str,
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
-    let (name, events) = pipeline(src, start_raw, end_raw, libs)?;
+    let (name, events, zone) = pipeline(src, start_raw, end_raw, libs)?;
     let mut out = String::from("{\"schedule\":");
     out.push_str(&esc(&name));
     out.push_str(",\"start\":");
@@ -228,9 +255,9 @@ pub fn run_timeline(
             out.push(',');
         }
         out.push('{');
-        push_event_fields(&mut out, e);
+        push_event_fields(&mut out, e, zone);
         out.push_str(",\"span\":");
-        out.push_str(&span_json(&e.span));
+        out.push_str(&span_json(&e.span, zone));
         out.push('}');
     }
     out.push_str("],\"spans\":[");
@@ -241,17 +268,17 @@ pub fn run_timeline(
         if i > 0 {
             out.push(',');
         }
-        out.push_str(&span_json(s));
+        out.push_str(&span_json(s, zone));
     }
     out.push_str("]}");
     Ok(out)
 }
 
 /// Поля события в JSON-объект без скобок (порядок — см. docs/reference/output.md:
-/// `time,action,point,point_attrs,action_attrs`).
-fn push_event_fields(out: &mut String, e: &Event) {
+/// `time,action,point,point_attrs,action_attrs`). `zone` — офсет окна.
+fn push_event_fields(out: &mut String, e: &Event, zone: Option<i16>) {
     out.push_str("\"time\":");
-    out.push_str(&esc(&format_datetime(e.time)));
+    out.push_str(&esc(&format_datetime_tz(e.time, zone)));
     out.push_str(",\"action\":");
     out.push_str(&esc(&e.action));
     out.push_str(",\"point\":");
@@ -262,12 +289,12 @@ fn push_event_fields(out: &mut String, e: &Event) {
     out.push_str(&attrs_text(&e.action_attrs));
 }
 
-fn span_json(s: &crate::expand::Span) -> String {
+fn span_json(s: &crate::expand::Span, zone: Option<i16>) -> String {
     format!(
         "{{\"cycle\":{},\"start\":{},\"end\":{}}}",
         esc(&s.cycle),
-        esc(&format_datetime(s.start)),
-        esc(&format_datetime(s.end)),
+        esc(&format_datetime_tz(s.start, zone)),
+        esc(&format_datetime_tz(s.end, zone)),
     )
 }
 

@@ -22,9 +22,22 @@ def test_naive_datetime_matches_string():
 
 def test_aware_datetime_converts_to_utc():
     msk = timezone(timedelta(hours=3))
-    assert c.run_file(VALID, datetime(2026, 9, 7, 9, 0, tzinfo=msk), END) == c.run_file(
-        VALID, "2026-09-07T06:00:00", END
-    )
+    aware = c.run_file(VALID, datetime(2026, 9, 7, 9, 0, tzinfo=msk), END)
+    naive = c.run_file(VALID, "2026-09-07T06:00:00", END)
+    # Один инстант, но окно aware форматируется в своей зоне (+03:00).
+    assert aware["events"][0]["time"].endswith("+03:00")
+    assert naive["events"][0]["time"] == "2026-09-07T06:00:00"
+    # Инстанты совпадают: 09:00+03:00 == 06:00Z.
+    from datetime import timezone as _tz
+
+    def to_utc(s):
+        # s вида YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]; наивное — трактуем как UTC.
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt.astimezone(_tz.utc)
+
+    assert to_utc(aware["events"][0]["time"]) == to_utc(naive["events"][0]["time"])
 
 
 def test_date_means_midnight():

@@ -61,23 +61,34 @@ DateLike = str | _datetime | _date | _timedelta
 
 
 def _as_datetime_str(value: DateLike, name: str) -> str:
-    """Граница окна в каноническую строку ядра `YYYY-MM-DDTHH:MM:SS[.mmm]`.
+    """Граница окна в каноническую строку ядра `YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]`.
 
     `str` — как есть (короткие формы и `+DURATION` разбирает ядро);
-    aware-`datetime` — в UTC без зоны; микросекунды усекаются до
-    миллисекунд (точность движка); отрицательный `timedelta` —
-    `TypeError` (якоря-строки Python разрешить не может).
+    `datetime` — наивное как есть, aware — wall + офсет (`Z`/±HH:MM);
+    микросекунды усекаются до миллисекунд (точность движка);
+    отрицательный `timedelta` — `TypeError`.
     """
     if isinstance(value, str):
         return value
     if isinstance(value, _datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(_timezone.utc).replace(tzinfo=None)
         ms = f".{value.microsecond // 1000:03d}" if value.microsecond else ""
-        return (
+        wall = (
             f"{value.year:04d}-{value.month:02d}-{value.day:02d}"
             f"T{value.hour:02d}:{value.minute:02d}:{value.second:02d}{ms}"
         )
+        if value.tzinfo is not None:
+            off = value.utcoffset()
+            if off is None:
+                return wall
+            total_min = int(off.total_seconds() // 60)
+            if total_min == 0:
+                return wall + "Z"
+            sign = "+" if total_min >= 0 else "-"
+            abs_min = abs(total_min)
+            hh = abs_min // 60
+            mm = abs_min % 60
+            return wall + f"{sign}{hh:02d}:{mm:02d}"
+        return wall
     if isinstance(value, _date):
         return f"{value.year:04d}-{value.month:02d}-{value.day:02d}T00:00:00"
     if isinstance(value, _timedelta):

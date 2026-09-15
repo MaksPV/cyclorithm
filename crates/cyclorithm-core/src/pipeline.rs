@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::cond::{check_conditions, resolve_units, Value};
-use crate::datetime::format_datetime;
+use crate::datetime::{format_datetime_tz, parse_timezone};
 use crate::expand::{expand, next_events, Event};
 use crate::imports::{collect_units, ImportError};
 use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
@@ -66,6 +66,9 @@ macro_rules! setup {
             cyclorithm_parser::parse($text).map_err(|e| PipelineError::Syntax(e.to_string()))?;
         crate::reverse::materialize_reverse(&mut src.schedule).map_err(PipelineError::Core)?;
         let $ast = &src.schedule;
+        if let Some(raw) = &$ast.timezone {
+            parse_timezone(raw).map_err(PipelineError::Core)?;
+        }
         let mut groups = collect_units(&src.uses, $base, &mut |p| std::fs::read_to_string(p))
             .map_err(PipelineError::from)?;
         groups.push(src.decls.clone());
@@ -91,6 +94,8 @@ pub struct Window {
     pub schedule: String,
     /// События окна в порядке `(time, k, порядок объявления)`.
     pub events: Vec<Event>,
+    /// Зона файла (`None` — без `timezone`), для fallback'а когда окно наивное.
+    pub file_zone: Option<i16>,
 }
 
 /// Окно событий в миллисекундах epoch (наивных, как внутри движка).
@@ -102,9 +107,14 @@ pub fn expand_window(
 ) -> Result<Window, PipelineError> {
     setup!(text, base, ast, tables, defs, {
         let events = expand(ast, &tables, &defs, start_ms, end_ms).map_err(PipelineError::Core)?;
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(PipelineError::Core)?),
+            None => None,
+        };
         Ok(Window {
             schedule: ast.name.clone(),
             events,
+            file_zone,
         })
     })
 }
@@ -120,18 +130,28 @@ pub fn next_window(
     setup!(text, base, ast, tables, defs, {
         let events =
             next_events(ast, &tables, &defs, from_ms, within_ms, n).map_err(PipelineError::Core)?;
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(PipelineError::Core)?),
+            None => None,
+        };
         Ok(Window {
             schedule: ast.name.clone(),
             events,
+            file_zone,
         })
     })
 }
 
 /// Событие в JSON-объект (ключи — как в `docs/reference/output.md`;
-/// порядок ключей словарей — порядок объявления).
+/// порядок ключей словарей — порядок объявления). Без зоны — наивное.
 pub fn event_to_json(e: &Event) -> serde_json::Value {
+    event_to_json_zoned(e, None)
+}
+
+/// Событие в JSON-объект с зоной окна (`None` — наивное, `Some(0)` → `Z`).
+pub fn event_to_json_zoned(e: &Event, zone: Option<i16>) -> serde_json::Value {
     serde_json::json!({
-        "time": format_datetime(e.time),
+        "time": format_datetime_tz(e.time, zone),
         "action": e.action,
         "point": e.point,
         "point_attrs": attrs_json(&e.point_attrs),

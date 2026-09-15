@@ -217,8 +217,15 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
     let mut routines = Vec::new();
     let mut cycles = Vec::new();
     let mut root = None;
+    let mut timezone = None;
     for p in inner {
         match p.as_rule() {
+            Rule::timezone_decl => {
+                let mut tz_inner = p.into_inner();
+                let _kw = tz_inner.next().expect("timezone: ключевое слово");
+                let raw = unquote(tz_inner.next().expect("timezone: строка"));
+                timezone = Some(raw);
+            }
             Rule::point => points.push(build_point(p)),
             Rule::routine => routines.push(build_routine(p)?),
             Rule::cycle => cycles.push(build_cycle(p)?),
@@ -228,6 +235,7 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
     }
     Ok(Schedule {
         name,
+        timezone,
         points,
         routines,
         cycles,
@@ -1053,6 +1061,7 @@ pub struct SlotRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub name: String,
+    pub timezone: Option<String>,
     pub points: Vec<Point>,
     pub routines: Vec<Routine>,
     pub cycles: Vec<Cycle>,
@@ -1964,6 +1973,7 @@ mod tests {
         };
         Schedule {
             name: "Автобусный парк".to_owned(),
+            timezone: None,
             points: vec![
                 Point {
                     name: "DEPOT".to_owned(),

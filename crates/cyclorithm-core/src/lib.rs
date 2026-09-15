@@ -315,6 +315,12 @@ impl Error {
         Self::coded("unknown-slot", format!("unknown slot '{label}'"))
     }
 
+    /// `invalid-timezone`: `invalid timezone 'MSK'` (только `Z`/±HH:MM`;
+    /// имена зон, включая аббревиатуры и IANA, не поддерживаются).
+    pub fn invalid_timezone(raw: &str) -> Self {
+        Self::coded("invalid-timezone", format!("invalid timezone '{raw}'"))
+    }
+
     /// `invalid-table-argument`: первый аргумент вызова рутины — не имя таблицы.
     pub fn invalid_table_argument(name: &str) -> Self {
         Self::coded(

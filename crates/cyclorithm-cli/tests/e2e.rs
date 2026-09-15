@@ -537,6 +537,11 @@ fn validation_errors_go_to_stderr() {
             "integer-out-of-range",
             "integer out of range '9223372036854775807-1-1T0:0:0.0'",
         ),
+        (
+            "bad_invalid-timezone",
+            "invalid-timezone",
+            "invalid timezone 'MSK'",
+        ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
@@ -688,6 +693,51 @@ fn stdin_source_matches_file() {
     let got: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("stdout — один JSON-объект");
     assert_eq!(got["events"].as_array().expect("массив").len(), 2);
+}
+
+#[test]
+fn tz_offsets_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_offsets.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // aware-окно — те же инстанты, но с суффиксом зоны окна
+    let out_z = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00+03:00",
+        "--end",
+        "2026-01-10T00:00:00+03:00",
+    ]);
+    let got_z = stdout_json(&out_z);
+    assert_eq!(got_z["events"][0]["time"], "2026-01-09T09:00:00+03:00");
+}
+
+#[test]
+fn tz_file_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_file.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_file.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // naive-окно с файлом +03:00 → fallback к зоне файла
+    assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00+03:00");
 }
 
 #[test]

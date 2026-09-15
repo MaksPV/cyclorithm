@@ -12,9 +12,9 @@
 //! Даты CLI — короткие формы (см. docs/reference/cli.md): `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`,
 //! `+DURATION` (для `--end` — от `--start`, иначе — от now).
 
-use cyclorithm_core::datetime::{format_datetime, parse_cli_datetime, parse_cli_duration};
+use cyclorithm_core::datetime::{format_datetime_tz, parse_cli_datetime_zoned, parse_cli_duration};
 use cyclorithm_core::pipeline::{
-    check_source, event_to_json, expand_window, next_window, PipelineError,
+    check_source, event_to_json_zoned, expand_window, next_window, PipelineError,
 };
 
 /// Дефолтный горизонт `next`: 366 дней в мс.
@@ -273,15 +273,16 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
     };
     // `--start`/`--end`: короткие формы (см. docs/reference/cli.md), якорь дельты `--end` — старт;
     // битые значения — invalid-datetime; в объекте — эхо как передали.
+    // Зона окна — офсет `start` (aware → с суффиксом, наивное → без).
     let now = now_ms();
-    let start_ms = match parse_cli_datetime(start_raw, now) {
+    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let end_ms = match parse_cli_datetime(end_raw, start_ms) {
+    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
@@ -295,9 +296,10 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
             return 1;
         }
     };
+    let effective = zone.or(window.file_zone);
     if ndjson {
         for e in &window.events {
-            println!("{}", event_to_json(e));
+            println!("{}", event_to_json_zoned(e, effective));
         }
         return 0;
     }
@@ -305,7 +307,7 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
         "schedule": window.schedule,
         "start": start_raw,
         "end": end_raw,
-        "events": window.events.iter().map(event_to_json).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     println!("{out}");
     0
@@ -323,10 +325,11 @@ fn cmd_next(
         Err(code) => return code,
     };
     let now = now_ms();
-    // `--from` по умолчанию — now; битый — invalid-datetime.
-    let from_ms = match from_raw {
-        None => now,
-        Some(raw) => match parse_cli_datetime(raw, now) {
+    // `--from` по умолчанию — now (UTC, зона None); битый — invalid-datetime.
+    // Зона окна — офсет `from` (aware → с суффиксом).
+    let (from_ms, from_zone) = match from_raw {
+        None => (now, None),
+        Some(raw) => match parse_cli_datetime_zoned(raw, now) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("{e}");
@@ -362,17 +365,18 @@ fn cmd_next(
             return 1;
         }
     };
+    let effective = from_zone.or(window.file_zone);
     if ndjson {
         for e in &window.events {
-            println!("{}", event_to_json(e));
+            println!("{}", event_to_json_zoned(e, effective));
         }
         return 0;
     }
     let out = serde_json::json!({
         "schedule": window.schedule,
-        "from": format_datetime(from_ms),
+        "from": format_datetime_tz(from_ms, effective),
         "within": within_ms,
-        "events": window.events.iter().map(event_to_json).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     println!("{out}");
     0
