@@ -17,16 +17,13 @@ fn to_pyerr(err: PipelineError) -> PyErr {
     CycloError::new_err((err.code().to_owned(), err.message().to_owned()))
 }
 
-/// Текущий момент (UTC, наивный): мс epoch. Якорь относительных дат CLI
-/// (`+1d` в `--start` — от now, в `--end` — от старта).
-fn now_ms() -> i64 {
-    i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(i64::MAX)
+/// Текущий момент в системной зоне: `(мс epoch, офсет_минут)` — подпись
+/// дефолтного окна (как в CLI). Без tzdata в ОС chrono отдаёт UTC (`Some(0)`).
+fn now_local() -> (i64, Option<i16>) {
+    let now = chrono::Local::now();
+    let ms = now.timestamp_millis();
+    let mins = now.offset().local_minus_utc() / 60;
+    (ms, i16::try_from(mins).ok())
 }
 
 /// Валидация программы.
@@ -41,9 +38,11 @@ fn run_inner(
     start_raw: &str,
     end_raw: &str,
 ) -> Result<String, PipelineError> {
+    let (now, now_zone) = now_local();
     let (start_ms, zone) =
-        parse_cli_datetime_zoned(start_raw, now_ms()).map_err(PipelineError::Core)?;
-    let (end_ms, _) = parse_cli_datetime_zoned(end_raw, start_ms).map_err(PipelineError::Core)?;
+        parse_cli_datetime_zoned(start_raw, now, now_zone).map_err(PipelineError::Core)?;
+    let (end_ms, _) =
+        parse_cli_datetime_zoned(end_raw, start_ms, None).map_err(PipelineError::Core)?;
     let window = expand_window(text, base, start_ms, end_ms, zone)?;
     let effective = zone.or(window.file_zone);
     let out = serde_json::json!({

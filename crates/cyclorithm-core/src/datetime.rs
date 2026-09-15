@@ -109,12 +109,18 @@ fn split_offset(s: &str) -> Result<(&str, Option<i16>), Error> {
 ///
 /// Ошибка — invalid-datetime с исходным текстом.
 pub fn parse_cli_datetime(s: &str, anchor_ms: i64) -> Result<i64, Error> {
-    parse_cli_datetime_zoned(s, anchor_ms).map(|(ms, _)| ms)
+    parse_cli_datetime_zoned(s, anchor_ms, None).map(|(ms, _)| ms)
 }
 
 /// Разбор CLI-даты с офсетом: возвращает `(мс, офсет_минут)` окна.
-/// Дельта `+DURATION` → `(anchor+delta, None)`, без суффикса → `None`.
-pub fn parse_cli_datetime_zoned(s: &str, anchor_ms: i64) -> Result<(i64, Option<i16>), Error> {
+/// Дельта `+DURATION` → `(anchor+delta, anchor_zone)`, без суффикса → `None`.
+/// Явная наивная дата зону якоря не наследует: `None` — это «город не назван»,
+/// а дельта — «от текущего момента», который всегда в какой-то зоне.
+pub fn parse_cli_datetime_zoned(
+    s: &str,
+    anchor_ms: i64,
+    anchor_zone: Option<i16>,
+) -> Result<(i64, Option<i16>), Error> {
     if let Some(rest) = s.strip_prefix('+') {
         // `+` как дельта, только если после него идёт длительность, а не дата.
         // Дата с офсетом тоже начинается с `+`/`-` внутри, но не в позиции 0.
@@ -125,7 +131,7 @@ pub fn parse_cli_datetime_zoned(s: &str, anchor_ms: i64) -> Result<(i64, Option<
             let ms = anchor_ms
                 .checked_add(delta)
                 .ok_or_else(|| Error::invalid_datetime(s))?;
-            return Ok((ms, None));
+            return Ok((ms, anchor_zone));
         }
         // `+` без валидной длительности — invalid-datetime, не пытаемся как дату.
         return Err(Error::invalid_datetime(s));
@@ -559,6 +565,19 @@ mod tests {
     }
 
     #[test]
+    fn cli_delta_inherits_anchor_zone_naive_does_not() {
+        // Дельта «от текущего момента» несёт зону якоря; явная наивная дата —
+        // нет (город не назван). Инстант дельты от зоны не зависит (24h фикс.).
+        let base = ok("2026-09-07T10:00:00");
+        let (ms, off) = parse_cli_datetime_zoned("+1d", base, Some(180)).unwrap();
+        assert_eq!((ms, off), (base + 86_400_000, Some(180)));
+        let (ms, off) = parse_cli_datetime_zoned("+1d", base, None).unwrap();
+        assert_eq!((ms, off), (base + 86_400_000, None));
+        let (ms, off) = parse_cli_datetime_zoned("2026-09-07", base, Some(180)).unwrap();
+        assert_eq!((ms, off), (ok("2026-09-07T00:00:00"), None));
+    }
+
+    #[test]
     fn timezone_accepts_only_z_and_numeric() {
         assert_eq!(parse_timezone("Z"), Ok(0));
         assert_eq!(parse_timezone("+03:00"), Ok(180));
@@ -608,7 +627,7 @@ mod tests {
         // CLI короткие формы с офсетом.
         let base = ok("2026-09-07T10:00:00");
         let (ms_cli, off_cli) =
-            parse_cli_datetime_zoned("2026-09-07T09:00:00+03:00", base).unwrap();
+            parse_cli_datetime_zoned("2026-09-07T09:00:00+03:00", base, None).unwrap();
         assert_eq!(off_cli, Some(180));
         assert_eq!(ms_cli, naive + 3 * 3_600_000 - 3 * 3_600_000); // 09:00+03:00 == 06:00 naive
         // Битые офсеты — invalid-datetime.

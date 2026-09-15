@@ -13,6 +13,17 @@ fn run(args: &[&str]) -> Output {
         .expect("бинарь cyclo обязан запускаться")
 }
 
+/// Прогон с переменными окружения (пин `TZ` для дефолтного окна:
+/// иначе CI в UTC и dev в Москве разъедутся).
+fn run_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut cmd = cyclo();
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("бинарь cyclo обязан запускаться")
+}
+
 /// Прогон со stdin вместо файла (`-`): вход подаётся в поток.
 fn run_stdin(args: &[&str], input: &str) -> Output {
     use std::io::Write as _;
@@ -739,6 +750,49 @@ fn tz_file_matches_expected_json() {
     assert_eq!(got, expected);
     // naive-окно с файлом +03:00 → fallback к зоне файла
     assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00+03:00");
+}
+
+#[test]
+fn next_defaults_to_system_zone() {
+    // Голый `next` (без `--from`): now с подписью системной зоны —
+    // суффиксы `from` и событий из `TZ` (см. docs/reference/cli.md).
+    // MSK круглый год +03:00 (без DST с 2014-го), tzdata есть и в CI.
+    let out = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "Europe/Moscow")],
+    );
+    let got = stdout_json(&out);
+    assert!(
+        got["from"].as_str().expect("строка").ends_with("+03:00"),
+        "from в зоне TZ: {}",
+        got["from"]
+    );
+    assert!(
+        got["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("+03:00"),
+        "событие в зоне TZ: {}",
+        got["events"][0]["time"]
+    );
+    let out_utc = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "UTC")],
+    );
+    let got_utc = stdout_json(&out_utc);
+    assert!(
+        got_utc["from"].as_str().expect("строка").ends_with("Z"),
+        "from в UTC: {}",
+        got_utc["from"]
+    );
+    assert!(
+        got_utc["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("Z"),
+        "событие в UTC: {}",
+        got_utc["events"][0]["time"]
+    );
 }
 
 #[test]

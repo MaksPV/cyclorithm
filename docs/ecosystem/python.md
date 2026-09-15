@@ -57,6 +57,7 @@ window = c.run_file("route.cyclo", datetime(2026, 9, 7), timedelta(days=1))
   зона `start` задаёт кадр наивных дат файла — см. [семантику](../reference/semantics.md)),
   `date` (полночь) или `timedelta` (дельта:
   для `start` — от now, для `end` — от `start`, как `+DURATION` в CLI).
+  Якорь now — в системной зоне ОС (как дефолтный `--from` в CLI).
   Микросекунды усекаются до миллисекунд (точность движка); чужие типы
   и отрицательный `timedelta` — `TypeError` до вызова ядра.
 - Возврат `run_*` — dict, побайтово равный JSON-объекту `cyclo run` (см. главу вывода).

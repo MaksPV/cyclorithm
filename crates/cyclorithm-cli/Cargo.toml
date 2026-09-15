@@ -12,5 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 cyclorithm-core = { path = "../cyclorithm-core" }
+# now_local: подпись дефолтного окна системной зоной (см. docs/reference/cli.md).
+chrono = "0.4"
 # preserve_order: ключи JSON в порядке вставки (schedule, start, end, events).
 serde_json = { version = "1", features = ["preserve_order"] }

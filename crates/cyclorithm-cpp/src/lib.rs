@@ -57,16 +57,14 @@ fn c_str<'a>(ptr: *const c_char) -> Option<&'a str> {
     unsafe { CStr::from_ptr(ptr).to_str().ok() }
 }
 
-/// Текущий момент (UTC, наивный): мс epoch. Якорь относительных дат
-/// (`+1d` в старте — от now, в конце — от старта), как в CLI.
-fn now_ms() -> i64 {
-    i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(i64::MAX)
+/// Текущий момент в системной зоне: `(мс epoch, офсет_минут)` — подпись
+/// дефолтного окна (якорь `+DURATION`), как в CLI. Без tzdata в ОС chrono
+/// отдаёт UTC (`Some(0)`).
+fn now_local() -> (i64, Option<i16>) {
+    let now = chrono::Local::now();
+    let ms = now.timestamp_millis();
+    let mins = now.offset().local_minus_utc() / 60;
+    (ms, i16::try_from(mins).ok())
 }
 
 /// Валидация текста программы (`base` — директория для `use`).
@@ -108,11 +106,12 @@ pub unsafe extern "C" fn cyclo_run(
         Some((((t, b), s), e)) => (t, Path::new(b), s, e),
         None => return err("syntax", "null or non-utf8 input"),
     };
-    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now_ms()) {
+    let (now, now_zone) = now_local();
+    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now, now_zone) {
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };
-    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms) {
+    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms, None) {
         Ok(v) => v,
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };

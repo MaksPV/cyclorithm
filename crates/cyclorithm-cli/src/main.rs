@@ -198,15 +198,14 @@ fn flags_next(rest: &[String]) -> Result<NextFlags, &'static str> {
     Ok(flags)
 }
 
-/// Текущий момент (UTC, наивный): мс epoch.
-fn now_ms() -> i64 {
-    i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(i64::MAX)
+/// Текущий момент в системной зоне: `(мс epoch, офсет_минут)` — подпись
+/// дефолтного окна (см. docs/reference/cli.md). Без tzdata в ОС chrono
+/// отдаёт UTC (`Some(0)`); офсет шире ±23:59 невозможен по построению.
+fn now_local() -> (i64, Option<i16>) {
+    let now = chrono::Local::now();
+    let ms = now.timestamp_millis();
+    let mins = now.offset().local_minus_utc() / 60;
+    (ms, i16::try_from(mins).ok())
 }
 
 /// Текст программы и база `use`: файл (база — его директория)
@@ -273,16 +272,17 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
     };
     // `--start`/`--end`: короткие формы (см. docs/reference/cli.md), якорь дельты `--end` — старт;
     // битые значения — invalid-datetime; в объекте — эхо как передали.
-    // Зона окна — офсет `start` (aware → с суффиксом, наивное → без).
-    let now = now_ms();
-    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now) {
+    // Зона окна — офсет `start` (aware → с суффиксом, наивное → без);
+    // дельта `+DURATION` — от now в системной зоне (зона now).
+    let (now, now_zone) = now_local();
+    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now, now_zone) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms) {
+    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms, None) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");
@@ -324,12 +324,12 @@ fn cmd_next(
         Ok(v) => v,
         Err(code) => return code,
     };
-    let now = now_ms();
-    // `--from` по умолчанию — now (UTC, зона None); битый — invalid-datetime.
-    // Зона окна — офсет `from` (aware → с суффиксом).
+    let (now, now_zone) = now_local();
+    // `--from` по умолчанию — now в системной зоне (см. docs/reference/cli.md);
+    // битый — invalid-datetime. Зона окна — офсет `from` (aware → с суффиксом).
     let (from_ms, from_zone) = match from_raw {
-        None => (now, None),
-        Some(raw) => match parse_cli_datetime_zoned(raw, now) {
+        None => (now, now_zone),
+        Some(raw) => match parse_cli_datetime_zoned(raw, now, now_zone) {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("{e}");

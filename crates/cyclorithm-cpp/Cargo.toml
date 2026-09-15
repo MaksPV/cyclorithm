@@ -12,4 +12,6 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 cyclorithm-core = { path = "../cyclorithm-core" }
+# now_local: подпись дефолтного окна системной зоной (как в CLI).
+chrono = "0.4"
 serde_json = "1"
