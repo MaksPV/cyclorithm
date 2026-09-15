@@ -1,7 +1,7 @@
 //! Grammar and AST for the Cyclorithm DSL.
 
-use pest::iterators::Pair;
 use pest::Parser as _;
+use pest::iterators::Pair;
 use pest_derive::Parser;
 
 /// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
@@ -2453,14 +2453,18 @@ mod tests {
         ))
         .expect("цикл с именем duration обязан разбираться");
         assert_eq!(s.schedule.cycles[1].name, "duration");
-        assert!(parse(&format!(
-            "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
-        ))
-        .is_err());
-        assert!(parse(&format!(
-            "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
-        ))
-        .is_err());
+        assert!(
+            parse(&format!(
+                "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
+            ))
+            .is_err()
+        );
         assert!(
             parse_decls("time_const T durationx = 1h { a: 1m; };").is_err(),
             "склейка поля duration обязана быть ошибкой"
@@ -2760,11 +2764,13 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
         let f = parse(src).expect("таблица обязана разбираться");
         let (name, duration, rows) = match &f.decls[..] {
-            [Decl::TimeConst {
-                name,
-                duration,
-                rows,
-            }] => (name, duration, rows),
+            [
+                Decl::TimeConst {
+                    name,
+                    duration,
+                    rows,
+                },
+            ] => (name, duration, rows),
             d => panic!("ожидалась одна time_const, получено {d:?}"),
         };
         assert_eq!(name, "DAY");

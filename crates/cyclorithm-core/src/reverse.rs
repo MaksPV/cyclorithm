@@ -8,8 +8,8 @@
 
 use cyclorithm_parser::{Cycle, Schedule, Stmt};
 
-use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
 use crate::Error;
+use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
 
 /// Заменить все `reverse`-узлы расписания обычными циклами.
 /// Вызывать после разбора, до `validate_names`: дальше проверки

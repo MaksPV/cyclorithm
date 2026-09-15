@@ -15,11 +15,11 @@ use std::collections::HashMap;
 
 use cyclorithm_parser::{Expr, Invocation, Schedule};
 
-use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
+use crate::Error;
+use crate::cond::{Defs, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs};
 use crate::datetime::{parse_file_datetime, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
-use crate::validate::{instantiate, plan_stmts, plan_stmts_with, root_actual_ms, NameTables};
-use crate::Error;
+use crate::validate::{NameTables, instantiate, plan_stmts, plan_stmts_with, root_actual_ms};
 
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
 /// `[start, end)` в мс epoch (конец — по объявленной длительности).
@@ -197,11 +197,11 @@ pub fn next_events(
             };
             if heap.len() < n {
                 heap.push(top);
-            } else if let Some(worst) = heap.peek() {
-                if top < *worst {
-                    heap.pop();
-                    heap.push(top);
-                }
+            } else if let Some(worst) = heap.peek()
+                && top < *worst
+            {
+                heap.pop();
+                heap.push(top);
             }
         }
         k += 1;
@@ -467,7 +467,7 @@ fn unfold_routine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{check_conditions, resolve_units, Defs, TableReg};
+    use crate::cond::{Defs, TableReg, check_conditions, resolve_units};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
     use std::collections::HashMap;

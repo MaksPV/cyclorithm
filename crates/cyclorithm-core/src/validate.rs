@@ -19,9 +19,9 @@ use cyclorithm_parser::{
     Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
 };
 
-use crate::cond::{check_reserved, TableReg};
-use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 use crate::Error;
+use crate::cond::{TableReg, check_reserved};
+use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
 
 /// Таблицы имён после успешной проверки — вход later-фаз ядра.
 #[derive(Debug)]
@@ -286,10 +286,10 @@ fn outgoing<'a>(
             push_edge(out, KIND_CYCLE, name);
         } else if tables.routines.contains_key(name) {
             push_edge(out, KIND_ROUTINE, name);
-            if let Some(Expr::Name(t)) = args.first() {
-                if tables.tables.get(t.as_str()).is_some() {
-                    push_edge(out, KIND_TABLE, t.as_str());
-                }
+            if let Some(Expr::Name(t)) = args.first()
+                && tables.tables.get(t.as_str()).is_some()
+            {
+                push_edge(out, KIND_TABLE, t.as_str());
             }
         }
     };
@@ -355,27 +355,28 @@ pub fn instantiation_pairs<'a>(
         if !tables.routines.contains_key(routine) {
             return;
         }
-        if let Some(Expr::Name(t)) = args.first() {
-            if tables.tables.get(t.as_str()).is_some() && !pairs.contains(&(routine, t.as_str())) {
-                pairs.push((routine, t.as_str()));
-            }
+        if let Some(Expr::Name(t)) = args.first()
+            && tables.tables.get(t.as_str()).is_some()
+            && !pairs.contains(&(routine, t.as_str()))
+        {
+            pairs.push((routine, t.as_str()));
         }
     };
     // Пробросы `(вызывающая, вызываемая)`: `R2(TC)` в теле `R1(TC)`.
     let mut passthrough: Vec<(&'a str, &'a str)> = Vec::new();
     for r in &schedule.routines {
         for st in &r.stmts {
-            if let Invocation::CycleCall { name, args } = &st.invocation {
-                if let Some(Expr::Name(t)) = args.first() {
-                    // Пустые параметры рутины бракует `validate_names`;
-                    // здесь — аккуратный доступ ради прямых вызовов в тестах.
-                    let is_passthrough = r.params.first().is_some_and(|p| p == t);
-                    if is_passthrough
-                        && tables.routines.contains_key(name.as_str())
-                        && !passthrough.contains(&(r.name.as_str(), name.as_str()))
-                    {
-                        passthrough.push((r.name.as_str(), name.as_str()));
-                    }
+            if let Invocation::CycleCall { name, args } = &st.invocation
+                && let Some(Expr::Name(t)) = args.first()
+            {
+                // Пустые параметры рутины бракует `validate_names`;
+                // здесь — аккуратный доступ ради прямых вызовов в тестах.
+                let is_passthrough = r.params.first().is_some_and(|p| p == t);
+                if is_passthrough
+                    && tables.routines.contains_key(name.as_str())
+                    && !passthrough.contains(&(r.name.as_str(), name.as_str()))
+                {
+                    passthrough.push((r.name.as_str(), name.as_str()));
                 }
             }
         }
@@ -484,10 +485,10 @@ pub fn instantiate(
         let invocation = match &st.invocation {
             Invocation::CycleCall { name, args } if tables.routines.contains_key(name.as_str()) => {
                 let mut resolved = args.clone();
-                if let Some(Expr::Name(t)) = resolved.first() {
-                    if t == table_param {
-                        resolved[0] = Expr::Name(table_name.to_owned());
-                    }
+                if let Some(Expr::Name(t)) = resolved.first()
+                    && t == table_param
+                {
+                    resolved[0] = Expr::Name(table_name.to_owned());
                 }
                 Invocation::CycleCall {
                     name: name.clone(),
@@ -636,10 +637,10 @@ fn stmts_end(
     let plans = plan_stmts(stmts, limit, limit_raw, tables)?;
     let mut best: (i64, Option<usize>) = (0, None);
     for (i, pl) in plans.iter().enumerate() {
-        if let Some(end) = pl.end {
-            if best.1.is_none() || end > best.0 {
-                best = (end, Some(i));
-            }
+        if let Some(end) = pl.end
+            && (best.1.is_none() || end > best.0)
+        {
+            best = (end, Some(i));
         }
     }
     Ok(best)
@@ -681,10 +682,10 @@ pub(crate) fn plan_stmts_with(
                 // `until` раньше старта строки — out of bounds (вина — на `until`).
                 // Без `until` горизонт — конец родителя: строка за горизонтом даёт
                 // ноль экземпляров, как обычный `fill`, — это не баг, а не паника.
-                if offset > horizon {
-                    if let Some(u) = until {
-                        return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
-                    }
+                if offset > horizon
+                    && let Some(u) = until
+                {
+                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
                 }
                 plans.push(Placement {
                     starts: Vec::new(),
@@ -1403,8 +1404,7 @@ mod tests {
     #[test]
     fn instantiate_resolves_labels_and_passthrough() {
         // Метки → смещения, проброс → литерал, пожары — в конец.
-        let src =
-            "time_const DAY duration = 24h { 1st: 9h; [workday(at)] lunch: 12h -> LUNCH(); } \
+        let src = "time_const DAY duration = 24h { 1st: 9h; [workday(at)] lunch: 12h -> LUNCH(); } \
             schedule \"T\" { point A { actions = [x]; } point B { actions = [y]; } \
             routine W(TC) { 0m: A.x(); } \
             routine M(TC) { 1st: A.x(); 45m: B.y(); 0m: W(TC); 0m: C(); } \

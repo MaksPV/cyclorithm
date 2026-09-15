@@ -13,8 +13,8 @@ use cyclorithm_parser::{
     ArithOp, BitOp, CmpOp, Cond, CondRhs, Decl, Duration, Expr, Invocation, Schedule, SlotRow,
 };
 
-use crate::validate::NameTables;
 use crate::Error;
+use crate::validate::NameTables;
 
 /// Значение выражения: число, строка или JSON-значение.
 /// Мапы хранятся вектором пар (порядок ключей — порядок объявления).
@@ -659,17 +659,16 @@ impl CxTy<'_> {
                 if matches!(
                     op,
                     ArithOp::Div | ArithOp::Mod | ArithOp::FloorDiv | ArithOp::FloorMod
-                ) {
-                    if let Some(Err(e)) = self.const_div(right) {
-                        return Err(e);
-                    }
+                ) && let Some(Err(e)) = self.const_div(right)
+                {
+                    return Err(e);
                 }
                 // Константный `MIN floordiv -1` / `MIN floormod -1` переполняет i64:
                 // ловим сразу, как константный ноль (иначе — в момент строки).
-                if matches!(op, ArithOp::FloorDiv | ArithOp::FloorMod) {
-                    if let Some(e) = self.const_euclid_overflow(left, right) {
-                        return Err(e);
-                    }
+                if matches!(op, ArithOp::FloorDiv | ArithOp::FloorMod)
+                    && let Some(e) = self.const_euclid_overflow(left, right)
+                {
+                    return Err(e);
                 }
                 Ok(ty)
             }
@@ -1663,7 +1662,9 @@ mod tests {
     }
 
     fn defs_of(body: &str) -> Result<Defs, Error> {
-        let src = format!("{body} schedule \"T\" {{ point A {{ actions = [x]; }} root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0m: A.x(); }} }}");
+        let src = format!(
+            "{body} schedule \"T\" {{ point A {{ actions = [x]; }} root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 0m: A.x(); }} }}"
+        );
         let s = p::parse(&src).expect("фикстура обязана разбираться");
         resolve_defs(&s.decls).map(|(d, _)| d)
     }
@@ -2339,12 +2340,14 @@ mod tests {
     fn prelude_matches_control_points() {
         // at = 0 — четверг 1970-01-01 (контрольная дата прелюдии).
         assert!(eval_with("", "dow(at) == 3", 0).unwrap());
-        assert!(eval_with(
-            "",
-            "day(at) == 1 and month(at) == 1 and year(at) == 1970",
-            0
-        )
-        .unwrap());
+        assert!(
+            eval_with(
+                "",
+                "day(at) == 1 and month(at) == 1 and year(at) == 1970",
+                0
+            )
+            .unwrap()
+        );
         assert!(eval_with("", "datestr(at) == \"1970-01-01\"", 0).unwrap());
         assert!(eval_with("", "datetimestr(at) == \"1970-01-01T00:00:00.000\"", 0).unwrap());
         assert!(eval_with("", "hour(at) == 6", 6 * 3600000).unwrap());

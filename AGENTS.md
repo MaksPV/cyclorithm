@@ -15,7 +15,7 @@
 5. `expand` — разворачивание в события, сортировка `(time, k, порядок объявления)`, один JSON в stdout.
 - Якоря, которые легко перепутать: `fill until T` — горизонт от старта **родителя**, не от строки; `-0m` ≡ длительность цикла; условие на `repeat`/`fill` проверяется на **каждый экземпляр** в его старте (дыры, не сдвиг); `at` в телах объявлений — время **вызова**; `__`-имена видны только своему юниту (чужое — `unknown-name`).
 
-## Карта модулей (Cargo workspace, edition 2021)
+## Карта модулей (Cargo workspace, edition 2024)
 - `crates/cyclorithm-parser` — грамматика (`grammar.pest`, формальный EBNF) + AST (`lib.rs`: `SourceFile`, `Decl`, `Cond`/`Expr`, фикстура `route_ast`). Решено: парсер на `pest`.
 - `crates/cyclorithm-core` — `validate.rs` (слаги главы ошибок), `cond.rs` (объявления, выражения, `resolve_units`), `imports.rs` (`collect_units`, `clean_join`), `std.cyclo` (прелюдия: календарь и словарь, `use` не нужен), `expand.rs` (решётка), `datetime.rs`/`duration.rs`, конструкторы ошибок в `lib.rs` (`Error::*`: `unknown_point`, `cycle_overruns`, …).
 - `crates/cyclorithm-cli` — бинарь `cyclo` (`run`): читает файл + `use` через `dir_fs` от директории файла; контракт CLI — глава CLI вики + примеры. Exit-коды: `0` — успех, `1` — ввод/парсинг/валидация (текст в stderr, в stdout ничего), `2` — неверные аргументы (usage в stderr).

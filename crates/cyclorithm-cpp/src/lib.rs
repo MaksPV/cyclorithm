@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::path::Path;
 
 use cyclorithm_core::datetime::parse_cli_datetime_zoned;
-use cyclorithm_core::pipeline::{check_source, event_to_json_zoned, expand_window, PipelineError};
+use cyclorithm_core::pipeline::{PipelineError, check_source, event_to_json_zoned, expand_window};
 
 /// Результат вызова (см. `cyclorithm.h`): успех — `json != NULL`;
 /// ошибка — `json == NULL`, `code`/`message` заполнены.
@@ -75,7 +75,7 @@ fn now_ms() -> i64 {
 ///
 /// Указатели обязаны быть не-NULL и указывать на валидные NUL-терминированные
 /// UTF-8 C-строки, живые весь вызов.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cyclo_check(text: *const c_char, base: *const c_char) -> CycloResult {
     let (text, base) = match c_str(text).zip(c_str(base)) {
         Some((t, b)) => (t, Path::new(b)),
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn cyclo_check(text: *const c_char, base: *const c_char) -
 /// # Safety
 ///
 /// Как в `cyclo_check`: все четыре указателя — живые NUL-терминированные строки.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cyclo_run(
     text: *const c_char,
     base: *const c_char,
@@ -136,20 +136,22 @@ pub unsafe extern "C" fn cyclo_run(
 ///
 /// Каждое не-NULL поле обязано быть указателем, выданным `into_c`
 /// (владеющий `CString`), и освобождаться ровно один раз здесь.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn cyclo_result_free(r: CycloResult) {
     for ptr in [r.json, r.code, r.message] {
         if !ptr.is_null() {
             // SAFETY: указатель выдан `into_c` (владеющий `CString`),
             // освобождается ровно один раз здесь.
-            drop(CString::from_raw(ptr));
+            unsafe {
+                drop(CString::from_raw(ptr));
+            }
         }
     }
 }
 
 /// Версия ядра (синхронна с версией workspace). Статическая NUL-строка,
 /// освобождать не нужно.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn cyclo_version() -> *const c_char {
     static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
     VERSION.as_ptr().cast()

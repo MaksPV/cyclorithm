@@ -14,7 +14,7 @@
 
 use cyclorithm_core::datetime::{format_datetime_tz, parse_cli_datetime_zoned, parse_cli_duration};
 use cyclorithm_core::pipeline::{
-    check_source, event_to_json_zoned, expand_window, next_window, PipelineError,
+    PipelineError, check_source, event_to_json_zoned, expand_window, next_window,
 };
 
 /// Дефолтный горизонт `next`: 366 дней в мс.
