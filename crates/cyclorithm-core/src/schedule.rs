@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::cond::{check_conditions, resolve_units, Defs, Value};
-use crate::datetime::{format_datetime_tz, parse_datetime_zoned};
+use crate::datetime::{format_datetime_tz, parse_datetime_zoned, parse_timezone};
 use crate::expand::{expand, next_events, Event};
 use crate::imports::{collect_units, ImportError};
 use crate::validate::{check_bounds, check_recursion, check_tables, validate_names, NameTables};
@@ -101,6 +101,9 @@ fn with_setup<R>(
     };
     crate::reverse::materialize_reverse(&mut file.schedule).map_err(Diag::valid)?;
     let ast = &file.schedule;
+    if let Some(raw) = &ast.timezone {
+        parse_timezone(raw).map_err(Diag::valid)?;
+    }
     let mem: HashMap<PathBuf, &str> = libs
         .iter()
         .map(|(name, text)| (PathBuf::from(name), *text))
@@ -133,10 +136,15 @@ fn pipeline(
     libs: &[(&str, &str)],
 ) -> Result<(String, Vec<Event>, Option<i16>), Diag> {
     with_setup(src, libs, |ast, tables, defs| {
-        let (start_ms, zone) = parse_datetime_zoned(start_raw).map_err(Diag::valid)?;
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
+            None => None,
+        };
+        let (start_ms, win_zone) = parse_datetime_zoned(start_raw).map_err(Diag::valid)?;
         let (end_ms, _) = parse_datetime_zoned(end_raw).map_err(Diag::valid)?;
         let events = expand(ast, tables, defs, start_ms, end_ms).map_err(Diag::valid)?;
-        Ok((ast.name.clone(), events, zone))
+        let effective = win_zone.or(file_zone);
+        Ok((ast.name.clone(), events, effective))
     })
 }
 
@@ -196,14 +204,19 @@ pub fn next_steps_zoned(
     n: usize,
     libs: &[(&str, &str)],
 ) -> Result<String, Diag> {
-    let (name, events) = with_setup(src, libs, |ast, tables, defs| {
+    let (name, events, effective) = with_setup(src, libs, |ast, tables, defs| {
+        let file_zone = match &ast.timezone {
+            Some(raw) => Some(parse_timezone(raw).map_err(Diag::valid)?),
+            None => None,
+        };
         let events = next_events(ast, tables, defs, from_ms, within_ms, n).map_err(Diag::valid)?;
-        Ok((ast.name.clone(), events))
+        let effective = from_zone.or(file_zone);
+        Ok((ast.name.clone(), events, effective))
     })?;
     let mut out = String::from("{\"schedule\":");
     out.push_str(&esc(&name));
     out.push_str(",\"from\":");
-    out.push_str(&esc(&format_datetime_tz(from_ms, from_zone)));
+    out.push_str(&esc(&format_datetime_tz(from_ms, effective)));
     out.push_str(",\"within\":");
     out.push_str(&within_ms.to_string());
     out.push_str(",\"events\":[");
@@ -212,7 +225,7 @@ pub fn next_steps_zoned(
             out.push(',');
         }
         out.push('{');
-        push_event_fields(&mut out, e, from_zone);
+        push_event_fields(&mut out, e, effective);
         out.push('}');
     }
     out.push_str("]}");

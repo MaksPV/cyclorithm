@@ -117,12 +117,15 @@ pub unsafe extern "C" fn cyclo_run(
         Err(e) => return err_pipeline(PipelineError::Core(e)),
     };
     match expand_window(text, base, start_ms, end_ms) {
-        Ok(window) => ok_json(serde_json::json!({
-            "schedule": window.schedule,
-            "start": start_raw,
-            "end": end_raw,
-            "events": window.events.iter().map(|e| event_to_json_zoned(e, zone)).collect::<Vec<_>>(),
-        })),
+        Ok(window) => {
+            let effective = zone.or(window.file_zone);
+            ok_json(serde_json::json!({
+                "schedule": window.schedule,
+                "start": start_raw,
+                "end": end_raw,
+                "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
+            }))
+        }
         Err(e) => err_pipeline(e),
     }
 }

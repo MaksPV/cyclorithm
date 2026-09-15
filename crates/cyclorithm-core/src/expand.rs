@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use cyclorithm_parser::{Expr, Invocation, Schedule};
 
 use crate::cond::{eval_cond_with_env, eval_expr_with_env, resolve_point_attrs, Defs, Value};
-use crate::datetime::parse_datetime;
+use crate::datetime::{parse_file_datetime, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
 use crate::validate::{instantiate, plan_stmts, plan_stmts_with, root_actual_ms, NameTables};
 use crate::Error;
@@ -145,7 +145,11 @@ pub fn next_events(
     if n == 0 {
         return Ok(Vec::new());
     }
-    let t0 = parse_datetime(&schedule.root.start_time)? as i128;
+    let file_zone = match &schedule.timezone {
+        Some(raw) => Some(parse_timezone(raw)?),
+        None => None,
+    };
+    let t0 = parse_file_datetime(&schedule.root.start_time, file_zone)? as i128;
     let period = root_period_ms(&schedule.root)? as i128;
     let horizon = root_actual_ms(schedule, tables)? as i128;
     let point_attrs = resolve_point_attrs(schedule, defs)?;
@@ -217,7 +221,11 @@ pub fn expand(
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Vec<Event>, Error> {
-    let t0 = parse_datetime(&schedule.root.start_time)?;
+    let file_zone = match &schedule.timezone {
+        Some(raw) => Some(parse_timezone(raw)?),
+        None => None,
+    };
+    let t0 = parse_file_datetime(&schedule.root.start_time, file_zone)?;
     let period = root_period_ms(&schedule.root)?;
     let horizon = root_actual_ms(schedule, tables)?;
     // Атрибуты точек — после всех проверок главы ошибок, до первой строки.

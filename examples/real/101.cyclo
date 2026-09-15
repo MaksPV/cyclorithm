@@ -1,4 +1,5 @@
 schedule "101 Кулички - Тамбов" {
+  timezone = "MSK",
   point KULICHKI {actions = [stop];}
   point TAMBOV {actions = [stop];}
   point TATANOVO {actions = [stop];}

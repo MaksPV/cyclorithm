@@ -296,9 +296,10 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
             return 1;
         }
     };
+    let effective = zone.or(window.file_zone);
     if ndjson {
         for e in &window.events {
-            println!("{}", event_to_json_zoned(e, zone));
+            println!("{}", event_to_json_zoned(e, effective));
         }
         return 0;
     }
@@ -306,7 +307,7 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
         "schedule": window.schedule,
         "start": start_raw,
         "end": end_raw,
-        "events": window.events.iter().map(|e| event_to_json_zoned(e, zone)).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     println!("{out}");
     0
@@ -364,17 +365,18 @@ fn cmd_next(
             return 1;
         }
     };
+    let effective = from_zone.or(window.file_zone);
     if ndjson {
         for e in &window.events {
-            println!("{}", event_to_json_zoned(e, from_zone));
+            println!("{}", event_to_json_zoned(e, effective));
         }
         return 0;
     }
     let out = serde_json::json!({
         "schedule": window.schedule,
-        "from": format_datetime_tz(from_ms, from_zone),
+        "from": format_datetime_tz(from_ms, effective),
         "within": within_ms,
-        "events": window.events.iter().map(|e| event_to_json_zoned(e, from_zone)).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     println!("{out}");
     0

@@ -33,9 +33,8 @@ fn now_ms() -> i64 {
 fn check_inner(text: &str, base: &Path) -> Result<(), PipelineError> {
     check_source(text, base)
 }
-
 /// Окно событий: JSON-строка того же объекта, что CLI печатает в stdout
-/// (`schedule/start/end/events`). Зона окна — офсет `start`.
+/// (`schedule/start/end/events`). Зона окна — офсет `start`, иначе зона файла.
 fn run_inner(
     text: &str,
     base: &Path,
@@ -46,11 +45,12 @@ fn run_inner(
         parse_cli_datetime_zoned(start_raw, now_ms()).map_err(PipelineError::Core)?;
     let (end_ms, _) = parse_cli_datetime_zoned(end_raw, start_ms).map_err(PipelineError::Core)?;
     let window = expand_window(text, base, start_ms, end_ms)?;
+    let effective = zone.or(window.file_zone);
     let out = serde_json::json!({
         "schedule": window.schedule,
         "start": start_raw,
         "end": end_raw,
-        "events": window.events.iter().map(|e| event_to_json_zoned(e, zone)).collect::<Vec<_>>(),
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
     });
     Ok(out.to_string())
 }

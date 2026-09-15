@@ -16,7 +16,8 @@ decls_file  = { SOI ~ decl* ~ EOI }
 // (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { kw_use ~ string ~ ";" }
-schedule    = { kw_schedule ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
+schedule    = { kw_schedule ~ string ~ "{" ~ timezone_decl? ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
+timezone_decl = { kw_timezone ~ "=" ~ string ~ ","? }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
 decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
@@ -107,6 +108,7 @@ kw_cycle      = @{ "cycle" ~ !word_tail }
 kw_routine    = @{ "routine" ~ !word_tail }
 kw_root_cycle = @{ "root_cycle" ~ !word_tail }
 kw_start_time = @{ "start_time" ~ !word_tail }
+kw_timezone = @{ "timezone" ~ !word_tail }
 kw_duration   = @{ "duration" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }

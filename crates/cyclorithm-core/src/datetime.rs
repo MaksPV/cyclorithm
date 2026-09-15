@@ -230,6 +230,61 @@ pub fn format_datetime_tz(ms: i64, offset: Option<i16>) -> String {
     }
 }
 
+/// Разбор даты файла с зоной по умолчанию (наивная → `file_zone`).
+pub fn parse_file_datetime(raw: &str, file_zone: Option<i16>) -> Result<i64, Error> {
+    let (ms, off) = parse_datetime_zoned(raw)?;
+    match off {
+        Some(_) => Ok(ms), // aware — уже абсолютна
+        None => match file_zone {
+            Some(fz) => ms
+                .checked_sub(fz as i64 * MS_PER_MIN)
+                .ok_or_else(|| Error::invalid_datetime(raw)),
+            None => Ok(ms),
+        },
+    }
+}
+
+/// Разбор значения `timezone` расписания: `Z`/±HH:MM` или аббревиатура
+/// закрытой таблицы без DST (только верхний регистр). `None` — поле отсутствует.
+pub fn parse_timezone(raw: &str) -> Result<i16, Error> {
+    match raw {
+        "Z" | "UTC" | "GMT" => return Ok(0),
+        "KALT" => return Ok(120),
+        "MSK" => return Ok(180),
+        "SAMT" => return Ok(240),
+        "YEKT" => return Ok(300),
+        "OMST" => return Ok(360),
+        "KRAT" => return Ok(420),
+        "IRKT" => return Ok(480),
+        "YAKT" => return Ok(540),
+        "VLAT" => return Ok(600),
+        "MAGT" => return Ok(660),
+        "PETT" => return Ok(720),
+        _ => {}
+    }
+    // Числовой офсет `±HH:MM` или `Z` уже обработан.
+    if raw == "Z" {
+        return Ok(0);
+    }
+    if raw.len() == 6
+        && (raw.as_bytes()[0] == b'+' || raw.as_bytes()[0] == b'-')
+        && raw.as_bytes()[3] == b':'
+    {
+        let tb = raw.as_bytes();
+        let hh = digits(tb, 1, 2).ok_or_else(|| Error::invalid_timezone(raw))?;
+        let mm = digits(tb, 4, 2).ok_or_else(|| Error::invalid_timezone(raw))?;
+        if hh > 23 || mm > 59 {
+            return Err(Error::invalid_timezone(raw));
+        }
+        let mut off = (hh * 60 + mm) as i16;
+        if tb[0] == b'-' {
+            off = -off;
+        }
+        return Ok(off);
+    }
+    Err(Error::invalid_timezone(raw))
+}
+
 /// Каноническая форма для сравнения дат как строк (см. docs/reference/expressions.md): всегда 23 символа
 /// `YYYY-MM-DDTHH:MM:SS.mmm`. Вне годов `0000…9999` формы нет — `None`.
 pub fn format_datetime_full(ms: i64) -> Option<String> {
