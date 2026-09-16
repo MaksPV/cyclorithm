@@ -39,8 +39,10 @@ def test_check_core_error_has_slug():
 
 
 def test_check_syntax_error_has_syntax_code():
+    # bad_syntax.cyclo теперь missing-argument (отсутствие root_cycle —
+    # поле шапки, а не голый синтаксис); чистый синтаксис проверяем строкой.
     with pytest.raises(c.CycloError) as exc:
-        c.check_file(INVALID / "bad_syntax.cyclo")
+        c.check_text('schedule "T" { point A { actions = [x] } cycle R duration = 1h { 0m: A.x(); }')
     assert exc.value.code == "syntax"
 
 
