@@ -122,7 +122,7 @@ impl Error {
     }
 
     /// `recursive`: рекурсия через таблицу — `recursive table 'T'`
-    /// (пожар `->` инстанцирует рутину с той же таблицей).
+    /// (вызов слота `->` инстанцирует рутину с той же таблицей).
     pub fn recursive_table(name: &str) -> Self {
         Self::coded("recursive", format!("recursive table '{name}'"))
     }

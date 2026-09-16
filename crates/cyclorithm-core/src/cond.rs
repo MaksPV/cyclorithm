@@ -367,7 +367,7 @@ fn builtin_arity(defs: &Defs, name: &str, unit: usize) -> Option<usize> {
 }
 
 /// Проверить все условия файла в порядке объявления: циклы, рутины, корень,
-/// затем пожары `->` таблиц.
+/// затем вызовы слотов `->` таблиц.
 /// Заодно — аргументы вызовов и блоки действий (та же фаза unknown-name/ошибки условий:
 /// сначала условие строки, затем вызов — как в момент развёртки).
 /// У вызова рутины первый аргумент — таблица (не выражение): пропускается.
@@ -407,7 +407,7 @@ pub fn check_conditions(
         check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
     }
     // Пожары таблиц — без параметров (данные рутин им недоступны статически;
-    // при развёртке пожар выполняется в пустом окружении).
+    // при развёртке вызов слота выполняется в пустом окружении).
     let empty: HashMap<String, Ty> = HashMap::new();
     for tname in &tables.tables.order {
         let t = tables
@@ -415,8 +415,8 @@ pub fn check_conditions(
             .get(tname.as_str())
             .expect("порядок — по реестру");
         for row in &t.rows {
-            if let Some(firing) = &row.firing {
-                check_row(row.condition.as_ref(), firing, defs, &empty, tables)?;
+            if let Some(slot_call) = &row.slot_call {
+                check_row(row.condition.as_ref(), slot_call, defs, &empty, tables)?;
             }
         }
     }
@@ -2758,13 +2758,13 @@ mod tests {
     }
 
     #[test]
-    fn table_firing_conditions_checked() {
-        // Условия пожаров проверяются без параметров (unknown-name), вызов — как строка.
+    fn table_slot_call_conditions_checked() {
+        // Условия вызовов слотов проверяются без параметров (unknown-name), вызов — как строка.
         let src = "time_const D duration = 2h { [banana == 1] tick: 0m -> A.x(); } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
-        let e = check_rows(src).expect_err("имя в пожаре обязано проверяться");
+        let e = check_rows(src).expect_err("имя в вызове слота обязано проверяться");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("unknown-name", "unknown name 'banana'")

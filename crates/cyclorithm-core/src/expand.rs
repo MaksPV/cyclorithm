@@ -403,7 +403,7 @@ fn unfold(
 }
 
 /// Развёртка вызова рутины: инстанцирование с таблицей; тело — в окружении
-/// вызывающего плюс данные, пожары — в пустом окружении (данные рутины им
+/// вызывающего плюс данные, вызовы слотов — в пустом окружении (данные рутины им
 /// недоступны статически, а чужое окружение затирало бы глобальные имена:
 /// резолв идёт `env` раньше `defs`).
 /// Табличный параметр из окружения затирается (в условиях он невидим — unknown-name).
@@ -444,7 +444,7 @@ fn unfold_routine(
         end: clamp_i64(base + limit as i128),
     };
     let inst = instantiate(routine, table_name, ctx.tables)?;
-    // Тело и пожары делят один таймлайн: занятость течёт из тела в пожары
+    // Тело и вызовы слотов делят один таймлайн: занятость течёт из тела в вызовы слотов
     // (как в `check_tables`, где списки склеиваются).
     let mut occupied: Vec<(i64, i64)> = Vec::new();
     let body = plan_stmts_with(
@@ -458,14 +458,14 @@ fn unfold_routine(
         unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &child)?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
-    let firings = plan_stmts_with(
-        &inst.firings,
+    let slot_calls = plan_stmts_with(
+        &inst.slot_calls,
         limit,
         &table.duration.raw,
         ctx.tables,
         &mut occupied,
     )?;
-    for (st, pl) in inst.firings.iter().zip(firings.iter()) {
+    for (st, pl) in inst.slot_calls.iter().zip(slot_calls.iter()) {
         unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &fresh)?;
     }
     Ok(())
@@ -1232,7 +1232,7 @@ schedule "Редкое" {
         );
     }
 
-    /// Сквозная рутина: метки из таблицы, обед-пожар только по будням,
+    /// Сквозная рутина: метки из таблицы, обед как вызов слота только по будням,
     /// данные текут в условия и блоки, спаны именованы рутиной.
     /// 2026-09-07 — понедельник, 2026-09-12 — суббота.
     fn routine_src() -> &'static str {
@@ -1249,7 +1249,7 @@ schedule "Редкое" {
     }
 
     #[test]
-    fn expands_routine_with_labels_and_firing() {
+    fn expands_routine_with_labels_and_slot_call() {
         let (ast, t, d) = setup(routine_src());
         let (s, e) = window("2026-09-07T00:00:00", "2026-09-13T00:00:00");
         let events = expand(ast, &t, d, s, e, None).unwrap();
@@ -1284,7 +1284,7 @@ schedule "Редкое" {
                 ),
             ]
         );
-        // Спаны: строки рутины — её именем, пожар — внутренним циклом
+        // Спаны: строки рутины — её именем, вызов слота — внутренним циклом
         // (ближайший экземпляр, как у вложенных циклов).
         let spans: Vec<&str> = events.iter().map(|ev| ev.span.cycle.as_str()).collect();
         assert_eq!(spans, vec!["M", "LUNCH", "M"]);

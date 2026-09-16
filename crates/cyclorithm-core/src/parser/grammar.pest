@@ -28,11 +28,11 @@ decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
 const_decl  = { kw_const ~ IDENT ~ "=" ~ decl_value ~ ";" }
 fun_decl    = { kw_fun ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { kw_pred ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
-// Таблица слотов: именованные смещения для routine; `->` — слот
-// и собственный вызов в одном лице (пожар при каждом инстанцировании).
+// Таблица слотов: именованные смещения для routine; `->` —
+// привязанный к слоту вызов (срабатывает при каждом инстанцировании с таблицей).
 time_const_decl = { kw_time_const ~ IDENT ~ kw_duration ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
-slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
-slot_fire   = { "->" ~ invocation }
+slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_call? ~ ";" }
+slot_call   = { "->" ~ invocation }
 // Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
 // Ловушка как с `ms`: `1ms` разберётся длительностью, а не меткой
 // (в `routine_offset` длительность пробуется раньше) — таких имён не давать.

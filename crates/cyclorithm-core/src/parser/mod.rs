@@ -212,11 +212,11 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
     debug_assert_eq!(first.as_rule(), Rule::label);
     let label = first.as_str().to_owned();
     let offset = build_duration(inner.next().expect("slot_row: смещение"));
-    let firing = inner.next().map(|p| {
-        debug_assert_eq!(p.as_rule(), Rule::slot_fire);
+    let slot_call = inner.next().map(|p| {
+        debug_assert_eq!(p.as_rule(), Rule::slot_call);
         p.into_inner()
             .next()
-            .expect("slot_fire: invocation")
+            .expect("slot_call: invocation")
             .into_inner()
             .next()
             .map(build_invocation)
@@ -226,7 +226,7 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
         condition,
         label,
         offset,
-        firing,
+        slot_call,
     })
 }
 
@@ -1147,13 +1147,13 @@ pub enum Decl {
 }
 
 /// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
-/// `firing` — собственный вызов слота (пожар при каждом инстанцировании).
+/// `slot_call` — привязанный к слоту вызов (срабатывает при каждом инстанцировании с таблицей).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotRow {
     pub condition: Option<Cond>,
     pub label: String,
     pub offset: Duration,
-    pub firing: Option<Invocation>,
+    pub slot_call: Option<Invocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2999,8 +2999,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_time_const_with_firing() {
-        // Слоты с метками; `->` — слот и вызов в одном лице, условие опционально.
+    fn parses_time_const_with_slot_call() {
+        // Слоты с метками; `->` — слот и привязанный вызов в одном лице, условие опционально.
         let src = "time_const DAY duration = 21h35m { \
             1st: 9h; \
             [workday(at)] lunch: 12h20m -> LUNCH(); \
@@ -3024,16 +3024,16 @@ mod tests {
         assert_eq!(rows[0].label, "1st");
         assert_eq!(rows[0].offset.raw, "9h");
         assert!(rows[0].condition.is_none());
-        assert!(rows[0].firing.is_none());
+        assert!(rows[0].slot_call.is_none());
         assert_eq!(rows[1].label, "lunch");
         assert!(rows[1].condition.is_some());
         assert!(matches!(
-            rows[1].firing,
+            rows[1].slot_call,
             Some(Invocation::CycleCall { ref name, ref args })
                 if name == "LUNCH" && args.is_empty()
         ));
         assert!(matches!(
-            rows[2].firing,
+            rows[2].slot_call,
             Some(Invocation::PointAction { ref point, ref action, .. })
                 if point == "BELL" && action == "ring"
         ));

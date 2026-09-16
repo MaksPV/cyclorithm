@@ -3,7 +3,7 @@
 //! Порядок проверок: сначала все объявления (duplicate, wrong-kind на столкновение
 //! имён точки, рутины и цикла; wrong-arguments на пустые параметры рутины; duplicate на дубли
 //! меток таблиц), затем все вызовы в порядке объявления (циклы, рутины,
-//! `root_cycle`, пожары `->` таблиц). Первая ошибка побеждает.
+//! `root_cycle`, вызовы слотов `->` таблиц). Первая ошибка побеждает.
 //!
 //! Правило общего пространства имён (см. docs/reference/syntax.md): одно имя не может обозначать точку,
 //! рутину и цикл одновременно — нарушение wrong-kind. На вызове: точка как цикл —
@@ -128,7 +128,7 @@ pub fn validate_names<'a>(
     for t in reg.ordered() {
         check_invocations(
             &tables,
-            t.rows.iter().filter_map(|row| row.firing.as_ref()),
+            t.rows.iter().filter_map(|row| row.slot_call.as_ref()),
             None,
         )?;
     }
@@ -269,8 +269,8 @@ fn visit<'a>(
     Ok(())
 }
 
-/// Рёбра узла: вызовы тела (для таблицы — её пожары `->`) плюс рёбра
-/// в таблицы литеральных вызовов рутин (их пожары срабатывают при развёртке);
+/// Рёбра узла: вызовы тела (для таблицы — её вызовы слотов `->`) плюс рёбра
+/// в таблицы литеральных вызовов рутин (их вызовы слотов срабатывают при развёртке);
 /// проброс табличного параметра — во все таблицы пары инстанцирования.
 /// Неизвестные имена пропускаются (сообщит `validate_names`).
 fn outgoing<'a>(
@@ -308,7 +308,7 @@ fn outgoing<'a>(
                 for st in &r.stmts {
                     if let Invocation::CycleCall { name, args } = &st.invocation {
                         call(&mut out, name.as_str(), args);
-                        // Проброс табличного параметра: пожары всех таблиц,
+                        // Проброс табличного параметра: вызовы слотов всех таблиц,
                         // с которыми рутина инстанцируется, — тоже рёбра.
                         if let Some(Expr::Name(t)) = args.first() {
                             let is_passthrough = r.params.first().is_some_and(|p| p == t);
@@ -325,7 +325,7 @@ fn outgoing<'a>(
         _ => {
             if let Some(t) = tables.tables.get(node.1) {
                 for row in &t.rows {
-                    if let Some(Invocation::CycleCall { name, args }) = &row.firing {
+                    if let Some(Invocation::CycleCall { name, args }) = &row.slot_call {
                         call(&mut out, name.as_str(), args);
                     }
                 }
@@ -343,9 +343,9 @@ fn push_edge<'a>(out: &mut Vec<(u8, &'a str)>, kind: u8, name: &'a str) {
 }
 
 /// Пары `(рутина, таблица)` инстанцирования в порядке первого использования:
-/// циклы, рутины, корень, пожары таблиц. Пробросы табличных параметров
+/// циклы, рутины, корень, вызовы слотов таблиц. Пробросы табличных параметров
 /// замыкаются fixpoint-ом (конечен: множество пар ограничено).
-/// Нужны recursive (рёбра пожаров) и `check_tables` (проверка каждой пары один раз).
+/// Нужны recursive (рёбра вызов слотаов) и `check_tables` (проверка каждой пары один раз).
 pub fn instantiation_pairs<'a>(
     schedule: &'a Schedule,
     tables: &NameTables<'a>,
@@ -406,7 +406,7 @@ pub fn instantiation_pairs<'a>(
             .get(tname.as_str())
             .expect("порядок — по реестру");
         for row in &t.rows {
-            if let Some(Invocation::CycleCall { name, args }) = &row.firing {
+            if let Some(Invocation::CycleCall { name, args }) = &row.slot_call {
                 site(name.as_str(), args);
             }
         }
@@ -440,27 +440,27 @@ pub fn instantiation_pairs<'a>(
 // ---------------------------------------------------------------------------
 
 /// Строка таблицы как `Stmt` для переиспользования `stmts_end`:
-/// пожар без повторов в смещении слота.
-fn firing_stmt(row: &SlotRow, firing: &Invocation) -> Stmt {
+/// вызов слота без повторов в смещении слота.
+fn slot_call_stmt(row: &SlotRow, slot_call: &Invocation) -> Stmt {
     Stmt {
         offset: row.offset.clone(),
         negative: false,
         repeat: Repeat::Once,
         condition: row.condition.clone(),
-        invocation: firing.clone(),
+        invocation: slot_call.clone(),
     }
 }
 
-/// Инстанцирование рутины с таблицей: тело со смещениями и пожары отдельно
-/// (пожары выполняются в пустом окружении — данные рутины им недоступны).
+/// Инстанцирование рутины с таблицей: тело со смещениями и вызовы слотов отдельно
+/// (вызовы слотов выполняются в пустом окружении — данные рутины им недоступны).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
     pub body: Vec<Stmt>,
-    pub firings: Vec<Stmt>,
+    pub slot_calls: Vec<Stmt>,
 }
 
 /// Инстанцировать рутину с таблицей: метки → смещения слотов, проброс
-/// табличного параметра — в литеральное имя, пожары таблицы — отдельно.
+/// табличного параметра — в литеральное имя, вызовы слотов — отдельно.
 /// Неизвестная метка — unknown-slot.
 /// Вызывать после `validate_names` (форма вызовов уже проверена).
 pub fn instantiate(
@@ -505,13 +505,13 @@ pub fn instantiate(
             invocation,
         });
     }
-    let mut firings = Vec::new();
+    let mut slot_calls = Vec::new();
     for row in &table.rows {
-        if let Some(firing) = &row.firing {
-            firings.push(firing_stmt(row, firing));
+        if let Some(slot_call) = &row.slot_call {
+            slot_calls.push(slot_call_stmt(row, slot_call));
         }
     }
-    Ok(Instance { body, firings })
+    Ok(Instance { body, slot_calls })
 }
 
 /// Проверить таблицы и инстанцирования рутин: длительности таблиц (invalid-duration),
@@ -530,7 +530,7 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
         let rows: Vec<Stmt> = table
             .rows
             .iter()
-            .filter_map(|row| row.firing.as_ref().map(|f| firing_stmt(row, f)))
+            .filter_map(|row| row.slot_call.as_ref().map(|f| slot_call_stmt(row, f)))
             .collect();
         let (end, argmax) = stmts_end(&rows, limit, &table.duration.raw, tables)?;
         if end > limit {
@@ -548,7 +548,7 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
             .get(tname)
             .expect("пары — по проверенным именам");
         let inst = instantiate(routine, tname, tables)?;
-        let body: Vec<Stmt> = inst.body.into_iter().chain(inst.firings).collect();
+        let body: Vec<Stmt> = inst.body.into_iter().chain(inst.slot_calls).collect();
         let limit = duration_ms(&table.duration)?;
         let (end, argmax) = stmts_end(&body, limit, &table.duration.raw, tables)?;
         if end > limit {
@@ -662,7 +662,7 @@ pub fn plan_stmts(
 }
 
 /// Как [`plan_stmts`], но занятость может прийти извне и продолжиться:
-/// тело и пожары рутины делят один таймлайн (как в `check_tables`).
+/// тело и вызовы слотов рутины делят один таймлайн (как в `check_tables`).
 pub(crate) fn plan_stmts_with(
     stmts: &[Stmt],
     limit: i64,
@@ -1265,7 +1265,7 @@ mod tests {
             routine M(TC) { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
         let (ast, t) = full(src);
-        let e = check_recursion(ast, &t).expect_err("пожар по кругу");
+        let e = check_recursion(ast, &t).expect_err("вызов слота по кругу");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("recursive", "recursive table 'D'")
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[test]
     fn instantiate_resolves_labels_and_passthrough() {
-        // Метки → смещения, проброс → литерал, пожары — в конец.
+        // Метки → смещения, проброс → литерал, вызовы слотов — в конец.
         let src = "time_const DAY duration = 24h { 1st: 9h; [workday(at)] lunch: 12h -> LUNCH(); } \
             schedule \"T\" { point A { actions = [x]; } point B { actions = [y]; } \
             routine W(TC) { 0m: A.x(); } \
@@ -1416,9 +1416,9 @@ mod tests {
         let routine = t.routines.get("M").expect("рутина есть");
         let inst = instantiate(routine, "DAY", &t).expect("метки покрыты");
         let body = &inst.body;
-        let firings = &inst.firings;
+        let slot_calls = &inst.slot_calls;
         assert_eq!(body.len(), 4);
-        assert_eq!(firings.len(), 1);
+        assert_eq!(slot_calls.len(), 1);
         let raws: Vec<&str> = body.iter().map(|st| st.offset.raw.as_str()).collect();
         assert_eq!(raws, vec!["9h", "45m", "0m", "0m"]);
         // Проброс подставлен, литералы и циклы не тронуты.
@@ -1431,14 +1431,14 @@ mod tests {
             ("W".to_owned(), vec![Expr::Name("DAY".to_owned())])
         );
         assert_eq!(table_of(&body[3]).0, "C");
-        // Пожар — отдельно, с условием таблицы.
-        assert_eq!(firings.len(), 1);
-        assert!(firings[0].condition.is_some());
+        // Вызов слота — отдельно, с условием таблицы.
+        assert_eq!(slot_calls.len(), 1);
+        assert!(slot_calls[0].condition.is_some());
         assert!(matches!(
-            firings[0].invocation,
+            slot_calls[0].invocation,
             Invocation::CycleCall { ref name, .. } if name == "LUNCH"
         ));
-        assert_eq!(firings[0].offset.raw.as_str(), "12h");
+        assert_eq!(slot_calls[0].offset.raw.as_str(), "12h");
     }
 
     #[test]
