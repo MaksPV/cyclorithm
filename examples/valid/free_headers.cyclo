@@ -1,6 +1,6 @@
 schedule "Свободные шапки" {
+  point A { attrs = {"k": 1}; actions = [x]; }
   timezone = "Z"
-  point A { actions = [x]; }
 
   cycle R
     duration = 1h

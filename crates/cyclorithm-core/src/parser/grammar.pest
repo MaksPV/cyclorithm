@@ -16,7 +16,7 @@ decls_file  = { SOI ~ decl* ~ EOI }
 // (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { kw_use ~ string ~ ";" }
-schedule    = { kw_schedule ~ string ~ "{" ~ timezone_decl? ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
+schedule    = { kw_schedule ~ string ~ "{" ~ timezone_decl? ~ point* ~ timezone_decl? ~ routine* ~ timezone_decl? ~ cycle* ~ timezone_decl? ~ root_cycle ~ timezone_decl? ~ "}" }
 timezone_decl = { kw_timezone ~ "=" ~ string }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
@@ -38,7 +38,9 @@ label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Дублирует `cond_value` осознанно (единый верхний уровень выражений):
 // при новом операторе править оба, чтобы не разъезжаться.
 decl_value  = { concat | bitor }
-point       = { kw_point ~ IDENT ~ "{" ~ kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
+point       = { kw_point ~ IDENT ~ "{" ~ point_field* ~ "}" }
+point_field = { actions_field | point_attrs }
+actions_field = { kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
 // Атрибуты точки: только литерал или ссылка на константу-мапу,
 // строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
@@ -46,12 +48,15 @@ point_attrs = { kw_attrs ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
 // Цикл можно назвать `duration` (`cycle duration duration = 1h {}` валиден:
 // первый `duration` съедает `IDENT` как имя). А `cycle duration = 1h {}` —
-// синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
-// Неоднозначность разрешается в пользу имени — осознанно.
+// синтаксическая ошибка (PEG спотыкается о `=` до сборки): имя заняло
+// `duration`, полю нечего матчить. Неоднозначность в пользу имени — осознанно.
+// Поля шапки (параметры и длительность) — в любом порядке, обязательность
+// и уникальность проверяет сборка (missing-argument / duplicate-argument).
 // Производный цикл — зеркало имеющегося (`o' = duration − o`, остальное как есть):
 // `cycle BACK reverse FWD;`. Параметры и длительность наследуются, тела нет.
 // `reverse` — ключевое слово с границей (`reversex` — имя, не модификатор).
-cycle       = { kw_cycle ~ IDENT ~ (cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+cycle       = { kw_cycle ~ IDENT ~ (cycle_field* ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+cycle_field = { cycle_params | duration_field }
 kw_reverse  = @{ "reverse" ~ !word_tail }
 // Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).

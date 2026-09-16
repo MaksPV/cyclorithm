@@ -247,11 +247,13 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
                 let mut tz_inner = p.into_inner();
                 let _kw = tz_inner.next().expect("timezone: ключевое слово");
                 let raw = unquote(tz_inner.next().expect("timezone: строка"));
-                timezone = Some(raw);
+                if timezone.replace(raw).is_some() {
+                    return Err(ParseError::Coded(Error::duplicate_argument("timezone")));
+                }
             }
-            Rule::point => points.push(build_point(p)),
+            Rule::point => points.push(build_point(p)?),
             Rule::routine => routines.push(build_routine(p).map_err(ParseError::Syntax)?),
-            Rule::cycle => cycles.push(build_cycle(p).map_err(ParseError::Syntax)?),
+            Rule::cycle => cycles.push(build_cycle(p)?),
             Rule::root_cycle => root = Some(build_root_cycle(p)?),
             r => unreachable!("schedule: неожиданное правило {r:?}"),
         }
@@ -266,51 +268,70 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
     })
 }
 
-fn build_point(pair: Pair<Rule>) -> Point {
+fn build_point(pair: Pair<Rule>) -> Result<Point, ParseError> {
+    debug_assert_eq!(pair.as_rule(), Rule::point);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("point: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_point);
     let name = inner.next().expect("point: имя").as_str().to_owned();
-    let kw_actions = inner.next().expect("point: actions");
-    debug_assert_eq!(kw_actions.as_rule(), Rule::kw_actions);
-    let actions = inner
-        .next()
-        .expect("point: actions")
-        .into_inner()
-        .map(|a| a.as_str().to_owned())
-        .collect();
-    let attrs = inner.next().map(|p| {
-        debug_assert_eq!(p.as_rule(), Rule::point_attrs);
-        let mut attr_inner = p.into_inner();
-        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
-        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
-        let src = attr_inner
-            .next()
-            .expect("point_attrs: источник")
-            .into_inner()
-            .next()
-            .expect("attrs_src: содержимое");
-        match src.as_rule() {
-            Rule::map_lit => build_map_lit(src),
-            Rule::IDENT => Expr::Name(src.as_str().to_owned()),
-            r => unreachable!("attrs_src: неожиданное правило {r:?}"),
+    let mut actions = None;
+    let mut attrs = None;
+    for p in inner {
+        match p.as_rule() {
+            Rule::point_field => {
+                let f = p.into_inner().next().expect("point: поле");
+                match f.as_rule() {
+                    Rule::actions_field => {
+                        let mut af = f.into_inner();
+                        let _kw = af.next().expect("actions: ключевое слово");
+                        let list: Vec<String> = af
+                            .next()
+                            .expect("actions: список")
+                            .into_inner()
+                            .map(|a| a.as_str().to_owned())
+                            .collect();
+                        if actions.replace(list).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("actions")));
+                        }
+                    }
+                    Rule::point_attrs => {
+                        let mut attr_inner = f.into_inner();
+                        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
+                        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
+                        let src = attr_inner
+                            .next()
+                            .expect("point_attrs: источник")
+                            .into_inner()
+                            .next()
+                            .expect("attrs_src: содержимое");
+                        let expr = match src.as_rule() {
+                            Rule::map_lit => build_map_lit(src),
+                            Rule::IDENT => Expr::Name(src.as_str().to_owned()),
+                            r => unreachable!("attrs_src: неожиданное правило {r:?}"),
+                        };
+                        if attrs.replace(expr).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("attrs")));
+                        }
+                    }
+                    r => unreachable!("point_field: неожиданное правило {r:?}"),
+                }
+            }
+            r => unreachable!("point: неожиданное правило {r:?}"),
         }
-    });
-    Point {
-        name,
-        actions,
-        attrs,
     }
+    Ok(Point {
+        name,
+        actions: actions.ok_or_else(|| ParseError::Coded(Error::missing_argument("actions")))?,
+        attrs,
+    })
 }
 
-fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
+fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, ParseError> {
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("cycle: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_cycle);
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
-    let mut next = inner
-        .next()
-        .expect("cycle: параметры, duration или reverse");
+    let next = inner.next().expect("cycle: поля, тело или reverse");
     if next.as_rule() == Rule::kw_reverse {
         let source = inner
             .next()
@@ -328,21 +349,39 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
             reverse_from: Some(source),
         });
     }
-    let params = if next.as_rule() == Rule::cycle_params {
-        let ps = next.into_inner().map(|p| p.as_str().to_owned()).collect();
-        next = inner.next().expect("cycle: duration");
-        ps
-    } else {
-        Vec::new()
-    };
-    let kw_duration = next;
-    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
-    let duration = build_duration(inner.next().expect("cycle: duration"));
-    let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
+    let mut params = None;
+    let mut duration = None;
+    let mut stmts = Vec::new();
+    for p in std::iter::once(next).chain(inner) {
+        match p.as_rule() {
+            Rule::cycle_field => {
+                let f = p.into_inner().next().expect("cycle: поле");
+                match f.as_rule() {
+                    Rule::cycle_params => {
+                        let ps = f.into_inner().map(|p| p.as_str().to_owned()).collect();
+                        if params.replace(ps).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("params")));
+                        }
+                    }
+                    Rule::duration_field => {
+                        let mut df = f.into_inner();
+                        let _kw = df.next().expect("duration: ключевое слово");
+                        let d = build_duration(df.next().expect("duration: значение"));
+                        if duration.replace(d).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("duration")));
+                        }
+                    }
+                    r => unreachable!("cycle_field: неожиданное правило {r:?}"),
+                }
+            }
+            Rule::stmt => stmts.push(build_stmt(p).map_err(ParseError::Syntax)?),
+            r => unreachable!("cycle: неожиданное правило {r:?}"),
+        }
+    }
     Ok(Cycle {
         name,
-        params,
-        duration,
+        params: params.unwrap_or_default(),
+        duration: duration.ok_or_else(|| ParseError::Coded(Error::missing_argument("duration")))?,
         stmts,
         reverse_from: None,
     })
@@ -2006,6 +2045,74 @@ mod tests {
         let src = "schedule \"T\" { timezone = \"+03:00\", point A { actions = [x]; } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
         assert!(matches!(parse(src), Err(ParseError::Syntax(_))));
+    }
+
+    #[test]
+    fn point_fields_free_order() {
+        // attrs первым — валидно, действия те же.
+        let src = "schedule \"T\" { point A { attrs = {\"k\": 1}; actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(src).expect("attrs первым валидно");
+        assert_eq!(file.schedule.points[0].actions, vec!["x".to_owned()]);
+    }
+
+    #[test]
+    fn point_missing_actions_reports_slug() {
+        // Точка без actions — missing-argument.
+        let src = "schedule \"T\" { point A { attrs = {\"k\": 1}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'actions'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn cycle_duration_first_with_params_after() {
+        // duration первым, параметры после — валидно, значения те же.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C duration = 1h (TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(src).expect("duration первым валидно");
+        assert_eq!(file.schedule.cycles[0].params, vec!["TC".to_owned()]);
+    }
+
+    #[test]
+    fn cycle_missing_duration_reports_slug() {
+        // Цикл без duration — missing-argument.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C (TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'duration'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn timezone_anywhere_and_duplicate_reports_slug() {
+        // timezone в середине — валидно.
+        let ok = "schedule \"T\" { point A { actions = [x]; } timezone = \"Z\" \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(ok).expect("timezone в середине валидна");
+        assert_eq!(file.schedule.timezone.as_deref(), Some("Z"));
+        // timezone дважды — duplicate-argument.
+        let dup = "schedule \"T\" { timezone = \"Z\" point A { actions = [x]; } \
+            timezone = \"+03:00\" \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(dup) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'timezone'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
     }
 
     #[test]

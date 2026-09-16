@@ -23,8 +23,8 @@
 
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
-| `missing-argument` | `missing argument 'duration'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`) |
-| `duplicate-argument` | `duplicate argument 'duration'` | Оставить поле шапки один раз |
+| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`, `actions` у `point`) |
+| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'` | Оставить поле шапки один раз |
 
 ## Имена
 
