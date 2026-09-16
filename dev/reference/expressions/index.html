@@ -1363,11 +1363,17 @@
 <p>Чем считаются условия, блоки и аргументы: значения, арифметика, строки,
 даты, битовые операции. Приоритет операций — в <a href="../syntax/">синтаксисе</a>.</p>
 <h2 id="_2">Значения<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Шесть видов: целые числа (<code>i64</code>; <code>at</code> — миллисекунды от epoch), дробные
+<p>Шесть видов: целые числа (<code>i64</code>), дробные
 числа (<code>f64</code>: <code>20.02</code>, <code>.02</code>, <code>20.</code>, <code>1e6</code>, <code>1.2e-3</code>), строки,
 <code>true</code>/<code>false</code> (с границей слова: <code>truex</code> — имя, не литерал), словари
 и массивы. Отдельного типа «булево» нет, но любое число годится в условие
 напрямую (C-стиль: <code>0</code> и <code>0.0</code> — ложь, ненулевое — истина).</p>
+<p>Момент строки <code>at</code> — словарь <code>{wall, abs, zone}</code> (см. <a href="../semantics/">семантику</a>):
+стена и абсолют в мс, зона в мс. Коэрции в число нет — только явный
+<code>at.wall</code> / <code>at.abs</code>. Методы не вводятся: длина и ключи — свободными
+функциями <code>len(x)</code> (строка — символы, массив — длина, словарь — число
+ключей), <code>keys(m)</code> / <code>values(m)</code> (ключи/значения словаря в порядке
+объявления). Не тот тип — <code>type-mismatch</code>.</p>
 <h2 id="_3">Арифметика<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>Операции <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>floordiv</code>, <code>floormod</code>, унарный минус.
 Деление <code>/</code> усекает к нулю, остаток <code>%</code> наследует знак делимого;
@@ -1402,14 +1408,15 @@
 типа</code>MSK<code>не поддерживаются — пишите числовой офсет</code>+03:00<code>. Сравнение дат
 идёт по абсолютным миллисекундам: в одном кадре наивное</code>06:00<code>≡</code>06:00Z<code>,
 но</code>06:00<code>≠</code>06:00+03:00`.</p>
-<p>Конструктор <code>mkdate(y, mo, d, h, mi, s, ms)</code> собирает время всегда 1:1
-как написано (кадру не подчиняется — граница модели, см. семантику):
-месяц <code>1..12</code>, день в пределах месяца, часы <code>0..23</code>, минуты и секунды
+<p>Конструктор <code>mkdate(y, mo, d, h, mi, s, ms)</code> собирает словарь момента
+<code>{wall, abs, zone}</code>: компоненты — стена кадра, абсолют сдвигается на зону
+кадра. Месяц <code>1..12</code>, день в пределах месяца, часы <code>0..23</code>, минуты и секунды
 <code>0..59</code>, миллисекунды <code>0..999</code>. Кривые компоненты — ошибка <code>invalid-date</code>:</p>
 <div class="highlight"><pre><span></span><code>invalid date '2026-13-40T0:0:0.0'
 </code></pre></div>
-<p>Голый <code>at</code> рядом со строкой приводится к канонической форме <code>datetimestr(at)</code>
-(<code>YYYY-MM-DDTHH:MM:SS.mmm</code>).</p>
+<p>Голый <code>at</code> рядом со строкой приводится к канонической форме стены
+<code>datetimestr(at)</code> (<code>YYYY-MM-DDTHH:MM:SS.mmm</code>); остальное смешение словаря
+со строкой — <code>type-mismatch</code>.</p>
 <h2 id="_7">Битовые<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>Операции <code>&lt;&lt;</code>, <code>&gt;&gt;</code>, <code>&amp;</code>, <code>|</code>, <code>^</code> — только над целыми числами (дробные —
 <code>type-mismatch</code>), переполниться не могут: лишние биты роняются (wrap).

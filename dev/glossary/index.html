@@ -1188,7 +1188,11 @@
 </tr>
 <tr>
 <td>момент строки <code>at</code></td>
-<td>Абсолютное время строки в миллисекундах от unix epoch</td>
+<td>Словарь кадра <code>{wall, abs, zone}</code>: стена и абсолют в мс, зона в мс</td>
+</tr>
+<tr>
+<td>контекст инстанции <code>here</code></td>
+<td>Словарь инстанции: <code>stack</code> (путь вызовов), <code>events</code> (все кандидаты), <code>enabled_events</code> / <code>disabled_events</code></td>
 </tr>
 <tr>
 <td>повтор</td>

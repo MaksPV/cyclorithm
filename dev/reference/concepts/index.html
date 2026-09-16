@@ -1610,8 +1610,12 @@
 <p>Условия могут комбинируются.</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="m">7</span> <span class="k">and</span> <span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 </code></pre></div>
-<p>Условие вычисляется для момента строки <code>at</code> — абсолютного времени строки в мс:
-времени старта родительского цикла плюс смещение вызываемой строки.</p>
+<p>Условие вычисляется для момента строки <code>at</code> — словаря <code>{wall, abs, zone}</code>
+(см. <a href="../semantics/">семантику</a>): времени старта родительского цикла плюс
+смещение вызываемой строки. В арифметике и сравнениях — только явные поля
+(<code>at.wall</code>, <code>at.abs</code>). Рядом — словарь инстанции <code>here</code> (<code>stack</code>, <code>events</code>,
+<code>enabled_events</code>/<code>disabled_events</code>): условие видит, что инстанция уже
+породила, — например <code>[workday(at) and len(here.enabled_events) &gt; 0]</code>.</p>
 <h2 id="repeat-fill">Повтор (<code>repeat</code> / <code>fill</code>)<a class="headerlink" href="#repeat-fill" title="Permanent link">&para;</a></h2>
 <p>Одна строка запускает цикл несколько раз подряд. Сколько раз — задаёт
 модификатор между <code>:</code> и вызовом:</p>

@@ -835,7 +835,68 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Контекст инстанции here
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Контекст инстанции here">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стек stack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Кандидаты events
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Снимки
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Пример целиком
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -846,7 +907,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1340,7 +1401,68 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Контекст инстанции here
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Контекст инстанции here">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Стек stack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Кандидаты events
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Снимки
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Пример целиком
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -1351,7 +1473,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1401,11 +1523,11 @@ Aware-литералы с собственным суффиксом — абсо
 Окно вывода форматируется в зоне <code>start</code>/<code>from</code>,
 иначе — в зоне файла, иначе — наивно. Дефолтное окно (без <code>--from</code>,
 дельта <code>+DURATION</code> от now) — в системной зоне ОС. Сравнение дат — по абсолютным мс.</p>
-<p>Граница модели: календарные встроенные (<code>hour</code>, <code>dow</code>, <code>morning</code>, <code>evening</code>,
-<code>datestr</code>, …) считают от абсолютных миллисекунд и кадру не подчиняются —
-как и раньше для файлов с объявленным <code>timezone</code>. Пример: наивный <code>route.cyclo</code>
-с окном <code>09:00+03:00</code> держит стены (06:00, 10:00, 14:00 — всего 14 событий),
-но 18:00-рейс пропадает: <code>commute(at)</code> видит 15:00Z, а не московский вечер.</p>
+<p>Календарные встроенные (<code>hour</code>, <code>dow</code>, <code>morning</code>, <code>evening</code>, <code>datestr</code>, …)
+считают по стене кадра (<code>at.wall</code>), поэтому кадру подчиняются: наивный
+<code>route.cyclo</code> с окном <code>09:00+03:00</code> держит стены (06:00, 10:00, 14:00)
+и 18:00-рейс на месте — <code>commute(at)</code> видит московский вечер, всего
+18 событий. Сравнение дат-как-строк (<code>at &gt;= "2026-01-10"</code>) — тоже по стене.</p>
 <h2 id="_3">Решётка корневого цикла<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>Корневой цикл задаёт бесконечную решётку стартов: якорь <code>start_time</code>
 (с учётом <code>timezone</code> файла), период <code>duration</code>.</p>
@@ -1472,9 +1594,13 @@ actual(C) = \max_i (o_i + d(X_i))
 (иначе <code>recursive</code>); рутина или точка как источник — <code>wrong-kind</code>,
 нет имени — <code>unknown-cycle</code>.</p>
 <h2 id="_7">Условия и момент строки<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
-<p>Момент строки <code>at</code> — абсолютное время строки. В телах объявлений <code>fun</code>/<code>pred</code>
-<code>at</code> означает время места вызова: предикат ниже в строке <code>[commute(at)] 18h</code>
-вычисляется для момента строки — старта плюс 18h.</p>
+<p>Момент строки <code>at</code> — словарь кадра <code>{wall, abs, zone}</code>: <code>wall</code> — стена
+(представление в зоне кадра <code>file.or(query)</code>), <code>abs</code> — миллисекунды epoch,
+<code>zone</code> — сдвиг кадра в мс. Инвариант: <code>wall ≡ abs + zone</code>; без зон
+<code>wall == abs</code>. Доступ — только явный (<code>at.wall</code>, <code>at.abs</code>): голый <code>at</code>
+в арифметике и сравнениях с числами — <code>type-mismatch</code>. В телах объявлений
+<code>fun</code>/<code>pred</code> <code>at</code> означает время места вызова: предикат ниже в строке
+<code>[commute(at)] 18h</code> вычисляется для момента строки — старта плюс 18h.</p>
 <div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"2026-01-09T02:00:00"</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
   <span class="p">[</span><span class="nf">commute</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">18h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>  <span class="c1">// сработает в 20:00, а не в 18:00</span>
 <span class="p">}</span>
@@ -1482,9 +1608,154 @@ actual(C) = \max_i (o_i + d(X_i))
 <p>Смещение — не время суток: при старте в 02:00 строка стреляет в 20:00,
 при старте в полночь та же строка стреляла бы в 18:00. Условие уже решает
 по готовому моменту.</p>
+<h2 id="here">Контекст инстанции <code>here</code><a class="headerlink" href="#here" title="Permanent link">&para;</a></h2>
+<p>Вторая синтетика строк (наряду с <code>at</code>) — словарь инстанции: виден
+в условиях строк и в блоках действий. Объявлять <code>here</code> нельзя
+(<code>reserved-name</code>), как и <code>at</code>; голый <code>here</code> в позиции условия —
+<code>type-mismatch</code> (словарь — не условие).</p>
+<p>Ключи верхнего уровня:</p>
+<table>
+<thead>
+<tr>
+<th>Ключ</th>
+<th>Что лежит</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stack</code></td>
+<td>Путь вызовов от корня до текущей инстанции (массив кадров)</td>
+</tr>
+<tr>
+<td><code>events</code></td>
+<td>Все кандидаты инстанции с флагом <code>enabled</code></td>
+</tr>
+<tr>
+<td><code>enabled_events</code></td>
+<td>Те же кандидаты, где <code>event.enabled == true</code> — то, что попадает в timeline</td>
+</tr>
+<tr>
+<td><code>disabled_events</code></td>
+<td>Где <code>event.enabled == false</code> — проверки отсутствия и диагностика</td>
+</tr>
+</tbody>
+</table>
+<h3 id="stack">Стек <code>stack</code><a class="headerlink" href="#stack" title="Permanent link">&para;</a></h3>
+<p>Кадр — <code>{name}</code> или <code>{name, params}</code> (<code>root_cycle</code> — без параметров).
+<code>params</code> — формальное имя → разрешённое значение; табличный параметр
+рутины (<code>TC</code>) — дескриптор <code>{duration, labels}</code> (длительность таблицы
+и метки в мс). Глубина вложенности — <code>len(here.stack)</code>; верх —
+<code>here.stack[-1]</code>, корень — <code>here.stack[0]</code>. Цепочки — обычными точкой
+и индексом (отрицательный — с конца, как везде):</p>
+<div class="highlight"><pre><span></span><code><span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">-1</span><span class="p">].</span><span class="nf">params</span><span class="p">.</span><span class="nf">subj</span><span class="p">.</span><span class="nf">teacher</span>
+<span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">-1</span><span class="p">].</span><span class="nf">params</span><span class="p">.</span><span class="nf">TC</span><span class="p">.</span><span class="nf">labels</span><span class="p">.</span><span class="nf">first</span>
+<span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">0</span><span class="p">].</span><span class="nf">name</span>  <span class="c1">// всегда "root_cycle"</span>
+</code></pre></div>
+<h3 id="events">Кандидаты <code>events</code><a class="headerlink" href="#events" title="Permanent link">&para;</a></h3>
+<p>Кандидат — строка инстанции в конкретном старте: <code>{point?, cycle?, event}</code>.
+Действие точки даёт <code>point</code>, вызов цикла/рутины — <code>cycle</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Ключ</th>
+<th>Состав</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>point</code></td>
+<td><code>{name, actions, attrs}</code> — имя точки, её действия, атрибуты</td>
+</tr>
+<tr>
+<td><code>cycle</code> (цикл)</td>
+<td><code>{name, duration, params}</code> — имя, длительность в мс, разрешённые аргументы</td>
+</tr>
+<tr>
+<td><code>cycle</code> (рутина)</td>
+<td><code>{name, params, labels}</code> — имя, <code>TC</code> + данные, метки таблицы в мс</td>
+</tr>
+<tr>
+<td><code>event</code></td>
+<td><code>{action?, offset, label?, at, enabled}</code> — действие (<code>null</code> у вызовов циклов — ключа нет), смещение в мс от старта инстанции, метка рутины, момент <code>{wall, abs, zone}</code>, флаг</td>
+</tr>
+</tbody>
+</table>
+<p>Отсутствующие <code>point</code> / <code>cycle</code> / <code>action</code> / <code>label</code> — без ключа
+(у значений нет null): доступ к ним — <code>unknown-field</code>. Индекс вне границ —
+<code>index-out-of-bounds</code>. Невыполненная строка аргументы не вычисляет:
+её <code>params</code> пусты (у рутины — только дескриптор <code>TC</code>, таблица — литерал).</p>
+<h3 id="_8">Снимки<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p>Снимок — «на данный момент» в порядке развёртки: условие строки видит
+кандидатов ранее разобранных строк своей инстанции. Вызовы слотов <code>-&gt;</code>
+видят итоговый список тела (детерминирован) — так условие отличает пустое
+тело от полного:</p>
+<div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">workday</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="k">and</span> <span class="nf">len</span><span class="p">(</span><span class="n">here</span><span class="p">.</span><span class="nf">enabled_events</span><span class="p">)</span> <span class="o">&gt;</span> <span class="m">0</span><span class="p">]</span> <span class="n">lunch</span><span class="p">:</span> <span class="m">12h</span> <span class="o">-&gt;</span> <span class="nf">LUNCH</span><span class="p">();</span>
+</code></pre></div>
+<p>Пустое тело — обеда нет. Блок действий видит <code>here</code> уже с собственным
+кандидатом, а в <code>action_attrs</code> словарь замораживается копированием:
+<code>{"snap": here}</code> кладёт мёртвый JSON момента, живых ссылок нет.</p>
+<h3 id="_9">Пример целиком<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<p>Программа (понедельник 07.09.2026, в <code>LESSON</code> одна строка отключена):</p>
+<div class="highlight"><pre><span></span><code><span class="k">const</span> <span class="n">SUBJ</span> <span class="o">=</span> <span class="p">{</span><span class="s">"name"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">,</span> <span class="s">"teacher"</span><span class="p">:</span> <span class="s">"Иванов"</span><span class="p">};</span>
+<span class="k">time_const</span> <span class="n">DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">2h</span> <span class="p">{</span>
+  <span class="n">first</span><span class="p">:</span> <span class="m">0m</span><span class="p">;</span>
+  <span class="n">second</span><span class="p">:</span> <span class="m">1h</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="k">schedule</span> <span class="s">"Расписание"</span> <span class="p">{</span>
+  <span class="k">point</span> <span class="n">BELL</span> <span class="p">{</span> <span class="k">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">ring</span><span class="p">];</span> <span class="p">}</span>
+  <span class="k">cycle</span> <span class="nf">LESSON</span><span class="p">(</span><span class="n">subj</span><span class="p">)</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h</span> <span class="p">{</span>
+    <span class="p">[</span><span class="kc">false</span><span class="p">]</span> <span class="m">0m</span><span class="p">:</span> <span class="n">BELL</span><span class="p">.</span><span class="nf">ring</span><span class="p">();</span>
+    <span class="m">30m</span><span class="p">:</span> <span class="n">BELL</span><span class="p">.</span><span class="nf">ring</span><span class="p">()</span> <span class="p">{</span><span class="s">"snap"</span><span class="p">:</span> <span class="n">here</span><span class="p">};</span>
+  <span class="p">}</span>
+  <span class="k">routine</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">TC</span><span class="p">,</span> <span class="n">subj</span><span class="p">)</span> <span class="p">{</span>
+    <span class="n">first</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">(</span><span class="n">subj</span><span class="p">);</span>
+    <span class="n">second</span><span class="p">:</span> <span class="n">BELL</span><span class="p">.</span><span class="nf">ring</span><span class="p">()</span> <span class="p">{</span><span class="s">"snap"</span><span class="p">:</span> <span class="n">here</span><span class="p">};</span>
+  <span class="p">}</span>
+  <span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"2026-09-07T00:00:00"</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
+    <span class="p">[</span><span class="nf">dow</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">==</span> <span class="n">mon</span><span class="p">]</span> <span class="m">0h</span><span class="p">:</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">DAY</span><span class="p">,</span> <span class="n">SUBJ</span><span class="p">);</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Заморозка <code>{"snap": here}</code> внутри <code>LESSON</code> (событие <code>00:30</code>) — стек
+глубиной 3, оба кандидата (включая отключённого с <code>enabled: false</code>),
+геттеры — фильтры того же списка:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"stack"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"root_cycle"</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"MONDAY"</span><span class="p">,</span><span class="w"> </span><span class="nt">"params"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"TC"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="mi">7200000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"labels"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"first"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"second"</span><span class="p">:</span><span class="w"> </span><span class="mi">3600000</span><span class="p">}},</span>
+<span class="w">    </span><span class="nt">"subj"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"БЖД"</span><span class="p">,</span><span class="w"> </span><span class="nt">"teacher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Иванов"</span><span class="p">}}},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"LESSON"</span><span class="p">,</span><span class="w"> </span><span class="nt">"params"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"subj"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"БЖД"</span><span class="p">,</span><span class="w"> </span><span class="nt">"teacher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Иванов"</span><span class="p">}}}],</span>
+<span class="w"> </span><span class="nt">"events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"BELL"</span><span class="p">,</span><span class="w"> </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"ring"</span><span class="p">],</span><span class="w"> </span><span class="nt">"attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}},</span>
+<span class="w">   </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ring"</span><span class="p">,</span><span class="w"> </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"BELL"</span><span class="p">,</span><span class="w"> </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"ring"</span><span class="p">],</span><span class="w"> </span><span class="nt">"attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}},</span>
+<span class="w">   </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ring"</span><span class="p">,</span><span class="w"> </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">1800000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788741000000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788741000000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}}],</span>
+<span class="w"> </span><span class="nt">"enabled_events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"BELL"</span><span class="p">,</span><span class="w"> </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"ring"</span><span class="p">],</span><span class="w"> </span><span class="nt">"attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}},</span>
+<span class="w">   </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ring"</span><span class="p">,</span><span class="w"> </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">1800000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788741000000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788741000000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}}],</span>
+<span class="w"> </span><span class="nt">"disabled_events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"BELL"</span><span class="p">,</span><span class="w"> </span><span class="nt">"actions"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"ring"</span><span class="p">],</span><span class="w"> </span><span class="nt">"attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}},</span>
+<span class="w">   </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ring"</span><span class="p">,</span><span class="w"> </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<span class="w">    </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}}]}</span>
+</code></pre></div>
+<p>На уровень выше (заморозка в теле <code>MONDAY</code>, событие <code>01:00</code>) кандидаты —
+вызовы: цикл — с <code>duration</code> и <code>params</code>, метка строки — в <code>event.label</code>,
+действия точки — без <code>cycle</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"cycle"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"LESSON"</span><span class="p">,</span><span class="w"> </span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="mi">3600000</span><span class="p">,</span>
+<span class="w">   </span><span class="nt">"params"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"subj"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"БЖД"</span><span class="p">,</span><span class="w"> </span><span class="nt">"teacher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Иванов"</span><span class="p">}}},</span>
+<span class="w"> </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"first"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}}</span>
+</code></pre></div>
 <p>Статический расчёт фактической длительности и проверка границ идут
 в предположении истинности всех условий.</p>
-<h2 id="_8">Параметры и данные<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<h2 id="_10">Параметры и данные<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <p>Аргументы вызова вычисляются в момент строки — и текут вниз по цепочке
 вызовов вместе с окружением. Область видимости динамическая: вызванный цикл
 видит параметры вызывающего, даже если своих у него нет.</p>
@@ -1508,7 +1779,7 @@ actual(C) = \max_i (o_i + d(X_i))
 именем. Имя константы-данных прямо в условии запрещено (<code>unknown-name</code>) — данные
 входят в условие только через параметр. Табличный параметр рутины в условиях
 и атрибутах действия невидим (<code>unknown-name</code>).</p>
-<h2 id="_9">Таблицы времени и рутины<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<h2 id="_11">Таблицы времени и рутины<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <p>Вызов <code>ИМЯ(ТАБЛИЦА, …)</code> заменяет метки тела смещениями таблицы, вызовы
 таблицы добавляются после строк тела; длительность вызова равна длительности
 таблицы. Рутина ниже на таблице <code>SHORT_DAY</code> даёт звонки в 9:00 и 10:30:</p>
