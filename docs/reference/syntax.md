@@ -1,6 +1,6 @@
 # Синтаксис
 
-EBNF-грамматика — в `crates/cyclorithm-parser/src/grammar.pest`.
+EBNF-грамматика — в `crates/cyclorithm-core/src/parser/grammar.pest`.
 Здесь — правила словами и на примерах: что можно писать и где границы.
 Что означают сущности — в [концептах](concepts.md).
 
@@ -23,13 +23,18 @@ schedule "Автобусный парк" {
 
 ```cyclo
 schedule "Автобусный парк" {
-  timezone = "+03:00",  // или "Z" — опционально, первой строкой
+  timezone = "+03:00"  // или "Z" — опционально, первой строкой, без запятой
   point DEPOT { ... }  // затем точки
   routine MONDAY(TC) { ... }  // затем рутины
   cycle CITY_ROUTE duration = 1h20m { ... }  // затем циклы
   root_cycle start_time = "...", duration = 24h { ... }  // корневой — последний
 }
 ```
+
+Поля шапки корневого цикла — в любом порядке через запятую
+(`duration = 24h, start_time = "..."` — то же самое); висячая запятая
+перед `{` запрещена, как везде в языке. Нет обязательного поля —
+ошибка `missing-argument`, поле дважды — `duplicate-argument`.
 
 `timezone` — только `Z` или числовой `±HH:MM`. Имена зон (`MSK`,
 `Europe/...`) — ошибка `invalid-timezone`: пишите числовой офсет.

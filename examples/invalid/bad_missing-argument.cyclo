@@ -1,0 +1,17 @@
+schedule "missing-argument" {
+  point DEPOT {
+    actions = [depart];
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: DEPOT.depart();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00"
+  {
+    6h: R();
+  }
+}

@@ -17,7 +17,7 @@ decls_file  = { SOI ~ decl* ~ EOI }
 unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
 use_decl    = { kw_use ~ string ~ ";" }
 schedule    = { kw_schedule ~ string ~ "{" ~ timezone_decl? ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
-timezone_decl = { kw_timezone ~ "=" ~ string ~ ","? }
+timezone_decl = { kw_timezone ~ "=" ~ string }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
 decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
@@ -56,7 +56,13 @@ kw_reverse  = @{ "reverse" ~ !word_tail }
 // Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
-root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+root_cycle  = { kw_root_cycle ~ root_field ~ ("," ~ root_field)* ~ "{" ~ stmt* ~ "}" }
+// Именованные поля шапок: порядок свободный, разделитель тот же;
+// обязательность и уникальность проверяет сборка
+// (missing-argument / duplicate-argument), не PEG.
+root_field     = { start_field | duration_field }
+start_field    = { kw_start_time ~ "=" ~ string }
+duration_field = { kw_duration ~ "=" ~ duration }
 // Шаблон дня: первый параметр — таблица (`time_const`), остальные —
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.

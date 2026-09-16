@@ -27,9 +27,12 @@ impl From<ImportError> for EngineError {
 
 /// Парсинг + reverse + file_zone (без импортов/валидации) — для `check` без FS.
 fn parse_and_file_zone(text: &str) -> Result<(SourceFile, Option<i16>), EngineError> {
-    let mut src = parser::parse(text).map_err(|e| {
-        let (l, c) = parser::error_position(&e);
-        EngineError::Syntax(e.to_string(), Some((l, c)))
+    let mut src = parser::parse(text).map_err(|e| match e {
+        parser::ParseError::Syntax(se) => {
+            let (l, c) = parser::error_position(&se);
+            EngineError::Syntax(se.to_string(), Some((l, c)))
+        }
+        parser::ParseError::Coded(ce) => EngineError::Core(ce),
     })?;
     crate::reverse::materialize_reverse(&mut src.schedule).map_err(EngineError::Core)?;
     let fz = match &src.schedule.timezone {

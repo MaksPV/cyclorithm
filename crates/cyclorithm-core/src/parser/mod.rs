@@ -4,15 +4,38 @@ use pest::Parser as _;
 use pest::iterators::Pair;
 use pest_derive::Parser;
 
+use crate::Error;
+
+/// Ошибка разбора: синтаксис (без слага, как раньше) или готовый слаг
+/// главы ошибок (`missing-argument` / `duplicate-argument` — сборка шапок
+/// со свободным порядком полей, см. `docs/reference/syntax.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    Syntax(pest::error::Error<Rule>),
+    Coded(Error),
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Syntax(e) => write!(f, "{e}"),
+            Self::Coded(e) => write!(f, "{}: {}", e.code, e.message),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
 pub struct CycloParser;
 
-/// Ошибка — синтаксическая, без слага
-/// (слаги главы ошибок — только валидация уже разобранного AST в ядре).
-pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
-    let file = CycloParser::parse(Rule::file, src)?
+/// Ошибка — синтаксическая без слага, либо слаг сборки шапок
+/// (`missing-argument` / `duplicate-argument` — порядок полей свободный).
+pub fn parse(src: &str) -> Result<SourceFile, ParseError> {
+    let file = CycloParser::parse(Rule::file, src)
+        .map_err(ParseError::Syntax)?
         .next()
         .expect("file непуст");
     debug_assert_eq!(file.as_rule(), Rule::file);
@@ -22,7 +45,7 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     for p in file.into_inner() {
         match p.as_rule() {
             Rule::use_decl => uses.push(build_use(p)),
-            Rule::decl => decls.push(build_decl(p)?),
+            Rule::decl => decls.push(build_decl(p).map_err(ParseError::Syntax)?),
             Rule::schedule => schedule = Some(build_schedule(p)?),
             Rule::EOI => {}
             r => unreachable!("file: неожиданное правило {r:?}"),
@@ -207,7 +230,7 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
     })
 }
 
-fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>> {
+fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
     debug_assert_eq!(pair.as_rule(), Rule::schedule);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("schedule: ключевое слово");
@@ -227,8 +250,8 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
                 timezone = Some(raw);
             }
             Rule::point => points.push(build_point(p)),
-            Rule::routine => routines.push(build_routine(p)?),
-            Rule::cycle => cycles.push(build_cycle(p)?),
+            Rule::routine => routines.push(build_routine(p).map_err(ParseError::Syntax)?),
+            Rule::cycle => cycles.push(build_cycle(p).map_err(ParseError::Syntax)?),
             Rule::root_cycle => root = Some(build_root_cycle(p)?),
             r => unreachable!("schedule: неожиданное правило {r:?}"),
         }
@@ -325,20 +348,45 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
     })
 }
 
-fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Rule>> {
+fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, ParseError> {
+    debug_assert_eq!(pair.as_rule(), Rule::root_cycle);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("root_cycle: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_root_cycle);
-    let kw_start = inner.next().expect("root_cycle: start_time");
-    debug_assert_eq!(kw_start.as_rule(), Rule::kw_start_time);
-    let start_time = unquote(inner.next().expect("root_cycle: start_time"));
-    let kw_duration = inner.next().expect("root_cycle: duration");
-    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
-    let duration = build_duration(inner.next().expect("root_cycle: duration"));
-    let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
+    let mut start_time = None;
+    let mut duration = None;
+    let mut stmts = Vec::new();
+    for p in inner {
+        match p.as_rule() {
+            Rule::root_field => {
+                let f = p.into_inner().next().expect("root_cycle: поле");
+                match f.as_rule() {
+                    Rule::start_field => {
+                        let mut sf = f.into_inner();
+                        let _kw = sf.next().expect("start_time: ключевое слово");
+                        let raw = unquote(sf.next().expect("start_time: строка"));
+                        if start_time.replace(raw).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("start_time")));
+                        }
+                    }
+                    Rule::duration_field => {
+                        let mut df = f.into_inner();
+                        let _kw = df.next().expect("duration: ключевое слово");
+                        let d = build_duration(df.next().expect("duration: значение"));
+                        if duration.replace(d).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("duration")));
+                        }
+                    }
+                    r => unreachable!("root_field: неожиданное правило {r:?}"),
+                }
+            }
+            _ => stmts.push(build_stmt(p).map_err(ParseError::Syntax)?),
+        }
+    }
     Ok(RootCycle {
-        start_time,
-        duration,
+        start_time: start_time
+            .ok_or_else(|| ParseError::Coded(Error::missing_argument("start_time")))?,
+        duration: duration.ok_or_else(|| ParseError::Coded(Error::missing_argument("duration")))?,
         stmts,
     })
 }
@@ -1915,6 +1963,49 @@ mod tests {
             cycle R duration = 1h, { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
         assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn root_cycle_fields_free_order() {
+        // Обратный порядок полей шапки — валиден, значения те же.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle duration = 24h, start_time = \"2026-01-01T00:00:00\" { 6h: A.x(); } }";
+        let file = parse(src).expect("обратный порядок валиден");
+        assert_eq!(file.schedule.root.start_time, "2026-01-01T00:00:00");
+    }
+
+    #[test]
+    fn root_cycle_missing_field_reports_slug() {
+        // Нет обязательного поля — missing-argument, а не молчаливый синтаксис.
+        let src = include_str!("../../../../examples/invalid/bad_missing-argument.cyclo");
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'duration'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn root_cycle_duplicate_field_reports_slug() {
+        // Поле дважды — duplicate-argument.
+        let src = include_str!("../../../../examples/invalid/bad_duplicate-argument.cyclo");
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'duration'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn timezone_trailing_comma_rejected() {
+        // Висячая запятая после timezone запрещена, как везде в языке.
+        let src = "schedule \"T\" { timezone = \"+03:00\", point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        assert!(matches!(parse(src), Err(ParseError::Syntax(_))));
     }
 
     #[test]
