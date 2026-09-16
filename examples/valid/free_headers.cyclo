@@ -1,6 +1,10 @@
 schedule "Свободные шапки" {
-  point A { attrs = {"k": 1}; actions = [x]; }
-  timezone = "Z"
+  root_cycle
+    duration = 24h,
+    start_time = "2026-01-09T00:00:00"
+  {
+    6h: R();
+  }
 
   cycle R
     duration = 1h
@@ -8,10 +12,6 @@ schedule "Свободные шапки" {
     0m: A.x();
   }
 
-  root_cycle
-    duration = 24h,
-    start_time = "2026-01-09T00:00:00"
-  {
-    6h: R();
-  }
+  timezone = "Z"
+  point A { attrs = {"k": 1}; actions = [x]; }
 }

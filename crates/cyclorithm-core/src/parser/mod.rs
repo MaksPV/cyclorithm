@@ -243,18 +243,29 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
     let mut timezone = None;
     for p in inner {
         match p.as_rule() {
-            Rule::timezone_decl => {
-                let mut tz_inner = p.into_inner();
-                let _kw = tz_inner.next().expect("timezone: ключевое слово");
-                let raw = unquote(tz_inner.next().expect("timezone: строка"));
-                if timezone.replace(raw).is_some() {
-                    return Err(ParseError::Coded(Error::duplicate_argument("timezone")));
+            Rule::schedule_member => {
+                let m = p.into_inner().next().expect("schedule: член");
+                match m.as_rule() {
+                    Rule::timezone_decl => {
+                        let mut tz_inner = m.into_inner();
+                        let _kw = tz_inner.next().expect("timezone: ключевое слово");
+                        let raw = unquote(tz_inner.next().expect("timezone: строка"));
+                        if timezone.replace(raw).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("timezone")));
+                        }
+                    }
+                    Rule::point => points.push(build_point(m)?),
+                    Rule::routine => routines.push(build_routine(m).map_err(ParseError::Syntax)?),
+                    Rule::cycle => cycles.push(build_cycle(m)?),
+                    Rule::root_cycle => {
+                        if root.is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("root_cycle")));
+                        }
+                        root = Some(build_root_cycle(m)?);
+                    }
+                    r => unreachable!("schedule_member: неожиданное правило {r:?}"),
                 }
             }
-            Rule::point => points.push(build_point(p)?),
-            Rule::routine => routines.push(build_routine(p).map_err(ParseError::Syntax)?),
-            Rule::cycle => cycles.push(build_cycle(p)?),
-            Rule::root_cycle => root = Some(build_root_cycle(p)?),
             r => unreachable!("schedule: неожиданное правило {r:?}"),
         }
     }
@@ -264,7 +275,7 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
         points,
         routines,
         cycles,
-        root: root.expect("schedule: root_cycle обязателен"),
+        root: root.ok_or_else(|| ParseError::Coded(Error::missing_argument("root_cycle")))?,
     })
 }
 
@@ -1990,9 +2001,15 @@ mod tests {
 
     #[test]
     fn parse_rejects_missing_root_cycle() {
-        // bad_syntax.cyclo: нет root_cycle → ошибка парсера без слага.
+        // bad_syntax.cyclo: нет root_cycle — missing-argument, а не молчаливый синтаксис.
         let src = include_str!("../../../../examples/invalid/bad_syntax.cyclo");
-        assert!(parse(src).is_err());
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'root_cycle'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
     }
 
     #[test]
@@ -2891,12 +2908,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_use_between_decls_and_schedule() {
+    fn schedule_members_free_order() {
+        // Корень первым, цикл перед точкой — валидно, состав тот же.
+        let src = "schedule \"T\" { \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            point A { actions = [x]; } }";
+        let file = parse(src).expect("перемешанные члены валидны");
+        assert_eq!(file.schedule.root.stmts.len(), 1);
+        assert_eq!(file.schedule.cycles[0].name, "R");
+        assert_eq!(file.schedule.points[0].name, "A");
+    }
+
+    #[test]
+    fn duplicate_root_cycle_reports_slug() {
+        // Второй корень — duplicate-argument.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } \
+            root_cycle start_time = \"2026-01-02T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'root_cycle'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_use_between_decls() {
+        // use вперемешку с объявлениями (до расписания) — валидно.
         let src = "const K = 1; use \"a.cyclo\"; schedule \"T\" { \
             point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
-        assert!(parse(src).is_err());
+        let s = parse(src).expect("use между объявлениями валиден");
+        assert_eq!(s.uses, vec!["a.cyclo".to_owned()]);
     }
 
     #[test]

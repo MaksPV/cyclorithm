@@ -9,11 +9,11 @@
 Каждая ошибка ниже названа по ситуации, а не по номеру: имя стабильно,
 новые ситуации вставляются без перенумерации. Тексты сообщений дословные.
 
-Ошибки синтаксиса (файл не разбирается по грамматике, включая отсутствие
-корневого цикла целиком) возвращают код `1` без имени ситуации. Поля шапок
-со свободным порядком проверяет сборка: нет обязательного поля —
-`missing-argument`, поле дважды — `duplicate-argument` (код `1`, слаг
-с префиксом, как у валидации). Импорты
+Ошибки синтаксиса (файл не разбирается по грамматике) возвращают код `1`
+без имени ситуации. Поля шапок со свободным порядком проверяет сборка:
+нет обязательного поля — `missing-argument` (включая отсутствие корневого
+цикла целиком), поле дважды — `duplicate-argument` (включая второй корень).
+Импорты
 (`cannot-read-import`, `schedule-in-import`) разрешаются раньше проверок
 решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
 побеждает: имена → рекурсия → таблицы → длительности и границы → условия →
@@ -23,8 +23,8 @@
 
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
-| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`, `actions` у `point`) |
-| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'` | Оставить поле шапки один раз |
+| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'`, `missing argument 'root_cycle'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`, `actions` у `point`, сам `root_cycle`) |
+| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'`, `duplicate argument 'root_cycle'` | Оставить поле шапки один раз |
 
 ## Имена
 

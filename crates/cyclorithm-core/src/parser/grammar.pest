@@ -9,14 +9,18 @@
 //
 // Ловушка: `ms` в альтернативе раньше `m`, иначе `1ms` режется на `m` + `s`.
 
-file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
+file        = { SOI ~ (use_decl | decl)* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
-// Единица импорта: объявления и свои use, расписание — опционально
+// Единица импорта: объявления и свои use в любом порядке, расписание — опционально
 // (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
-unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
+unit_file   = { SOI ~ (use_decl | decl)* ~ schedule? ~ EOI }
 use_decl    = { kw_use ~ string ~ ";" }
-schedule    = { kw_schedule ~ string ~ "{" ~ timezone_decl? ~ point* ~ timezone_decl? ~ routine* ~ timezone_decl? ~ cycle* ~ timezone_decl? ~ root_cycle ~ timezone_decl? ~ "}" }
+// Члены расписания — в любом порядке; корень ровно один, timezone не более
+// одной (считает сборка: missing-argument / duplicate-argument).
+// `use` после расписания нет: schedule — конец файла.
+schedule    = { kw_schedule ~ string ~ "{" ~ schedule_member* ~ "}" }
+schedule_member = { timezone_decl | point | routine | cycle | root_cycle }
 timezone_decl = { kw_timezone ~ "=" ~ string }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
