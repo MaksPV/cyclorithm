@@ -13,13 +13,229 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{Expr, Invocation, Schedule};
+use crate::parser::{Expr, Invocation, Routine, Schedule};
 
 use crate::Error;
-use crate::cond::{Defs, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs};
+use crate::cond::{
+    AtFrame, Defs, TimeTable, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs,
+};
 use crate::datetime::{parse_in_frame, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
 use crate::validate::{NameTables, instantiate, plan_stmts, plan_stmts_with, root_actual_ms};
+
+/// Зона кадра в мс (`file.or(query)`, минуты → мс): стена = абсолют + зона.
+/// Тот же кадр, что у `parse_in_frame` для наивных дат файла.
+fn frame_zone_ms(file_zone: Option<i16>, query_zone: Option<i16>) -> i64 {
+    file_zone.or(query_zone).map_or(0, |z| z as i64 * 60_000)
+}
+
+/// Кадр стека `here.stack`: имя цикла/рутины и его параметры.
+/// Пустые параметры (`root_cycle`) — без ключа `params`.
+#[derive(Debug, Clone)]
+struct StackFrame {
+    name: String,
+    params: Vec<(String, Value)>,
+}
+
+/// Кандидат `here.events`: строка инстанции с флагом `enabled`.
+/// `point` — для действий точки, `cycle` — для вызовов циклов/рутин.
+/// Невыполненная строка аргументы не трогает (как и раньше): её параметры
+/// пусты (у рутины — только дескриптор `TC`, таблица — литерал).
+#[derive(Debug, Clone)]
+struct Candidate {
+    point: Option<PointView>,
+    cycle: Option<CycleView>,
+    event: EventView,
+}
+
+#[derive(Debug, Clone)]
+struct PointView {
+    name: String,
+    actions: Vec<String>,
+    attrs: Vec<(String, Value)>,
+}
+
+#[derive(Debug, Clone)]
+enum CycleView {
+    Cycle {
+        name: String,
+        duration_ms: i64,
+        params: Vec<(String, Value)>,
+    },
+    Routine {
+        name: String,
+        params: Vec<(String, Value)>,
+        labels: Vec<(String, Value)>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct EventView {
+    action: Option<String>,
+    offset: i64,
+    label: Option<String>,
+    at: AtFrame,
+    enabled: bool,
+}
+
+impl StackFrame {
+    fn to_value(&self) -> Value {
+        let mut pairs = vec![("name".to_owned(), Value::Str(self.name.clone()))];
+        if !self.params.is_empty() {
+            pairs.push(("params".to_owned(), Value::Map(self.params.clone())));
+        }
+        Value::Map(pairs)
+    }
+}
+
+impl PointView {
+    fn to_value(&self) -> Value {
+        Value::Map(vec![
+            ("name".to_owned(), Value::Str(self.name.clone())),
+            (
+                "actions".to_owned(),
+                Value::Array(self.actions.iter().cloned().map(Value::Str).collect()),
+            ),
+            ("attrs".to_owned(), Value::Map(self.attrs.clone())),
+        ])
+    }
+}
+
+impl CycleView {
+    fn to_value(&self) -> Value {
+        match self {
+            CycleView::Cycle {
+                name,
+                duration_ms,
+                params,
+            } => Value::Map(vec![
+                ("name".to_owned(), Value::Str(name.clone())),
+                ("duration".to_owned(), Value::Num(*duration_ms)),
+                ("params".to_owned(), Value::Map(params.clone())),
+            ]),
+            CycleView::Routine {
+                name,
+                params,
+                labels,
+            } => Value::Map(vec![
+                ("name".to_owned(), Value::Str(name.clone())),
+                ("params".to_owned(), Value::Map(params.clone())),
+                ("labels".to_owned(), Value::Map(labels.clone())),
+            ]),
+        }
+    }
+}
+
+impl EventView {
+    fn to_value(&self) -> Value {
+        let mut pairs = Vec::with_capacity(5);
+        if let Some(action) = &self.action {
+            pairs.push(("action".to_owned(), Value::Str(action.clone())));
+        }
+        pairs.push(("offset".to_owned(), Value::Num(self.offset)));
+        if let Some(label) = &self.label {
+            pairs.push(("label".to_owned(), Value::Str(label.clone())));
+        }
+        pairs.push(("at".to_owned(), self.at.to_value()));
+        pairs.push(("enabled".to_owned(), Value::Bool(self.enabled)));
+        Value::Map(pairs)
+    }
+}
+
+impl Candidate {
+    fn to_value(&self) -> Value {
+        let mut pairs = Vec::with_capacity(3);
+        if let Some(point) = &self.point {
+            pairs.push(("point".to_owned(), point.to_value()));
+        }
+        if let Some(cycle) = &self.cycle {
+            pairs.push(("cycle".to_owned(), cycle.to_value()));
+        }
+        pairs.push(("event".to_owned(), self.event.to_value()));
+        Value::Map(pairs)
+    }
+}
+
+/// Словарь `here`: стек вызовов, все кандидаты и геттеры по флагу.
+/// Снимок «на данный момент» — строится заново на каждую строку;
+/// в `action_attrs` замораживается копированием (вложенный `here` мёртв,
+/// живых ссылок нет). Отсутствующие `point`/`cycle`/`action`/`label` —
+/// без ключа (`Value` без null): доступ к ним — `unknown-field`.
+fn here_value(stack: &[StackFrame], events: &[Candidate]) -> Value {
+    let all: Vec<Value> = events.iter().map(Candidate::to_value).collect();
+    let enabled: Vec<Value> = events
+        .iter()
+        .filter(|c| c.event.enabled)
+        .map(Candidate::to_value)
+        .collect();
+    let disabled: Vec<Value> = events
+        .iter()
+        .filter(|c| !c.event.enabled)
+        .map(Candidate::to_value)
+        .collect();
+    Value::Map(vec![
+        (
+            "stack".to_owned(),
+            Value::Array(stack.iter().map(StackFrame::to_value).collect()),
+        ),
+        ("events".to_owned(), Value::Array(all)),
+        ("enabled_events".to_owned(), Value::Array(enabled)),
+        ("disabled_events".to_owned(), Value::Array(disabled)),
+    ])
+}
+
+/// Дескриптор таблицы для `TC`: `{duration, labels}` (метки — в мс).
+fn table_value(table: &TimeTable) -> Result<Value, Error> {
+    let duration = duration_ms(&table.duration)?;
+    let mut labels = Vec::with_capacity(table.rows.len());
+    for row in &table.rows {
+        labels.push((row.label.clone(), Value::Num(duration_ms(&row.offset)?)));
+    }
+    Ok(Value::Map(vec![
+        ("duration".to_owned(), Value::Num(duration)),
+        ("labels".to_owned(), Value::Map(labels)),
+    ]))
+}
+
+/// Имя таблицы вызова рутины (форма проверена в `validate_names`).
+fn call_table_name(args: &[Expr], name: &str) -> Result<String, Error> {
+    match args.first() {
+        Some(Expr::Name(t)) => Ok(t.clone()),
+        _ => unreachable!("форма вызова {name} проверена в validate_names"),
+    }
+}
+
+/// Параметры кадра `here` + дочернее окружение вызова рутины.
+type RoutineFrame = (Vec<(String, Value)>, HashMap<String, Value>);
+
+/// Данные вызова рутины: дескриптор `TC` + разрешённые аргументы.
+/// Табличный параметр из окружения затирается (в условиях он невидим).
+/// Возвращает параметры кадра `here` и дочернее окружение.
+fn routine_call_values(
+    routine: &Routine,
+    table_name: &str,
+    args: &[Expr],
+    at: &AtFrame,
+    ctx: &Ctx<'_, '_, '_, '_>,
+    env: &HashMap<String, Value>,
+) -> Result<RoutineFrame, Error> {
+    let table = ctx
+        .tables
+        .tables
+        .get(table_name)
+        .expect("таблица проверена");
+    let tc = table_value(table)?;
+    let table_param = routine.params.first().expect("параметры проверены");
+    let mut params = vec![(table_param.clone(), tc)];
+    let mut child = env.clone();
+    child.remove(table_param);
+    for (param, arg) in routine.params.iter().skip(1).zip(args.iter().skip(1)) {
+        let v = eval_expr_with_env(arg, at, ctx.defs, env)?;
+        params.push((param.clone(), v.clone()));
+        child.insert(param.clone(), v);
+    }
+    Ok((params, child))
+}
 
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
 /// `[start, end)` в мс epoch (конец — по объявленной длительности).
@@ -57,6 +273,7 @@ fn unfold_root_instance(
     k: i128,
     base: i128,
     period_ms: i64,
+    zone_ms: i64,
     out: &mut Vec<RawEvent>,
     seq: &mut usize,
 ) -> Result<(), Error> {
@@ -80,8 +297,25 @@ fn unfold_root_instance(
         &schedule.root.duration.raw,
         tables,
     )?;
+    let stack = [StackFrame {
+        name: "root_cycle".to_owned(),
+        params: Vec::new(),
+    }];
+    let mut events = Vec::new();
     for (st, pl) in schedule.root.stmts.iter().zip(plans.iter()) {
-        unfold_stmt(st, &pl.starts, base, k, &root_span, &mut ctx, &root_env)?;
+        unfold_stmt(
+            st,
+            &pl.starts,
+            None,
+            base,
+            k,
+            &root_span,
+            &mut ctx,
+            &root_env,
+            &stack,
+            &mut events,
+            zone_ms,
+        )?;
     }
     Ok(())
 }
@@ -158,6 +392,7 @@ pub fn next_events(
     let point_attrs = resolve_point_attrs(schedule, defs)?;
     // Период влезает в i64: пришёл из root_period_ms.
     let period_ms = period as i64;
+    let zone_ms = frame_zone_ms(file_zone, query_zone);
 
     let from = from_ms as i128;
     let cap = from + within_ms as i128;
@@ -185,6 +420,7 @@ pub fn next_events(
             k,
             base,
             period_ms,
+            zone_ms,
             &mut buf,
             &mut seq,
         )?;
@@ -236,6 +472,7 @@ pub fn expand(
     let horizon = root_actual_ms(schedule, tables)?;
     // Атрибуты точек — после всех проверок главы ошибок, до первой строки.
     let point_attrs = resolve_point_attrs(schedule, defs)?;
+    let zone_ms = frame_zone_ms(file_zone, query_zone);
 
     // i128: около лимита i64 разности платежа не должны паниковать.
     let start = start_ms as i128;
@@ -261,6 +498,7 @@ pub fn expand(
             k,
             base,
             period_ms,
+            zone_ms,
             &mut raw,
             &mut seq,
         )?;
@@ -305,27 +543,144 @@ struct Ctx<'a, 'n, 'o, 'm> {
 }
 /// Развёртка строки: старты экземпляров уже посчитаны `plan_stmts`
 /// (валидация прошла, счёт конечен). Порядок обхода задаёт `seq` для сортировки.
-/// `env` — динамическое окружение параметров цепочки вызовов.
+/// `env` — динамическое окружение параметров цепочки вызовов,
+/// `stack`/`events` — контекст инстанции для `here` (снимок «на данный момент»:
+/// кандидаты ранее разобранных строк), `row_label` — метка строки в рутине.
+/// Невыполненная строка пишется в `here.events` с `enabled: false` и дальше
+/// не идёт (в timeline попадают только выполненные).
+#[allow(clippy::too_many_arguments)]
 fn unfold_stmt(
     stmt: &crate::parser::Stmt,
     starts: &[i64],
+    row_label: Option<&str>,
     base: i128,
     k: i128,
     parent: &Span,
     ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
+    stack: &[StackFrame],
+    events: &mut Vec<Candidate>,
+    zone_ms: i64,
 ) -> Result<(), Error> {
     for &start in starts {
-        let at_base = base + start as i128;
-        if let Some(cond) = &stmt.condition {
-            let at = i64::try_from(at_base).unwrap_or(i64::MAX);
-            if !eval_cond_with_env(cond, at, ctx.defs, env)? {
-                continue;
-            }
+        let abs = i64::try_from(base + start as i128).unwrap_or(i64::MAX);
+        let at = AtFrame::new(abs, zone_ms);
+        let mut cond_env = env.clone();
+        cond_env.insert("here".to_owned(), here_value(stack, events));
+        let enabled = match &stmt.condition {
+            Some(cond) => eval_cond_with_env(cond, &at, ctx.defs, &cond_env)?,
+            None => true,
+        };
+        if !enabled {
+            events.push(disabled_candidate(
+                &stmt.invocation,
+                row_label,
+                start,
+                at,
+                ctx,
+            )?);
+            continue;
         }
-        unfold(&stmt.invocation, at_base, k, parent, ctx, env)?;
+        unfold(
+            &stmt.invocation,
+            row_label,
+            start,
+            base + start as i128,
+            k,
+            parent,
+            ctx,
+            env,
+            stack,
+            events,
+            zone_ms,
+        )?;
     }
     Ok(())
+}
+
+/// Кандидат невыполненной строки: аргументы не вычисляются (как и раньше),
+/// параметры пусты; у рутины — только дескриптор `TC` (таблица — литерал).
+fn disabled_candidate(
+    invocation: &Invocation,
+    row_label: Option<&str>,
+    offset: i64,
+    at: AtFrame,
+    ctx: &Ctx<'_, '_, '_, '_>,
+) -> Result<Candidate, Error> {
+    let label = row_label.map(str::to_owned);
+    let event = |action: Option<String>| EventView {
+        action,
+        offset,
+        label,
+        at,
+        enabled: false,
+    };
+    match invocation {
+        Invocation::PointAction { point, action, .. } => {
+            let decl = ctx.tables.points.get(point.as_str());
+            Ok(Candidate {
+                point: Some(PointView {
+                    name: point.clone(),
+                    actions: decl.map(|p| p.actions.clone()).unwrap_or_default(),
+                    attrs: ctx.point_attrs.get(point).cloned().unwrap_or_default(),
+                }),
+                cycle: None,
+                event: event(Some(action.clone())),
+            })
+        }
+        Invocation::CycleCall { name, args } => {
+            if ctx.tables.routines.contains_key(name.as_str()) {
+                let routine = ctx
+                    .tables
+                    .routines
+                    .get(name.as_str())
+                    .expect("имена проверены");
+                let table_name = call_table_name(args, name)?;
+                let table = ctx
+                    .tables
+                    .tables
+                    .get(table_name.as_str())
+                    .expect("таблица проверена");
+                let table_param = routine.params.first().expect("параметры проверены");
+                let tc = table_value(table)?;
+                let labels = match &tc {
+                    Value::Map(pairs) => pairs
+                        .iter()
+                        .find_map(|(k, v)| (k == "labels").then(|| v.clone()))
+                        .and_then(|v| match v {
+                            Value::Map(xs) => Some(xs),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                Ok(Candidate {
+                    point: None,
+                    cycle: Some(CycleView::Routine {
+                        name: name.clone(),
+                        params: vec![(table_param.clone(), tc)],
+                        labels,
+                    }),
+                    event: event(None),
+                })
+            } else {
+                let cycle = ctx
+                    .tables
+                    .cycles
+                    .get(name.as_str())
+                    .expect("имена уже проверены");
+                Ok(Candidate {
+                    point: None,
+                    cycle: Some(CycleView::Cycle {
+                        name: name.clone(),
+                        duration_ms: duration_ms(&cycle.duration)?,
+                        params: Vec::new(),
+                    }),
+                    event: event(None),
+                })
+            }
+        }
+    }
 }
 
 /// Рекурсивная развёртка вызова с накопленной базой времени.
@@ -333,26 +688,54 @@ fn unfold_stmt(
 /// Аргументы вычисляются в окружении вызывающего (`at` — время экземпляра),
 /// параметры связываются поверх него (вложенный вызов перетирает целиком);
 /// вызов без аргументов окружение не меняет (течёт вниз как есть).
+/// Выполненная строка пишется в `here.events` с `enabled: true` до разбора
+/// тела — блок действий видит `here` уже с собственным кандидатом.
+#[allow(clippy::too_many_arguments)]
 fn unfold(
     invocation: &Invocation,
+    row_label: Option<&str>,
+    offset: i64,
     base: i128,
     k: i128,
     parent: &Span,
     ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
+    stack: &[StackFrame],
+    events: &mut Vec<Candidate>,
+    zone_ms: i64,
 ) -> Result<(), Error> {
-    let at = i64::try_from(base).unwrap_or(i64::MAX);
+    let at = AtFrame::new(i64::try_from(base).unwrap_or(i64::MAX), zone_ms);
+    let label = row_label.map(str::to_owned);
     match invocation {
         Invocation::PointAction {
             point,
             action,
             block,
         } => {
+            let decl = ctx.tables.points.get(point.as_str());
+            events.push(Candidate {
+                point: Some(PointView {
+                    name: point.clone(),
+                    actions: decl.map(|p| p.actions.clone()).unwrap_or_default(),
+                    attrs: ctx.point_attrs.get(point).cloned().unwrap_or_default(),
+                }),
+                cycle: None,
+                event: EventView {
+                    action: Some(action.clone()),
+                    offset,
+                    label,
+                    at,
+                    enabled: true,
+                },
+            });
             // Блок — либо литерал (значения-выражения), либо ссылка на
-            // константу-мапу: оба вычислимы одним `eval_expr`.
+            // константу-мапу: оба вычислимы одним `eval_expr`. `here` в блоке —
+            // заморозка момента (включая собственный кандидат): дальше не живой.
+            let mut block_env = env.clone();
+            block_env.insert("here".to_owned(), here_value(stack, events));
             let action_attrs = match block {
                 None => Vec::new(),
-                Some(b) => match eval_expr_with_env(b, at, ctx.defs, env)? {
+                Some(b) => match eval_expr_with_env(b, &at, ctx.defs, &block_env)? {
                     Value::Map(pairs) => pairs,
                     _ => return Err(Error::type_mismatch()),
                 },
@@ -373,7 +756,19 @@ fn unfold(
         }
         Invocation::CycleCall { name, args } => {
             if ctx.tables.routines.contains_key(name.as_str()) {
-                unfold_routine(name, args, base, k, ctx, env)
+                unfold_routine(
+                    name,
+                    args,
+                    label.as_deref(),
+                    offset,
+                    base,
+                    k,
+                    ctx,
+                    env,
+                    stack,
+                    events,
+                    zone_ms,
+                )
             } else {
                 let cycle = ctx
                     .tables
@@ -383,18 +778,57 @@ fn unfold(
                 // Арность уже проверена (wrong-arguments): длины совпадают.
                 debug_assert_eq!(cycle.params.len(), args.len());
                 let mut child = env.clone();
+                let mut params = Vec::with_capacity(cycle.params.len());
                 for (param, arg) in cycle.params.iter().zip(args.iter()) {
-                    child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
+                    let v = eval_expr_with_env(arg, &at, ctx.defs, env)?;
+                    params.push((param.clone(), v.clone()));
+                    child.insert(param.clone(), v);
                 }
+                events.push(Candidate {
+                    point: None,
+                    cycle: Some(CycleView::Cycle {
+                        name: name.clone(),
+                        duration_ms: duration_ms(&cycle.duration)?,
+                        params: params.clone(),
+                    }),
+                    event: EventView {
+                        action: None,
+                        offset,
+                        label,
+                        at,
+                        enabled: true,
+                    },
+                });
                 let limit = duration_ms(&cycle.duration)?;
                 let child_span = Span {
                     cycle: name.clone(),
                     start: clamp_i64(base),
                     end: clamp_i64(base + limit as i128),
                 };
+                let child_stack: Vec<StackFrame> = stack
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(StackFrame {
+                        name: name.clone(),
+                        params,
+                    }))
+                    .collect();
+                let mut child_events = Vec::new();
                 let plans = plan_stmts(&cycle.stmts, limit, &cycle.duration.raw, ctx.tables)?;
                 for (st, pl) in cycle.stmts.iter().zip(plans.iter()) {
-                    unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &child)?;
+                    unfold_stmt(
+                        st,
+                        &pl.starts,
+                        None,
+                        base,
+                        k,
+                        &child_span,
+                        ctx,
+                        &child,
+                        &child_stack,
+                        &mut child_events,
+                        zone_ms,
+                    )?;
                 }
                 Ok(())
             }
@@ -408,45 +842,81 @@ fn unfold(
 /// резолв идёт `env` раньше `defs`).
 /// Табличный параметр из окружения затирается (в условиях он невидим — unknown-name).
 /// Спан именуется рутиной (см. docs/reference/output.md: в спанах светится её имя).
+/// Тело и вызовы слотов делят контекст `here`: вызовы слотов видят итоговый
+/// список тела (детерминирован) — так чинится «обед всегда».
+#[allow(clippy::too_many_arguments)]
 fn unfold_routine(
     name: &str,
     args: &[Expr],
+    row_label: Option<&str>,
+    offset: i64,
     base: i128,
     k: i128,
     ctx: &mut Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
+    stack: &[StackFrame],
+    events: &mut Vec<Candidate>,
+    zone_ms: i64,
 ) -> Result<(), Error> {
-    let at = i64::try_from(base).unwrap_or(i64::MAX);
+    let at = AtFrame::new(i64::try_from(base).unwrap_or(i64::MAX), zone_ms);
     let routine = ctx.tables.routines.get(name).expect("имена уже проверены");
     // Таблица — литеральная: пробросы подставлены при инстанцировании
     // родительской рутины, в циклах/корне — только литералы по валидации.
     // Арность уже проверена (wrong-arguments): длины совпадают.
     debug_assert_eq!(routine.params.len(), args.len());
-    let table_name = match args.first() {
-        Some(Expr::Name(t)) => t.as_str(),
-        _ => unreachable!("форма вызова проверена в validate_names"),
-    };
-    let table_param = routine.params.first().expect("параметры проверены");
-    let mut child = env.clone();
-    child.remove(table_param);
-    for (param, arg) in routine.params.iter().skip(1).zip(args.iter().skip(1)) {
-        child.insert(param.clone(), eval_expr_with_env(arg, at, ctx.defs, env)?);
-    }
+    let table_name = call_table_name(args, name)?;
+    let (params, child) = routine_call_values(routine, &table_name, args, &at, ctx, env)?;
     let table = ctx
         .tables
         .tables
-        .get(table_name)
+        .get(table_name.as_str())
         .expect("таблица проверена");
+    let labels = match params.first() {
+        Some((_, Value::Map(pairs))) => pairs
+            .iter()
+            .find_map(|(k, v)| (k == "labels").then(|| v.clone()))
+            .and_then(|v| match v {
+                Value::Map(xs) => Some(xs),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    events.push(Candidate {
+        point: None,
+        cycle: Some(CycleView::Routine {
+            name: name.to_owned(),
+            params: params.clone(),
+            labels,
+        }),
+        event: EventView {
+            action: None,
+            offset,
+            label: row_label.map(str::to_owned),
+            at,
+            enabled: true,
+        },
+    });
     let limit = duration_ms(&table.duration)?;
     let child_span = Span {
         cycle: name.to_owned(),
         start: clamp_i64(base),
         end: clamp_i64(base + limit as i128),
     };
-    let inst = instantiate(routine, table_name, ctx.tables)?;
+    let child_stack: Vec<StackFrame> = stack
+        .iter()
+        .cloned()
+        .chain(std::iter::once(StackFrame {
+            name: name.to_owned(),
+            params,
+        }))
+        .collect();
+    let inst = instantiate(routine, &table_name, ctx.tables)?;
     // Тело и вызовы слотов делят один таймлайн: занятость течёт из тела в вызовы слотов
-    // (как в `check_tables`, где списки склеиваются).
+    // (как в `check_tables`, где списки склеиваются). Контекст `here` — свой
+    // на инстанцию: тело пишет, вызовы слотов читают итог.
     let mut occupied: Vec<(i64, i64)> = Vec::new();
+    let mut routine_events = Vec::new();
     let body = plan_stmts_with(
         &inst.body,
         limit,
@@ -454,8 +924,25 @@ fn unfold_routine(
         ctx.tables,
         &mut occupied,
     )?;
-    for (st, pl) in inst.body.iter().zip(body.iter()) {
-        unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &child)?;
+    for ((st, pl), lab) in inst
+        .body
+        .iter()
+        .zip(body.iter())
+        .zip(inst.body_labels.iter())
+    {
+        unfold_stmt(
+            st,
+            &pl.starts,
+            lab.as_deref(),
+            base,
+            k,
+            &child_span,
+            ctx,
+            &child,
+            &child_stack,
+            &mut routine_events,
+            zone_ms,
+        )?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
     let slot_calls = plan_stmts_with(
@@ -465,8 +952,25 @@ fn unfold_routine(
         ctx.tables,
         &mut occupied,
     )?;
-    for (st, pl) in inst.slot_calls.iter().zip(slot_calls.iter()) {
-        unfold_stmt(st, &pl.starts, base, k, &child_span, ctx, &fresh)?;
+    for ((st, pl), lab) in inst
+        .slot_calls
+        .iter()
+        .zip(slot_calls.iter())
+        .zip(inst.slot_labels.iter())
+    {
+        unfold_stmt(
+            st,
+            &pl.starts,
+            Some(lab.as_str()),
+            base,
+            k,
+            &child_span,
+            ctx,
+            &fresh,
+            &child_stack,
+            &mut routine_events,
+            zone_ms,
+        )?;
     }
     Ok(())
 }
@@ -1159,7 +1663,7 @@ schedule "Редкое" {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
-            [at >= 1767247200000] 6h: R(); [at < 1767290400000] 18h: R(); } }";
+            [at.wall >= 1767247200000] 6h: R(); [at.wall < 1767290400000] 18h: R(); } }";
         let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
@@ -1174,7 +1678,7 @@ schedule "Редкое" {
             cycle INNER duration = 1h { 0m: A.x(); } \
             cycle OUTER duration = 2h { 0m: INNER(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
-            [at < 0] 6h: OUTER(); 6h: OUTER(); } }";
+            [at.wall < 0] 6h: OUTER(); 6h: OUTER(); } }";
         let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
@@ -1189,7 +1693,7 @@ schedule "Редкое" {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle R duration = 1h20m { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
-            [at < 1767231000000] 0h: fill R(); } }";
+            [at.wall < 1767231000000] 0h: fill R(); } }";
         let (ast, t, d) = setup(src);
         let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
         assert_eq!(
@@ -1314,18 +1818,194 @@ schedule "Редкое" {
         let events = expand(ast, &t, d, s, e, None).unwrap();
         assert_eq!(events.len(), 2);
         for case in [("2026-09-07T00:00:00", 1), ("2026-09-13T00:00:00", 7)] {
-            let at = parse_datetime(case.0).unwrap();
+            let abs = parse_datetime(case.0).unwrap();
+            let at = AtFrame::new(abs, 0);
             let v = eval_expr_with_env(
                 &crate::parser::Expr::Call {
                     name: "day_of_week".to_owned(),
                     args: vec![crate::parser::Expr::At],
                 },
-                at,
+                &at,
                 d,
                 &HashMap::new(),
             )
             .unwrap();
             assert_eq!(v, Value::Num(case.1), "для {}", case.0);
         }
+    }
+
+    #[test]
+    fn here_stack_reports_call_path() {
+        // Стек — путь вызовов: корень → цикл; глубина = len(here.stack).
+        let src = "schedule \"T\" { point B { actions = [ring]; } \
+            cycle R duration = 1h { 0m: B.ring() \
+            {\"depth\": len(here.stack), \"top\": here.stack[-1].name, \"root\": here.stack[0].name}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        assert_eq!(events.len(), 1);
+        let num = |n: i64| Value::Num(n);
+        let str_ = |s: &str| Value::Str(s.to_owned());
+        assert_eq!(
+            events[0].action_attrs,
+            vec![
+                ("depth".to_owned(), num(2)),
+                ("top".to_owned(), str_("R")),
+                ("root".to_owned(), str_("root_cycle")),
+            ]
+        );
+    }
+
+    #[test]
+    fn here_events_split_enabled_disabled() {
+        // Все кандидаты — в here.events, выполненные/нет — в геттерах.
+        // Записывающая строка — последняя: видит себя и двух предшественников.
+        let src = "schedule \"T\" { point B { actions = [ring]; } \
+            cycle R duration = 2h { \
+            0m: B.ring(); \
+            [false] 30m: B.ring(); \
+            60m: B.ring() {\"all\": len(here.events), \"on\": len(here.enabled_events), \"off\": len(here.disabled_events)}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        assert_eq!(
+            times(&events),
+            vec!["2026-01-01T06:00:00", "2026-01-01T07:00:00"]
+        );
+        let num = |n: i64| Value::Num(n);
+        assert_eq!(
+            events[1].action_attrs,
+            vec![
+                ("all".to_owned(), num(3)),
+                ("on".to_owned(), num(2)),
+                ("off".to_owned(), num(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn slot_call_sees_finished_body() {
+        // Вызов слота видит итоговый список тела: при пустом теле обеда нет.
+        let src = "time_const DAY duration = 3h \
+            { [len(here.enabled_events) > 0] lunch: 2h -> LUNCH(); } \
+            schedule \"T\" { point B { actions = [ring]; } \
+            cycle LUNCH duration = 30m { 0m: B.ring(); } \
+            routine M(TC, flag) { [flag == 1] 0h: B.ring(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h \
+            { 0h: M(DAY, 1); 12h: M(DAY, 0); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        // Тело с flag=1 даёт звонок в 00:00 и обед в 02:00; тело с flag=0 — ничего.
+        assert_eq!(
+            times(&events),
+            vec!["2026-01-01T00:00:00", "2026-01-01T02:00:00"]
+        );
+    }
+
+    #[test]
+    fn here_snapshot_freezes_in_block() {
+        // {"snap": here} — мёртвый JSON момента: стек, кандидат, стена.
+        let src = "schedule \"T\" { point B { actions = [ring]; } \
+            cycle R duration = 1h { 0m: B.ring() {\"snap\": here}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        assert_eq!(events.len(), 1);
+        let wall = parse_datetime("2026-01-01T06:00:00").unwrap();
+        let at = Value::Map(vec![
+            ("wall".to_owned(), Value::Num(wall)),
+            ("abs".to_owned(), Value::Num(wall)),
+            ("zone".to_owned(), Value::Num(0)),
+        ]);
+        let candidate = Value::Map(vec![
+            (
+                "point".to_owned(),
+                Value::Map(vec![
+                    ("name".to_owned(), Value::Str("B".to_owned())),
+                    (
+                        "actions".to_owned(),
+                        Value::Array(vec![Value::Str("ring".to_owned())]),
+                    ),
+                    ("attrs".to_owned(), Value::Map(vec![])),
+                ]),
+            ),
+            (
+                "event".to_owned(),
+                Value::Map(vec![
+                    ("action".to_owned(), Value::Str("ring".to_owned())),
+                    ("offset".to_owned(), Value::Num(0)),
+                    ("at".to_owned(), at),
+                    ("enabled".to_owned(), Value::Bool(true)),
+                ]),
+            ),
+        ]);
+        let snap = Value::Map(vec![
+            (
+                "stack".to_owned(),
+                Value::Array(vec![
+                    Value::Map(vec![(
+                        "name".to_owned(),
+                        Value::Str("root_cycle".to_owned()),
+                    )]),
+                    Value::Map(vec![("name".to_owned(), Value::Str("R".to_owned()))]),
+                ]),
+            ),
+            ("events".to_owned(), Value::Array(vec![candidate.clone()])),
+            (
+                "enabled_events".to_owned(),
+                Value::Array(vec![candidate.clone()]),
+            ),
+            ("disabled_events".to_owned(), Value::Array(vec![])),
+        ]);
+        assert_eq!(events[0].action_attrs, vec![("snap".to_owned(), snap)]);
+    }
+
+    #[test]
+    fn here_chains_reach_params_and_labels() {
+        // Цепочки: параметры кадра, метка кандидата, метки таблицы.
+        let src = "const SUBJ = {\"name\": \"БЖД\", \"teacher\": \"Иванов\"}; \
+            time_const DAY duration = 2h { first: 0m; } \
+            schedule \"T\" { point B { actions = [ring]; } \
+            routine M(TC, subj) { first: B.ring() \
+            {\"t\": here.stack[-1].params.subj.teacher, \
+            \"lab\": here.events[0].event.label, \
+            \"slot\": here.stack[-1].params.TC.labels.first}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(DAY, SUBJ); } }";
+        let (ast, t, d) = setup(src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        assert_eq!(events.len(), 1);
+        let str_ = |s: &str| Value::Str(s.to_owned());
+        assert_eq!(
+            events[0].action_attrs,
+            vec![
+                ("t".to_owned(), str_("Иванов")),
+                ("lab".to_owned(), str_("first")),
+                ("slot".to_owned(), Value::Num(0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn wall_calendar_uses_frame_zone() {
+        // С timezone=+03:00 стена понедельника 07.09 — понедельник (dow==mon):
+        // абсолют (воскресенье по UTC) дня бы не дал.
+        let src = "schedule \"T\" { timezone = \"+03:00\" point B { actions = [ring]; } \
+            cycle R duration = 1h { 0m: B.ring(); } \
+            root_cycle start_time = \"2026-09-07T00:00:00\", duration = 24h { \
+            [dow(at) == mon] 0h: R(); } }";
+        let (ast, t, d) = setup(src);
+        // Окно абсолютами: событие — 2026-09-06T21:00Z.
+        let (s, e) = window("2026-09-06T21:00:00", "2026-09-07T21:00:00");
+        let events = expand(ast, &t, d, s, e, None).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].time,
+            parse_datetime("2026-09-06T21:00:00").unwrap()
+        );
     }
 }

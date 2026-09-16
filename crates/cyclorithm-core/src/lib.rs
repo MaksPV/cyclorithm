@@ -80,8 +80,9 @@ impl Error {
         Self::coded("duplicate-argument", format!("duplicate argument '{name}'"))
     }
 
-    /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
-    /// ничего нельзя, иначе момент молча затенит объявление.
+    /// `reserved-name`: `at` (момент строки) и `here` (контекст инстанции)
+    /// зарезервированы — объявлять так ничего нельзя, иначе синтетика
+    /// развёртки молча затенит объявление.
     pub fn reserved_name(name: &str) -> Self {
         Self::coded("reserved-name", format!("reserved name '{name}'"))
     }

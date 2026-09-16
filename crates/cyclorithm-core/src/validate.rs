@@ -453,10 +453,14 @@ fn slot_call_stmt(row: &SlotRow, slot_call: &Invocation) -> Stmt {
 
 /// Инстанцирование рутины с таблицей: тело со смещениями и вызовы слотов отдельно
 /// (вызовы слотов выполняются в пустом окружении — данные рутины им недоступны).
+/// Метки — параллельно строкам: `body_labels` (`Some` — строка была на метке),
+/// `slot_labels` — метки слотов таблицы.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
     pub body: Vec<Stmt>,
+    pub body_labels: Vec<Option<String>>,
     pub slot_calls: Vec<Stmt>,
+    pub slot_labels: Vec<String>,
 }
 
 /// Инстанцировать рутину с таблицей: метки → смещения слотов, проброс
@@ -474,14 +478,16 @@ pub fn instantiate(
         .expect("таблица уже проверена");
     let table_param = routine.params.first().expect("параметры уже проверены");
     let mut body = Vec::with_capacity(routine.stmts.len());
+    let mut body_labels = Vec::with_capacity(routine.stmts.len());
     for st in &routine.stmts {
-        let offset = match &st.offset {
-            RoutineOffset::Duration(d) => d.clone(),
+        let (offset, label) = match &st.offset {
+            RoutineOffset::Duration(d) => (d.clone(), None),
             RoutineOffset::Label(label) => match table.rows.iter().find(|r| &r.label == label) {
-                Some(slot) => slot.offset.clone(),
+                Some(slot) => (slot.offset.clone(), Some(label.clone())),
                 None => return Err(Error::unknown_slot(label)),
             },
         };
+        body_labels.push(label);
         let invocation = match &st.invocation {
             Invocation::CycleCall { name, args } if tables.routines.contains_key(name.as_str()) => {
                 let mut resolved = args.clone();
@@ -506,12 +512,19 @@ pub fn instantiate(
         });
     }
     let mut slot_calls = Vec::new();
+    let mut slot_labels = Vec::new();
     for row in &table.rows {
         if let Some(slot_call) = &row.slot_call {
             slot_calls.push(slot_call_stmt(row, slot_call));
+            slot_labels.push(row.label.clone());
         }
     }
-    Ok(Instance { body, slot_calls })
+    Ok(Instance {
+        body,
+        body_labels,
+        slot_calls,
+        slot_labels,
+    })
 }
 
 /// Проверить таблицы и инстанцирования рутин: длительности таблиц (invalid-duration),
