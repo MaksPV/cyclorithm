@@ -961,6 +961,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Библиотеки и use
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -977,6 +995,47 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#examplesreallibs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Настоящие библиотеки (examples/real/libs/)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examplesvalidlibs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Фикстуры тестов (examples/valid/libs/)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1120,6 +1179,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#examplesreallibs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Настоящие библиотеки (examples/real/libs/)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examplesvalidlibs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Фикстуры тестов (examples/valid/libs/)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1154,6 +1243,25 @@
 <li>Ненайденный файл и циклический импорт — ошибки <code>cannot-read-import</code> и <code>import-cycle</code>.</li>
 </ul>
 <p>Контрактный пример: <code>examples/valid/route.cyclo</code> + <code>libs/route_lib.cyclo</code>.</p>
+<h2 id="examplesreallibs">Настоящие библиотеки (<code>examples/real/libs/</code>)<a class="headerlink" href="#examplesreallibs" title="Permanent link">&para;</a></h2>
+<p>Переиспользуемый код, не привязанный к тестам: подключаются относительным
+путём от импортирующего файла (<code>../real/libs/julian.cyclo</code> из <code>examples/valid/</code>).
+Правила те же: только объявления, <code>__</code>-имена не пересекают границу файла.
+Здесь — только настоящие библиотеки; фикстуры контрактных тестов живут
+в <code>examples/valid/libs/</code> и библиотеками не являются.</p>
+<ul>
+<li><code>julian.cyclo</code> — юлианский календарь: разбор стены (<code>j_year</code>/<code>j_month</code>/<code>j_day</code>,
+  <code>j_datestr</code>), сборка стены (<code>julian_to_wall({"y","mo","d"})</code>), сдвиг <code>j_shift</code>.
+  День недели абсолютен (<code>j_dow = dow</code>). Кривые компоненты роняет страж
+  (<code>division-by-zero</code>); подробности — в шапке файла.
+  Примеры: <code>examples/valid/julian.cyclo</code>, <code>examples/valid/julian_1900.cyclo</code>.</li>
+</ul>
+<h2 id="examplesvalidlibs">Фикстуры тестов (<code>examples/valid/libs/</code>)<a class="headerlink" href="#examplesvalidlibs" title="Permanent link">&para;</a></h2>
+<p>Тест-кейсы, а не библиотеки: часть контракта примеров.</p>
+<ul>
+<li><code>route_lib.cyclo</code> — вторая половина контракта <code>route.cyclo</code>.</li>
+<li><code>holidays.cyclo</code> — выходные для теста импортов (<code>examples/valid/imports.cyclo</code>).</li>
+</ul>
 
 
 
