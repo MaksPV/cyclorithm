@@ -1991,6 +1991,25 @@ schedule "Редкое" {
     }
 
     #[test]
+    fn julian_guard_rejects_bad_components() {
+        // Страж julian_to_wall: кривой месяц — division-by-zero, не мусор.
+        // Библиотека подключается из настоящего файла (include_str).
+        let lib = include_str!("../../../examples/real/libs/julian.cyclo");
+        let src = [
+            lib,
+            " schedule \"T\" { point B { actions = [ring]; } \
+            cycle R duration = 1h { 0m: B.ring(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            [julian_to_wall({\"y\": 2026, \"mo\": 13, \"d\": 1}) == at.wall] 6h: R(); } }",
+        ]
+        .concat();
+        let (ast, t, d) = setup(&src);
+        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
+        let err = expand(ast, &t, d, s, e, None).expect_err("страж обязан ронять");
+        assert_eq!(err.code, "division-by-zero");
+    }
+
+    #[test]
     fn wall_calendar_uses_frame_zone() {
         // С timezone=+03:00 стена понедельника 07.09 — понедельник (dow==mon):
         // абсолют (воскресенье по UTC) дня бы не дал.

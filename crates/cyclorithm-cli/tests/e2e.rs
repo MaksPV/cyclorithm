@@ -157,6 +157,42 @@ fn rand_matches_expected_json() {
 }
 
 #[test]
+fn julian_matches_expected_json() {
+    // Юлианское Рождество (25.12 → 07.01) и roundtrip 30.03 → 12.04.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-05-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn julian_1900_matches_expected_json() {
+    // 29.02.1900 существует по-юлиански (13.03 н.ст.), mkdate его отверг бы.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian_1900.cyclo",
+        "--start",
+        "1900-03-01T00:00:00",
+        "--end",
+        "1900-03-31T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian_1900.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn reverse_matches_expected_json() {
     // Зеркало FWD (0/20/50 при 1h) едет как 60/40/10: параметры и условие — с ним.
     let out = run(&[

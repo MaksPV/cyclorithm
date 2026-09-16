@@ -17,3 +17,24 @@ use "libs/route_lib.cyclo";
 - Ненайденный файл и циклический импорт — ошибки `cannot-read-import` и `import-cycle`.
 
 Контрактный пример: `examples/valid/route.cyclo` + `libs/route_lib.cyclo`.
+
+## Настоящие библиотеки (`examples/real/libs/`)
+
+Переиспользуемый код, не привязанный к тестам: подключаются относительным
+путём от импортирующего файла (`../real/libs/julian.cyclo` из `examples/valid/`).
+Правила те же: только объявления, `__`-имена не пересекают границу файла.
+Здесь — только настоящие библиотеки; фикстуры контрактных тестов живут
+в `examples/valid/libs/` и библиотеками не являются.
+
+- `julian.cyclo` — юлианский календарь: разбор стены (`j_year`/`j_month`/`j_day`,
+  `j_datestr`), сборка стены (`julian_to_wall({"y","mo","d"})`), сдвиг `j_shift`.
+  День недели абсолютен (`j_dow = dow`). Кривые компоненты роняет страж
+  (`division-by-zero`); подробности — в шапке файла.
+  Примеры: `examples/valid/julian.cyclo`, `examples/valid/julian_1900.cyclo`.
+
+## Фикстуры тестов (`examples/valid/libs/`)
+
+Тест-кейсы, а не библиотеки: часть контракта примеров.
+
+- `route_lib.cyclo` — вторая половина контракта `route.cyclo`.
+- `holidays.cyclo` — выходные для теста импортов (`examples/valid/imports.cyclo`).
