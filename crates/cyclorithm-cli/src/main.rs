@@ -12,11 +12,10 @@
 //! Даты CLI — короткие формы (см. docs/reference/cli.md): `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM`,
 //! `+DURATION` (для `--end` — от `--start`, иначе — от now).
 
-use cyclorithm_core::cond::{check_conditions, resolve_units, Value};
-use cyclorithm_core::datetime::{format_datetime, parse_cli_datetime, parse_cli_duration};
-use cyclorithm_core::expand::{expand, next_events, Event};
-use cyclorithm_core::imports::collect_units;
-use cyclorithm_core::validate::{check_bounds, check_recursion, check_tables, validate_names};
+use cyclorithm_core::datetime::{format_datetime_tz, parse_cli_datetime_zoned, parse_cli_duration};
+use cyclorithm_core::pipeline::{
+    PipelineError, check_source, event_to_json_zoned, expand_window, next_window,
+};
 
 /// Дефолтный горизонт `next`: 366 дней в мс.
 const DEFAULT_WITHIN_MS: i64 = 366 * 86_400_000;
@@ -199,15 +198,14 @@ fn flags_next(rest: &[String]) -> Result<NextFlags, &'static str> {
     Ok(flags)
 }
 
-/// Текущий момент (UTC, наивный): мс epoch.
-fn now_ms() -> i64 {
-    i64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(i64::MAX)
+/// Текущий момент в системной зоне: `(мс epoch, офсет_минут)` — подпись
+/// дефолтного окна (см. docs/reference/cli.md). Без tzdata в ОС chrono
+/// отдаёт UTC (`Some(0)`); офсет шире ±23:59 невозможен по построению.
+fn now_local() -> (i64, Option<i16>) {
+    let now = chrono::Local::now();
+    let ms = now.timestamp_millis();
+    let mins = now.offset().local_minus_utc() / 60;
+    (ms, i16::try_from(mins).ok())
 }
 
 /// Текст программы и база `use`: файл (база — его директория)
@@ -241,57 +239,13 @@ fn read_source(src: &Src) -> Result<(String, std::path::PathBuf), i32> {
     }
 }
 
-/// Общий setup `run`/`next`/`check`: разбор → импорты → объявления → решётка главы ошибок.
-/// Продолжение `$then` выполняется в той же области видимости (таблицы
-/// заимствуют локальные данные — вернуть их наружу нельзя).
-macro_rules! setup {
-    ($text:expr, $base:expr, $ast:ident, $tables:ident, $defs:ident, $then:block) => {{
-        // Ошибка парсера — без слага (глава ошибок): текст pest как есть.
-        let mut __src = match cyclorithm_parser::parse(&$text) {
-            Ok(src) => src,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        if let Err(e) = cyclorithm_core::reverse::materialize_reverse(&mut __src.schedule) {
-            eprintln!("{e}");
-            return 1;
-        }
-        let $ast = &__src.schedule;
-        // Объявления — сверху файла: их ошибки (duplicate/unknown-name/wrong-arguments) раньше проверок решётки.
-        // Импорты (cannot-read-import/import-cycle/schedule-in-import) — раньше объявлений: склейка «импорты → программа».
-        let mut __groups = match collect_units(&__src.uses, $base.as_path(), &mut |p| {
-            std::fs::read_to_string(p)
-        }) {
-            Ok(groups) => groups,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        __groups.push(__src.decls.clone());
-        let ($defs, __reg) = match resolve_units(&__groups) {
-            Ok(defs) => defs,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        let $tables = match validate_names($ast, &__reg)
-            .and_then(|t| check_recursion($ast, &t).map(|()| t))
-            .and_then(|t| check_tables($ast, &t).map(|()| t))
-            .and_then(|t| check_bounds($ast, &t).map(|()| t))
-            .and_then(|t| check_conditions($ast, &$defs, &t).map(|()| t))
-        {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        $then
-    }};
+/// Ошибка конвейера в stderr: парсер — текст pest как есть, без слага
+/// (глава ошибок); валидация — `слаг: сообщение`.
+fn print_error(e: &PipelineError) {
+    match e {
+        PipelineError::Syntax(text) => eprintln!("{text}"),
+        PipelineError::Core(_) => eprintln!("{e}"),
+    }
 }
 
 fn cmd_check(src: Src) -> i32 {
@@ -299,10 +253,16 @@ fn cmd_check(src: Src) -> i32 {
         Ok(v) => v,
         Err(code) => return code,
     };
-    setup!(text, base, _ast, _tables, _defs, {
-        println!("ok");
-        0
-    })
+    match check_source(&text, &base) {
+        Ok(()) => {
+            println!("ok");
+            0
+        }
+        Err(e) => {
+            print_error(&e);
+            1
+        }
+    }
 }
 
 fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
@@ -310,46 +270,47 @@ fn cmd_run(src: Src, start_raw: &str, end_raw: &str, ndjson: bool) -> i32 {
         Ok(v) => v,
         Err(code) => return code,
     };
-    setup!(text, base, ast, tables, defs, {
-        // `--start`/`--end`: короткие формы (см. docs/reference/cli.md), якорь дельты `--end` — старт;
-        // битые значения — invalid-datetime; в объекте — эхо как передали.
-        let now = now_ms();
-        let start_ms = match parse_cli_datetime(start_raw, now) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        let end_ms = match parse_cli_datetime(end_raw, start_ms) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        let events = match expand(ast, &tables, &defs, start_ms, end_ms) {
-            Ok(events) => events,
-            Err(e) => {
-                eprintln!("{e}");
-                return 1;
-            }
-        };
-        if ndjson {
-            for e in &events {
-                println!("{}", event_json(e));
-            }
-            return 0;
+    // `--start`/`--end`: короткие формы (см. docs/reference/cli.md), якорь дельты `--end` — старт;
+    // битые значения — invalid-datetime; в объекте — эхо как передали.
+    // Зона окна — офсет `start` (aware → с суффиксом, наивное → без);
+    // дельта `+DURATION` — от now в системной зоне (зона now).
+    let (now, now_zone) = now_local();
+    let (start_ms, zone) = match parse_cli_datetime_zoned(start_raw, now, now_zone) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
         }
-        let out = serde_json::json!({
-            "schedule": ast.name,
-            "start": start_raw,
-            "end": end_raw,
-            "events": events.iter().map(event_json).collect::<Vec<_>>(),
-        });
-        println!("{out}");
-        0
-    })
+    };
+    let (end_ms, _) = match parse_cli_datetime_zoned(end_raw, start_ms, None) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let window = match expand_window(&text, &base, start_ms, end_ms, zone) {
+        Ok(window) => window,
+        Err(e) => {
+            print_error(&e);
+            return 1;
+        }
+    };
+    let effective = zone.or(window.file_zone);
+    if ndjson {
+        for e in &window.events {
+            println!("{}", event_to_json_zoned(e, effective));
+        }
+        return 0;
+    }
+    let out = serde_json::json!({
+        "schedule": window.schedule,
+        "start": start_raw,
+        "end": end_raw,
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
+    });
+    println!("{out}");
+    0
 }
 
 fn cmd_next(
@@ -363,93 +324,60 @@ fn cmd_next(
         Ok(v) => v,
         Err(code) => return code,
     };
-    setup!(text, base, ast, tables, defs, {
-        let now = now_ms();
-        // `--from` по умолчанию — now; битый — invalid-datetime.
-        let from_ms = match from_raw {
-            None => now,
-            Some(raw) => match parse_cli_datetime(raw, now) {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("{e}");
-                    return 1;
-                }
-            },
-        };
-        // `--within` по умолчанию — 366d; битый — неверные аргументы (код 2).
-        let within_ms = match within_raw {
-            None => DEFAULT_WITHIN_MS,
-            Some(raw) => match parse_cli_duration(raw.strip_prefix('+').unwrap_or(raw)) {
-                Some(v) => v,
-                None => {
-                    eprintln!("{HELP}");
-                    return 2;
-                }
-            },
-        };
-        let n = match n_raw {
-            None => 1,
-            Some(raw) => match raw.parse::<usize>() {
-                Ok(v) => v,
-                Err(_) => {
-                    eprintln!("{HELP}");
-                    return 2;
-                }
-            },
-        };
-        let events = match next_events(ast, &tables, &defs, from_ms, within_ms, n) {
-            Ok(events) => events,
+    let (now, now_zone) = now_local();
+    // `--from` по умолчанию — now в системной зоне (см. docs/reference/cli.md);
+    // битый — invalid-datetime. Зона окна — офсет `from` (aware → с суффиксом).
+    let (from_ms, from_zone) = match from_raw {
+        None => (now, now_zone),
+        Some(raw) => match parse_cli_datetime_zoned(raw, now, now_zone) {
+            Ok(v) => v,
             Err(e) => {
                 eprintln!("{e}");
                 return 1;
             }
-        };
-        if ndjson {
-            for e in &events {
-                println!("{}", event_json(e));
+        },
+    };
+    // `--within` по умолчанию — 366d; битый — неверные аргументы (код 2).
+    let within_ms = match within_raw {
+        None => DEFAULT_WITHIN_MS,
+        Some(raw) => match parse_cli_duration(raw.strip_prefix('+').unwrap_or(raw)) {
+            Some(v) => v,
+            None => {
+                eprintln!("{HELP}");
+                return 2;
             }
-            return 0;
+        },
+    };
+    let n = match n_raw {
+        None => 1,
+        Some(raw) => match raw.parse::<usize>() {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!("{HELP}");
+                return 2;
+            }
+        },
+    };
+    let window = match next_window(&text, &base, from_ms, within_ms, n, from_zone) {
+        Ok(window) => window,
+        Err(e) => {
+            print_error(&e);
+            return 1;
         }
-        let out = serde_json::json!({
-            "schedule": ast.name,
-            "from": format_datetime(from_ms),
-            "within": within_ms,
-            "events": events.iter().map(event_json).collect::<Vec<_>>(),
-        });
-        println!("{out}");
-        0
-    })
-}
-
-/// Событие в JSON-объект (см. docs/reference/output.md; ключи — `time,action,point`,
-/// `point_attrs`,`action_attrs`; порядок ключей словарей — порядок объявления:
-/// `preserve_order` в `Cargo.toml` сохраняет порядок вставки).
-fn event_json(e: &Event) -> serde_json::Value {
-    serde_json::json!({
-        "time": format_datetime(e.time),
-        "action": e.action,
-        "point": e.point,
-        "point_attrs": attrs_json(&e.point_attrs),
-        "action_attrs": attrs_json(&e.action_attrs),
-    })
-}
-
-/// Словарь атрибутов в JSON-объект (порядок ключей — порядок объявления:
-/// `preserve_order` в `Cargo.toml` сохраняет порядок вставки).
-fn attrs_json(pairs: &[(String, Value)]) -> serde_json::Value {
-    let mut m = serde_json::Map::new();
-    for (k, v) in pairs {
-        m.insert(k.clone(), value_json(v));
+    };
+    let effective = from_zone.or(window.file_zone);
+    if ndjson {
+        for e in &window.events {
+            println!("{}", event_to_json_zoned(e, effective));
+        }
+        return 0;
     }
-    serde_json::Value::Object(m)
-}
-
-fn value_json(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Num(n) => (*n).into(),
-        Value::Str(s) => s.clone().into(),
-        Value::Bool(b) => (*b).into(),
-        Value::Map(pairs) => attrs_json(pairs),
-        Value::Array(xs) => xs.iter().map(value_json).collect(),
-    }
+    let out = serde_json::json!({
+        "schedule": window.schedule,
+        "from": format_datetime_tz(from_ms, effective),
+        "within": within_ms,
+        "events": window.events.iter().map(|e| event_to_json_zoned(e, effective)).collect::<Vec<_>>(),
+    });
+    println!("{out}");
+    0
 }

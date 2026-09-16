@@ -1,0 +1,17 @@
+[package]
+name = "cyclorithm-cpp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C ABI over the Cyclorithm engine for C/C++ consumers"
+
+[lib]
+name = "cyclorithm"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+cyclorithm-core = { path = "../cyclorithm-core" }
+# now_local: подпись дефолтного окна системной зоной (как в CLI).
+chrono = "0.4"
+serde_json = "1"

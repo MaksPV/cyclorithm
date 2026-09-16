@@ -3,13 +3,16 @@
 
 use std::fmt;
 
+pub mod api;
 pub mod cond;
 pub mod datetime;
 pub mod duration;
+pub mod engine;
 pub mod expand;
 pub mod imports;
+pub mod parser;
+pub mod pipeline;
 pub mod reverse;
-pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
@@ -65,8 +68,21 @@ impl Error {
         Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
-    /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
-    /// ничего нельзя, иначе момент молча затенит объявление.
+    /// `missing-argument`: `missing argument 'duration'` — в шапке нет
+    /// обязательного поля (порядок полей свободный, см. syntax.md).
+    pub fn missing_argument(name: &str) -> Self {
+        Self::coded("missing-argument", format!("missing argument '{name}'"))
+    }
+
+    /// `duplicate-argument`: `duplicate argument 'attrs'` — поле шапки
+    /// указано дважды (порядок полей свободный, см. syntax.md).
+    pub fn duplicate_argument(name: &str) -> Self {
+        Self::coded("duplicate-argument", format!("duplicate argument '{name}'"))
+    }
+
+    /// `reserved-name`: `at` (момент строки) и `here` (контекст инстанции)
+    /// зарезервированы — объявлять так ничего нельзя, иначе синтетика
+    /// развёртки молча затенит объявление.
     pub fn reserved_name(name: &str) -> Self {
         Self::coded("reserved-name", format!("reserved name '{name}'"))
     }
@@ -107,7 +123,7 @@ impl Error {
     }
 
     /// `recursive`: рекурсия через таблицу — `recursive table 'T'`
-    /// (пожар `->` инстанцирует рутину с той же таблицей).
+    /// (вызов слота `->` инстанцирует рутину с той же таблицей).
     pub fn recursive_table(name: &str) -> Self {
         Self::coded("recursive", format!("recursive table '{name}'"))
     }
@@ -232,6 +248,11 @@ impl Error {
         )
     }
 
+    /// `float-out-of-range`: число вне диапазона `f64` в условии.
+    pub fn float_out_of_range(raw: &str) -> Self {
+        Self::coded("float-out-of-range", format!("float out of range '{raw}'"))
+    }
+
     /// `invalid-date`: кривой литерал даты в условии.
     pub fn invalid_date(raw: &str) -> Self {
         Self::coded("invalid-date", format!("invalid date '{raw}'"))
@@ -269,6 +290,12 @@ impl Error {
         )
     }
 
+    /// `string-too-long`: ширина `pad` вне лимита (защита от аллокации
+    /// гигабайтов нулями; см. `MAX_PAD_WIDTH` в `cond.rs`).
+    pub fn string_too_long(raw: &str) -> Self {
+        Self::coded("string-too-long", format!("string too long '{raw}'"))
+    }
+
     /// `broken-prelude`: встроенная прелюдия не разобралась (битый `std.cyclo`
     /// в сборке — вместо паники аккуратная ошибка).
     pub fn broken_prelude(details: &str) -> Self {
@@ -301,6 +328,12 @@ impl Error {
     /// `unknown-slot`: `unknown slot '8th'` — метки нет в таблице вызова.
     pub fn unknown_slot(label: &str) -> Self {
         Self::coded("unknown-slot", format!("unknown slot '{label}'"))
+    }
+
+    /// `invalid-timezone`: `invalid timezone 'MSK'` (только `Z`/±HH:MM`;
+    /// имена зон, включая аббревиатуры и IANA, не поддерживаются).
+    pub fn invalid_timezone(raw: &str) -> Self {
+        Self::coded("invalid-timezone", format!("invalid timezone '{raw}'"))
     }
 
     /// `invalid-table-argument`: первый аргумент вызова рутины — не имя таблицы.

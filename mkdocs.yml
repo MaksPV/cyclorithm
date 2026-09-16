@@ -45,6 +45,11 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
+# Переключатель версий (mike): stable из main, dev из dev.
+extra:
+  version:
+    provider: mike
+
 plugins:
   - search:
       lang: ru
@@ -67,5 +72,7 @@ nav:
   - Экосистема:
       - Интеграции: ecosystem/integrations.md
       - Библиотеки и use: ecosystem/libraries.md
+      - Python-биндинги: ecosystem/python.md
+      - C++-библиотека: ecosystem/cpp.md
   - Глоссарий: glossary.md
   - Планы: todo.md

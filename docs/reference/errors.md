@@ -9,12 +9,22 @@
 Каждая ошибка ниже названа по ситуации, а не по номеру: имя стабильно,
 новые ситуации вставляются без перенумерации. Тексты сообщений дословные.
 
-Ошибки синтаксиса (файл не разбирается по грамматике, включая отсутствие
-корневого цикла) возвращают код `1` без имени ситуации. Импорты
+Ошибки синтаксиса (файл не разбирается по грамматике) возвращают код `1`
+без имени ситуации. Поля шапок со свободным порядком проверяет сборка:
+нет обязательного поля — `missing-argument` (включая отсутствие корневого
+цикла целиком), поле дважды — `duplicate-argument` (включая второй корень).
+Импорты
 (`cannot-read-import`, `schedule-in-import`) разрешаются раньше проверок
 решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
 побеждает: имена → рекурсия → таблицы → длительности и границы → условия →
 даты. Внутри фазы проверки идут в порядке объявления.
+
+## Шапки
+
+| Ситуация | Сообщение | Исправление |
+|----------|-----------|-------------|
+| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'`, `missing argument 'root_cycle'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`, `actions` у `point`, сам `root_cycle`) |
+| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'`, `duplicate argument 'root_cycle'` | Оставить поле шапки один раз |
 
 ## Имена
 
@@ -24,7 +34,7 @@
 | `action-not-allowed` | `action 'arrive' not allowed for point 'DEPOT'` | Добавить действие в `actions` точки |
 | `unknown-cycle` | `unknown cycle 'NIGHT_ROUTE'` | Объявить цикл `cycle`; проверить форму вызова `A()` или `A.b()` |
 | `duplicate` | `duplicate point 'DEPOT'`, `duplicate routine 'M'`, `duplicate table 'T'`, `duplicate slot '1st'`, `duplicate param 'a'` | Устранить повтор имени внутри файла |
-| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, объявлять так нельзя |
+| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, `here` — контекст инстанции, объявлять так нельзя |
 | `wrong-kind` | `point 'X' is not a cycle`, `cycle 'X' is not a point`, `point 'X' is not a routine`, `routine 'X' is not a point`, `routine 'X' is not a cycle` | Переименовать: имя занято сущностью другого рода |
 
 ## Рекурсия
@@ -66,10 +76,12 @@
 | `recursive-definition` | `recursive definition 'a'` | Разорвать рекурсию в объявлениях |
 | `not-a-predicate` | `'hour' is not a predicate` | В позиции условия вызывать только предикат |
 | `integer-out-of-range` | `integer out of range '...'` | Уложиться в `i64` |
+| `float-out-of-range` | `float out of range '...'` | Уложиться в конечный `f64` |
 | `invalid-date` | `invalid date '...'` | Проверить компоненты даты |
 | `unknown-field` | `unknown field 'name'` | Проверить ключ и цепочку доступа |
 | `index-out-of-bounds` | `index out of bounds '5'` | Держать индекс внутри массива (минус считается с конца) |
 | `maps-not-comparable` | `cannot compare maps or arrays` | Сравнивать только числа и строки |
+| `string-too-long` | `string too long '...'` | Уменьшить ширину `pad` (лимит — 1024) |
 
 ## Импорты
 
@@ -90,7 +102,8 @@
 
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
-| `invalid-datetime` | `invalid datetime '...'` | В файле — строгая форма `YYYY-MM-DDTHH:MM:SS[.mmm]` |
+| `invalid-datetime` | `invalid datetime '...'` | В файле — строгая форма `YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]` |
+| `invalid-timezone` | `invalid timezone '...'` | `timezone` — только `Z`/±HH:MM`; имена (`MSK`, `Europe/...`) не поддерживаются, IANA с DST — в [todo](../todo.md) |
 
 Негативные примеры: `examples/invalid/bad_*.cyclo` — не менее одного файла
 на ситуацию. Правило проекта: новая ситуация требует пример, строку

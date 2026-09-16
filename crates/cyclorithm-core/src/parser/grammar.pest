@@ -9,25 +9,30 @@
 //
 // Ловушка: `ms` в альтернативе раньше `m`, иначе `1ms` режется на `m` + `s`.
 
-file        = { SOI ~ use_decl* ~ decl* ~ schedule ~ EOI }
+file        = { SOI ~ (use_decl | decl)* ~ schedule ~ EOI }
 // Только объявления (системный файл): расписания там нет.
 decls_file  = { SOI ~ decl* ~ EOI }
-// Единица импорта: объявления и свои use, расписание — опционально
+// Единица импорта: объявления и свои use в любом порядке, расписание — опционально
 // (его наличие бракует резолвер (schedule-in-import), а не синтаксис).
-unit_file   = { SOI ~ use_decl* ~ decl* ~ schedule? ~ EOI }
+unit_file   = { SOI ~ (use_decl | decl)* ~ schedule? ~ EOI }
 use_decl    = { kw_use ~ string ~ ";" }
-schedule    = { kw_schedule ~ string ~ "{" ~ point* ~ routine* ~ cycle* ~ root_cycle ~ "}" }
+// Члены расписания — в любом порядке; корень ровно один, timezone не более
+// одной (считает сборка: missing-argument / duplicate-argument).
+// `use` после расписания нет: schedule — конец файла.
+schedule    = { kw_schedule ~ string ~ "{" ~ schedule_member* ~ "}" }
+schedule_member = { timezone_decl | point | routine | cycle | root_cycle }
+timezone_decl = { kw_timezone ~ "=" ~ string }
 // Объявления — только до schedule. Параметр предиката — буквально `at`
 // (проверяет build); truth — сравнение в скобках для арифметики (1/0).
 decl        = { const_decl | fun_decl | pred_decl | time_const_decl }
 const_decl  = { kw_const ~ IDENT ~ "=" ~ decl_value ~ ";" }
 fun_decl    = { kw_fun ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ decl_value ~ ";" }
 pred_decl   = { kw_pred ~ IDENT ~ "(" ~ IDENT ~ ")" ~ "=" ~ or_expr ~ ";" }
-// Таблица слотов: именованные смещения для routine; `->` — слот
-// и собственный вызов в одном лице (пожар при каждом инстанцировании).
+// Таблица слотов: именованные смещения для routine; `->` —
+// привязанный к слоту вызов (срабатывает при каждом инстанцировании с таблицей).
 time_const_decl = { kw_time_const ~ IDENT ~ kw_duration ~ "=" ~ duration ~ "{" ~ slot_row* ~ "}" }
-slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_fire? ~ ";" }
-slot_fire   = { "->" ~ invocation }
+slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_call? ~ ";" }
+slot_call   = { "->" ~ invocation }
 // Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
 // Ловушка как с `ms`: `1ms` разберётся длительностью, а не меткой
 // (в `routine_offset` длительность пробуется раньше) — таких имён не давать.
@@ -37,7 +42,9 @@ label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Дублирует `cond_value` осознанно (единый верхний уровень выражений):
 // при новом операторе править оба, чтобы не разъезжаться.
 decl_value  = { concat | bitor }
-point       = { kw_point ~ IDENT ~ "{" ~ kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" ~ point_attrs? ~ "}" }
+point       = { kw_point ~ IDENT ~ "{" ~ point_field* ~ "}" }
+point_field = { actions_field | point_attrs }
+actions_field = { kw_actions ~ "=" ~ "[" ~ action_list ~ "]" ~ ";" }
 action_list = { IDENT ~ ("," ~ IDENT)* }
 // Атрибуты точки: только литерал или ссылка на константу-мапу,
 // строк `k = v;` нет. Дубли ключей ловит валидация (duplicate-attribute), не синтаксис.
@@ -45,17 +52,26 @@ point_attrs = { kw_attrs ~ "=" ~ attrs_src ~ ";" }
 attrs_src   = { map_lit | IDENT }
 // Цикл можно назвать `duration` (`cycle duration duration = 1h {}` валиден:
 // первый `duration` съедает `IDENT` как имя). А `cycle duration = 1h {}` —
-// синтаксическая ошибка: имя заняло `duration`, полю `kw_duration` нечего матчить.
-// Неоднозначность разрешается в пользу имени — осознанно.
+// синтаксическая ошибка (PEG спотыкается о `=` до сборки): имя заняло
+// `duration`, полю нечего матчить. Неоднозначность в пользу имени — осознанно.
+// Поля шапки (параметры и длительность) — в любом порядке, обязательность
+// и уникальность проверяет сборка (missing-argument / duplicate-argument).
 // Производный цикл — зеркало имеющегося (`o' = duration − o`, остальное как есть):
 // `cycle BACK reverse FWD;`. Параметры и длительность наследуются, тела нет.
 // `reverse` — ключевое слово с границей (`reversex` — имя, не модификатор).
-cycle       = { kw_cycle ~ IDENT ~ (cycle_params? ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+cycle       = { kw_cycle ~ IDENT ~ (cycle_field* ~ "{" ~ stmt* ~ "}" | kw_reverse ~ IDENT ~ ";") }
+cycle_field = { cycle_params | duration_field }
 kw_reverse  = @{ "reverse" ~ !word_tail }
 // Параметры цикла: дубли (`cycle C(a, a)`) ловит валидация (duplicate).
 // Пустой `()` не допускается осознанно: без параметров скобки опускаются (`cycle C duration = ...`).
 cycle_params = { "(" ~ IDENT ~ ("," ~ IDENT)* ~ ")" }
-root_cycle  = { kw_root_cycle ~ kw_start_time ~ "=" ~ string ~ "," ~ kw_duration ~ "=" ~ duration ~ "{" ~ stmt* ~ "}" }
+root_cycle  = { kw_root_cycle ~ root_field ~ ("," ~ root_field)* ~ "{" ~ stmt* ~ "}" }
+// Именованные поля шапок: порядок свободный, разделитель тот же;
+// обязательность и уникальность проверяет сборка
+// (missing-argument / duplicate-argument), не PEG.
+root_field     = { start_field | duration_field }
+start_field    = { kw_start_time ~ "=" ~ string }
+duration_field = { kw_duration ~ "=" ~ duration }
 // Шаблон дня: первый параметр — таблица (`time_const`), остальные —
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
@@ -107,6 +123,7 @@ kw_cycle      = @{ "cycle" ~ !word_tail }
 kw_routine    = @{ "routine" ~ !word_tail }
 kw_root_cycle = @{ "root_cycle" ~ !word_tail }
 kw_start_time = @{ "start_time" ~ !word_tail }
+kw_timezone = @{ "timezone" ~ !word_tail }
 kw_duration   = @{ "duration" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
@@ -162,7 +179,8 @@ postfix     = { postfix_base ~ postfix_suffix* }
 // читается именем. Арифметическая скобка раньше `truth`: `(2+3)` — число 5,
 // а не истина от `5`; условие в скобках (`(at>=K)`) не разбирается как
 // `bitor` и падает в `truth` как раньше.
-postfix_base = { number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
+// `float` раньше `number`: иначе `20.02` режется на `20` + `.02` (field_access).
+postfix_base = { float | number | string | map_lit | array_lit | call | bool_lit | IDENT | "(" ~ bitor ~ ")" | truth }
 postfix_suffix = { field_access | index_access }
 field_access = { "." ~ IDENT }
 // Индекс — выражение: `m[0]`, `m[i + 1]`, `m[-1]`; пробелы внутри — обычные.
@@ -233,6 +251,10 @@ duration_unit = { "ms" | "w" | "d" | "h" | "m" | "s" }
 // `duration_item` (`1h` резалось бы на `1` + `h`). Граница нужна только
 // в `repeat_count`, где число стоит перед вызовом.
 number        = @{ ASCII_DIGIT+ }
+// Float — с точкой и/или экспонентой; `20.` с хвостовой точкой разрешена
+// только когда за точкой не буква/`_` (иначе `20.foo` режется на float).
+// Покрывает `20.02`, `.02`, `1e6`, `1.2e-3`, `20.` (без `20.foo`).
+float         = @{ ((ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ | ASCII_DIGIT+ ~ "." ~ !word_tail | "." ~ ASCII_DIGIT+) ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? | ASCII_DIGIT+ ~ ("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+) }
 // Атомарное: комментарии `//` и пробелы внутрь строк не проникают.
 string      = @{ "\"" ~ string_char* ~ "\"" }
 string_char = _{ !("\"" | "\n" | "\r") ~ ANY }

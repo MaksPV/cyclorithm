@@ -1,0 +1,17 @@
+[package]
+name = "cyclorithm-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "_cyclorithm"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py310"] }
+cyclorithm-core = { path = "../cyclorithm-core" }
+# now_local: подпись дефолтного окна системной зоной (как в CLI).
+chrono = "0.4"
+serde_json = { version = "1", features = ["preserve_order"] }

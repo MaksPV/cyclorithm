@@ -1,9 +1,12 @@
-//! Наивное время без таймзон (см. docs/reference/expressions.md).
+//! Время как `i64` мс от unix epoch (см. docs/reference/expressions.md).
 //!
-//! Внутри — `i64` миллисекунд от unix epoch. Строки без таймзоны трактуются
-//! 1:1, без сдвигов; таймзоны и DST не учитываются, сутки всегда 24h.
-//! Формат входа и выхода: `YYYY-MM-DDTHH:MM:SS`, миллисекунды опциональны
-//! (`.mmm`). Любое отклонение — invalid-datetime. Календарь — пролептический григорианский.
+//! Внутри — абсолютные миллисекунды. Наивные строки (`YYYY-MM-DDTHH:MM:SS[.mmm]`)
+//! читаются в кадре запроса (см. `parse_in_frame` и docs/reference/semantics.md):
+//! зона файла, иначе зона окна, иначе 1:1 (wall как UTC численно); aware-строки
+//! с суффиксом `Z`/`±HH:MM` сдвигаются `wall − offset` всегда. Таймзоны и DST
+//! не учитываются, сутки всегда 24h.
+//! Формат входа и выхода: `YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]`. Любое отклонение —
+//! invalid-datetime. Календарь — пролептический григорианский.
 
 use crate::Error;
 
@@ -12,12 +15,30 @@ const MS_PER_HOUR: i64 = 3_600_000;
 const MS_PER_MIN: i64 = 60_000;
 const MS_PER_SEC: i64 = 1_000;
 
-/// Разбор наивной ISO-строки в миллисекунды epoch.
+/// Разбор ISO-строки в миллисекунды epoch (aware вычитает офсет).
 /// Ошибка — invalid-datetime с сырым текстом: `invalid datetime '...'`.
 pub fn parse_datetime(s: &str) -> Result<i64, Error> {
-    let b = s.as_bytes();
-    let bad = || Error::invalid_datetime(s);
-    // Строгая форма: 19 символов, плюс опциональные `.mmm`.
+    parse_datetime_zoned(s).map(|(ms, _)| ms)
+}
+
+/// Разбор ISO-строки в `(мс, офсет_минут)`. `Z → Some(0)`, без суффикса → `None`.
+/// Ошибка — invalid-datetime с сырым текстом.
+pub fn parse_datetime_zoned(s: &str) -> Result<(i64, Option<i16>), Error> {
+    let (wall, offset) = split_offset(s)?;
+    let ms_wall = parse_wall(wall, s)?;
+    let ms = match offset {
+        None => ms_wall,
+        Some(o) => ms_wall
+            .checked_sub(o as i64 * MS_PER_MIN)
+            .ok_or_else(|| Error::invalid_datetime(s))?,
+    };
+    Ok((ms, offset))
+}
+
+/// Внутренний разбор стены `YYYY-MM-DDTHH:MM:SS[.mmm]` без суффикса.
+fn parse_wall(wall: &str, raw: &str) -> Result<i64, Error> {
+    let b = wall.as_bytes();
+    let bad = || Error::invalid_datetime(raw);
     if b.len() != 19 && b.len() != 23 {
         return Err(bad());
     }
@@ -42,34 +63,95 @@ pub fn parse_datetime(s: &str) -> Result<i64, Error> {
     {
         return Err(bad());
     }
-    Ok(days_from_civil(y, mo, d) * MS_PER_DAY
-        + h * MS_PER_HOUR
-        + mi * MS_PER_MIN
-        + se * MS_PER_SEC
-        + milli)
+    let day_ms = days_from_civil(y, mo, d)
+        .ok_or_else(bad)?
+        .checked_mul(MS_PER_DAY)
+        .ok_or_else(bad)?;
+    Ok(day_ms + h * MS_PER_HOUR + mi * MS_PER_MIN + se * MS_PER_SEC + milli)
+}
+
+/// Отщепляет суффикс `Z`/`±HH:MM` от стены. Возвращает `(стена, офсет_минут)`.
+fn split_offset(s: &str) -> Result<(&str, Option<i16>), Error> {
+    if let Some(wall) = s.strip_suffix('Z') {
+        if wall.len() != 19 && wall.len() != 23 {
+            return Err(Error::invalid_datetime(s));
+        }
+        return Ok((wall, Some(0)));
+    }
+    if s.len() >= 6 {
+        let tail = &s[s.len() - 6..];
+        let tb = tail.as_bytes();
+        if (tb[0] == b'+' || tb[0] == b'-') && tb[3] == b':' {
+            let wall = &s[..s.len() - 6];
+            if wall.len() != 19 && wall.len() != 23 {
+                return Err(Error::invalid_datetime(s));
+            }
+            let hh = digits(tb, 1, 2).ok_or_else(|| Error::invalid_datetime(s))?;
+            let mm = digits(tb, 4, 2).ok_or_else(|| Error::invalid_datetime(s))?;
+            if hh > 23 || mm > 59 {
+                return Err(Error::invalid_datetime(s));
+            }
+            let mut off = (hh * 60 + mm) as i16;
+            if tb[0] == b'-' {
+                off = -off;
+            }
+            return Ok((wall, Some(off)));
+        }
+    }
+    Ok((s, None))
 }
 
 /// Разбор даты из аргументов CLI: короткие формы и относительные дельты.
 /// - `YYYY-MM-DD` → полночь, `YYYY-MM-DDTHH:MM` → нулевые секунды;
 /// - `+DURATION` (`1d`, `2h30m`, `1w2d3h4m5s6ms` — сумма компонент) →
 ///   `anchor_ms` + длительность;
-/// - иначе — строгий `parse_datetime`.
+/// - иначе — строгий `parse_datetime` (с опциональным `Z`/`±HH:MM`).
 ///
 /// Ошибка — invalid-datetime с исходным текстом.
 pub fn parse_cli_datetime(s: &str, anchor_ms: i64) -> Result<i64, Error> {
+    parse_cli_datetime_zoned(s, anchor_ms, None).map(|(ms, _)| ms)
+}
+
+/// Разбор CLI-даты с офсетом: возвращает `(мс, офсет_минут)` окна.
+/// Дельта `+DURATION` → `(anchor+delta, anchor_zone)`, без суффикса → `None`.
+/// Явная наивная дата зону якоря не наследует: `None` — это «город не назван»,
+/// а дельта — «от текущего момента», который всегда в какой-то зоне.
+pub fn parse_cli_datetime_zoned(
+    s: &str,
+    anchor_ms: i64,
+    anchor_zone: Option<i16>,
+) -> Result<(i64, Option<i16>), Error> {
     if let Some(rest) = s.strip_prefix('+') {
-        let delta = parse_cli_duration(rest).ok_or_else(|| Error::invalid_datetime(s))?;
-        return anchor_ms
-            .checked_add(delta)
-            .ok_or_else(|| Error::invalid_datetime(s));
+        // `+` как дельта, только если после него идёт длительность, а не дата.
+        // Дата с офсетом тоже начинается с `+`/`-` внутри, но не в позиции 0.
+        // Проверяем: если `rest` начинается с цифры и содержит юнит — дельта.
+        // Иначе это не дельта, а битая дата — invalid-datetime.
+        if parse_cli_duration(rest).is_some() {
+            let delta = parse_cli_duration(rest).ok_or_else(|| Error::invalid_datetime(s))?;
+            let ms = anchor_ms
+                .checked_add(delta)
+                .ok_or_else(|| Error::invalid_datetime(s))?;
+            return Ok((ms, anchor_zone));
+        }
+        // `+` без валидной длительности — invalid-datetime, не пытаемся как дату.
+        return Err(Error::invalid_datetime(s));
     }
-    if s.len() == 10 {
-        return parse_datetime(&format!("{s}T00:00:00")).map_err(|_| Error::invalid_datetime(s));
-    }
-    if s.len() == 16 {
-        return parse_datetime(&format!("{s}:00")).map_err(|_| Error::invalid_datetime(s));
-    }
-    parse_datetime(s)
+    // Отщепляем возможный офсет суффикса для коротких форм тоже.
+    let (core, offset) = split_offset(s)?;
+    let ms_wall = if core.len() == 10 {
+        parse_wall(&format!("{core}T00:00:00"), s)?
+    } else if core.len() == 16 {
+        parse_wall(&format!("{core}:00"), s)?
+    } else {
+        parse_wall(core, s)?
+    };
+    let ms = match offset {
+        None => ms_wall,
+        Some(o) => ms_wall
+            .checked_sub(o as i64 * MS_PER_MIN)
+            .ok_or_else(|| Error::invalid_datetime(s))?,
+    };
+    Ok((ms, offset))
 }
 
 /// Длительность CLI: число + юнит (`w/d/h/m/s/ms`), компоненты суммируются.
@@ -116,18 +198,96 @@ pub fn parse_cli_duration(s: &str) -> Option<i64> {
 /// Миллисекунды epoch обратно в наивную ISO-строку (см. docs/reference/output.md).
 /// `.mmm` — только при ненулевых миллисекундах.
 pub fn format_datetime(ms: i64) -> String {
-    let days = ms.div_euclid(MS_PER_DAY);
-    let rem = ms.rem_euclid(MS_PER_DAY);
+    format_datetime_tz(ms, None)
+}
+
+/// Миллисекунды epoch в строку с зоной окна: `None` — наивная, `Some(0)` → `Z`,
+/// иначе `±HH:MM`. `.mmm` — только при ненулевых миллисекундах.
+pub fn format_datetime_tz(ms: i64, offset: Option<i16>) -> String {
+    let wall = match offset {
+        Some(o) => ms.saturating_add(o as i64 * MS_PER_MIN),
+        None => ms,
+    };
+    let days = wall.div_euclid(MS_PER_DAY);
+    let rem = wall.rem_euclid(MS_PER_DAY);
     let (y, mo, d) = civil_from_days(days);
     let h = rem / MS_PER_HOUR;
     let mi = rem % MS_PER_HOUR / MS_PER_MIN;
     let se = rem % MS_PER_MIN / MS_PER_SEC;
     let milli = rem % MS_PER_SEC;
-    if milli == 0 {
+    let mut out = if milli == 0 {
         format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}")
     } else {
         format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{se:02}.{milli:03}")
+    };
+    match offset {
+        None => out,
+        Some(0) => {
+            out.push('Z');
+            out
+        }
+        Some(o) => {
+            let sign = if o >= 0 { '+' } else { '-' };
+            let abs = o.unsigned_abs() as i64;
+            let hh = abs / 60;
+            let mm = abs % 60;
+            out.push(sign);
+            out.push_str(&format!("{hh:02}:{mm:02}"));
+            out
+        }
     }
+}
+
+/// Разбор даты файла с зоной по умолчанию (наивная → `file_zone`).
+/// Кадр окна не учитывается — для развёртки с окном см. `parse_in_frame`.
+pub fn parse_file_datetime(raw: &str, file_zone: Option<i16>) -> Result<i64, Error> {
+    parse_in_frame(raw, file_zone, None)
+}
+
+/// Разбор даты файла в кадре запроса (см. docs/reference/semantics.md):
+/// aware-литерал — абсолютен всегда; наивный читается в зоне
+/// `file_zone.or(query_zone)` (город файла, иначе город окна); без обеих зон —
+/// 1:1 (wall как UTC численно). Ошибка — invalid-datetime с сырым текстом.
+pub fn parse_in_frame(
+    raw: &str,
+    file_zone: Option<i16>,
+    query_zone: Option<i16>,
+) -> Result<i64, Error> {
+    let (ms, off) = parse_datetime_zoned(raw)?;
+    match off {
+        Some(_) => Ok(ms), // aware — уже абсолютна
+        None => match file_zone.or(query_zone) {
+            Some(z) => ms
+                .checked_sub(z as i64 * MS_PER_MIN)
+                .ok_or_else(|| Error::invalid_datetime(raw)),
+            None => Ok(ms),
+        },
+    }
+}
+
+/// Разбор значения `timezone` расписания: только `Z` или числовой `±HH:MM`.
+/// Имена (`MSK`, `Europe/...`) — `invalid-timezone` (см. docs/reference/syntax.md).
+pub fn parse_timezone(raw: &str) -> Result<i16, Error> {
+    if raw == "Z" {
+        return Ok(0);
+    }
+    if raw.len() == 6
+        && (raw.as_bytes()[0] == b'+' || raw.as_bytes()[0] == b'-')
+        && raw.as_bytes()[3] == b':'
+    {
+        let tb = raw.as_bytes();
+        let hh = digits(tb, 1, 2).ok_or_else(|| Error::invalid_timezone(raw))?;
+        let mm = digits(tb, 4, 2).ok_or_else(|| Error::invalid_timezone(raw))?;
+        if hh > 23 || mm > 59 {
+            return Err(Error::invalid_timezone(raw));
+        }
+        let mut off = (hh * 60 + mm) as i16;
+        if tb[0] == b'-' {
+            off = -off;
+        }
+        return Ok(off);
+    }
+    Err(Error::invalid_timezone(raw))
 }
 
 /// Каноническая форма для сравнения дат как строк (см. docs/reference/expressions.md): всегда 23 символа
@@ -213,6 +373,7 @@ pub(crate) fn make_datetime(
         return Err(Invalid);
     }
     let day_ms = days_from_civil(y, mo, d)
+        .ok_or(Overflow)?
         .checked_mul(MS_PER_DAY)
         .ok_or(Overflow)?;
     // Время суток влезает всегда (< суток); переполнение — только от даты.
@@ -222,14 +383,22 @@ pub(crate) fn make_datetime(
 }
 
 /// Дни от unix epoch (алгоритм Хиннанта; `div_euclid` корректен и до epoch).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
+/// `None` — год из `mkdate` вне представимого диапазона (весь `i64`):
+/// промежуточные `era * 146097` переполняются раньше финального `checked_mul`.
+fn days_from_civil(y: i64, m: i64, d: i64) -> Option<i64> {
+    let y = if m <= 2 { y.checked_sub(1)? } else { y };
     let era = y.div_euclid(400);
-    let yoe = y - era * 400;
+    let yoe = y.checked_sub(era.checked_mul(400)?)?;
     let mp = (m + 9) % 12;
     let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    era.checked_mul(146097)?
+        .checked_add(doe)?
+        .checked_sub(719468)
 }
 
 /// Обратное преобразование дней в дату.
@@ -331,6 +500,26 @@ mod tests {
     }
 
     #[test]
+    fn huge_years_overflow_instead_of_panicking() {
+        // Год из `mkdate` — весь `i64`: сборка даёт Overflow, а не панику.
+        for y in [i64::MAX, i64::MIN, 9_000_000_000_000_000_000] {
+            assert_eq!(
+                make_datetime(y, 1, 1, 0, 0, 0, 0),
+                Err(DateBuildErr::Overflow),
+                "для года {y}"
+            );
+        }
+        // Граничные представимые годы по-прежнему собираются
+        // (200M лет ≈ 6.3e18 мс < i64::MAX, а 300M лет ≈ 9.5e18 мс — уже нет).
+        assert!(make_datetime(9999, 12, 31, 23, 59, 59, 999).is_ok());
+        assert!(make_datetime(200_000_000, 1, 1, 0, 0, 0, 0).is_ok());
+        assert_eq!(
+            make_datetime(300_000_000, 1, 1, 0, 0, 0, 0),
+            Err(DateBuildErr::Overflow)
+        );
+    }
+
+    #[test]
     fn formats_back() {
         assert_eq!(format_datetime(0), "1970-01-01T00:00:00");
         assert_eq!(format_datetime(1_767_225_600_000), "2026-01-01T00:00:00");
@@ -346,6 +535,111 @@ mod tests {
             "1970-01-01T00:00:01.001",
         ] {
             assert_eq!(format_datetime(ok(s)), s);
+        }
+    }
+
+    #[test]
+    fn in_frame_prefers_file_zone_then_query() {
+        // Наивная стена 06:00: зона файла бьёт зону окна, окно — наследование,
+        // без зон — 1:1. Aware-литерал абсолютен при любых зонах.
+        assert_eq!(
+            parse_in_frame("2026-09-07T06:00:00", Some(120), Some(180)).unwrap(),
+            ok("2026-09-07T04:00:00")
+        );
+        assert_eq!(
+            parse_in_frame("2026-09-07T06:00:00", None, Some(180)).unwrap(),
+            ok("2026-09-07T03:00:00")
+        );
+        assert_eq!(
+            parse_in_frame("2026-09-07T06:00:00", None, None).unwrap(),
+            ok("2026-09-07T06:00:00")
+        );
+        assert_eq!(
+            parse_in_frame("2026-09-07T09:00:00+03:00", Some(120), Some(180)).unwrap(),
+            ok("2026-09-07T06:00:00")
+        );
+        assert_eq!(
+            parse_in_frame("2026-09-07T06:00:00Z", None, Some(180)).unwrap(),
+            ok("2026-09-07T06:00:00")
+        );
+    }
+
+    #[test]
+    fn cli_delta_inherits_anchor_zone_naive_does_not() {
+        // Дельта «от текущего момента» несёт зону якоря; явная наивная дата —
+        // нет (город не назван). Инстант дельты от зоны не зависит (24h фикс.).
+        let base = ok("2026-09-07T10:00:00");
+        let (ms, off) = parse_cli_datetime_zoned("+1d", base, Some(180)).unwrap();
+        assert_eq!((ms, off), (base + 86_400_000, Some(180)));
+        let (ms, off) = parse_cli_datetime_zoned("+1d", base, None).unwrap();
+        assert_eq!((ms, off), (base + 86_400_000, None));
+        let (ms, off) = parse_cli_datetime_zoned("2026-09-07", base, Some(180)).unwrap();
+        assert_eq!((ms, off), (ok("2026-09-07T00:00:00"), None));
+    }
+
+    #[test]
+    fn timezone_accepts_only_z_and_numeric() {
+        assert_eq!(parse_timezone("Z"), Ok(0));
+        assert_eq!(parse_timezone("+03:00"), Ok(180));
+        assert_eq!(parse_timezone("-05:00"), Ok(-300));
+        // Имена зон — invalid-timezone (аббревиатур нет, IANA — в todo).
+        for raw in ["MSK", "UTC", "msk", "EST", "Europe/Moscow", "+03", "+24:00"] {
+            let err = parse_timezone(raw).expect_err("ожидалась invalid-timezone");
+            assert_eq!(err.code, "invalid-timezone", "для {raw:?}");
+            assert_eq!(
+                err.message,
+                format!("invalid timezone '{raw}'"),
+                "для {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn zoned_offsets_roundtrip() {
+        // Наивное и aware одного инстанта: 09:00+03:00 == 06:00Z.
+        let naive = ok("2026-09-07T06:00:00");
+        let (ms_msk, off_msk) = parse_datetime_zoned("2026-09-07T09:00:00+03:00").unwrap();
+        let (ms_z, off_z) = parse_datetime_zoned("2026-09-07T06:00:00Z").unwrap();
+        assert_eq!(off_msk, Some(180));
+        assert_eq!(off_z, Some(0));
+        assert_eq!(ms_msk, naive);
+        assert_eq!(ms_z, naive);
+        // Форматирование с зоной окна.
+        assert_eq!(
+            format_datetime_tz(naive, Some(180)),
+            "2026-09-07T09:00:00+03:00"
+        );
+        assert_eq!(format_datetime_tz(naive, Some(0)), "2026-09-07T06:00:00Z");
+        assert_eq!(format_datetime_tz(naive, None), "2026-09-07T06:00:00");
+        // Миллисекунды + офсет.
+        let (ms_milli, _) = parse_datetime_zoned("2026-01-01T00:00:00.123+02:00").unwrap();
+        assert_eq!(
+            format_datetime_tz(ms_milli, Some(120)),
+            "2026-01-01T00:00:00.123+02:00"
+        );
+        // Отрицательный офсет.
+        let (ms_neg, off_neg) = parse_datetime_zoned("2026-09-07T01:00:00-05:00").unwrap();
+        assert_eq!(off_neg, Some(-300));
+        assert_eq!(
+            format_datetime_tz(ms_neg, Some(-300)),
+            "2026-09-07T01:00:00-05:00"
+        );
+        // CLI короткие формы с офсетом.
+        let base = ok("2026-09-07T10:00:00");
+        let (ms_cli, off_cli) =
+            parse_cli_datetime_zoned("2026-09-07T09:00:00+03:00", base, None).unwrap();
+        assert_eq!(off_cli, Some(180));
+        assert_eq!(ms_cli, naive + 3 * 3_600_000 - 3 * 3_600_000); // 09:00+03:00 == 06:00 naive
+        // Битые офсеты — invalid-datetime.
+        for s in [
+            "2026-09-07T00:00:00+03",
+            "2026-09-07T00:00:00+24:00",
+            "2026-09-07T00:00:00+03:60",
+            "2026-09-07T00:00:00.12+03:00",
+            "2026-09-07T00:00:00Zextra",
+        ] {
+            let err = parse_datetime(s).expect_err("ожидалась invalid-datetime");
+            assert_eq!(err.code, "invalid-datetime", "для {s:?}");
         }
     }
 }

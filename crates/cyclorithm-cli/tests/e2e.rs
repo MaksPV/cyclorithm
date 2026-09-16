@@ -13,6 +13,17 @@ fn run(args: &[&str]) -> Output {
         .expect("бинарь cyclo обязан запускаться")
 }
 
+/// Прогон с переменными окружения (пин `TZ` для дефолтного окна:
+/// иначе CI в UTC и dev в Москве разъедутся).
+fn run_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut cmd = cyclo();
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("бинарь cyclo обязан запускаться")
+}
+
 /// Прогон со stdin вместо файла (`-`): вход подаётся в поток.
 fn run_stdin(args: &[&str], input: &str) -> Output {
     use std::io::Write as _;
@@ -53,6 +64,25 @@ fn route_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/route.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn free_headers_matches_expected_json() {
+    // Обратный порядок полей шапки + timezone без висячей запятой:
+    // то же событие, что при прямом порядке.
+    let out = run(&[
+        "run",
+        "../../examples/valid/free_headers.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/free_headers.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -121,6 +151,42 @@ fn rand_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/rand.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn julian_matches_expected_json() {
+    // Юлианское Рождество (25.12 → 07.01) и roundtrip 30.03 → 12.04.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-05-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn julian_1900_matches_expected_json() {
+    // 29.02.1900 существует по-юлиански (13.03 н.ст.), mkdate его отверг бы.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian_1900.cyclo",
+        "--start",
+        "1900-03-01T00:00:00",
+        "--end",
+        "1900-03-31T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian_1900.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -306,6 +372,25 @@ fn routines_matches_expected_json() {
 }
 
 #[test]
+fn float_matches_expected_json() {
+    // Float-литералы: точка/экспонента в attrs и блоках, арифметика с
+    // промоушеном, сравнения, str(), 0.0 — ложь в условии.
+    let out = run(&[
+        "run",
+        "../../examples/valid/float.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/float.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn imports_matches_expected_json() {
     // 1 января — праздник из holidays.cyclo: рейс в 10:00 есть, в 12:00 нет.
     let out = run(&[
@@ -379,6 +464,11 @@ fn validation_errors_go_to_stderr() {
             "bad_cycle-overruns-chain",
             "cycle-overruns",
             "cycle 'R' overruns 'root_cycle' by 100m (1540m > 1440m)",
+        ),
+        (
+            "bad_cycle-overruns-repeat",
+            "cycle-overruns",
+            "cycle 'D' overruns 'C' by 999999999930m (999999999990m > 60m)",
         ),
         (
             "bad_until-out-of-bounds",
@@ -493,6 +583,41 @@ fn validation_errors_go_to_stderr() {
             "unknown table 'SHORT'",
         ),
         ("bad_unknown-slot", "unknown-slot", "unknown slot '8th'"),
+        (
+            "bad_string-too-long",
+            "string-too-long",
+            "string too long '1000000000'",
+        ),
+        (
+            "bad_float-out-of-range",
+            "float-out-of-range",
+            "float out of range '1e400'",
+        ),
+        (
+            "bad_integer-out-of-range",
+            "integer-out-of-range",
+            "integer out of range 'arithmetic overflow'",
+        ),
+        (
+            "bad_integer-out-of-range_mkdate",
+            "integer-out-of-range",
+            "integer out of range '9223372036854775807-1-1T0:0:0.0'",
+        ),
+        (
+            "bad_invalid-timezone",
+            "invalid-timezone",
+            "invalid timezone 'MSK'",
+        ),
+        (
+            "bad_missing-argument",
+            "missing-argument",
+            "missing argument 'duration'",
+        ),
+        (
+            "bad_duplicate-argument",
+            "duplicate-argument",
+            "duplicate argument 'duration'",
+        ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
@@ -644,6 +769,95 @@ fn stdin_source_matches_file() {
     let got: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("stdout — один JSON-объект");
     assert_eq!(got["events"].as_array().expect("массив").len(), 2);
+}
+
+#[test]
+fn tz_offsets_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_offsets.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // aware-окно на наивном файле — наследование кадра: стены стоят
+    // (06:00 остаётся 06:00 в зоне окна), см. docs/reference/semantics.md
+    let out_z = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00+03:00",
+        "--end",
+        "2026-01-10T00:00:00+03:00",
+    ]);
+    let got_z = stdout_json(&out_z);
+    assert_eq!(got_z["events"][0]["time"], "2026-01-09T06:00:00+03:00");
+}
+
+#[test]
+fn tz_file_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_file.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_file.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // naive-окно с файлом +03:00 → fallback к зоне файла
+    assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00+03:00");
+}
+
+#[test]
+fn next_defaults_to_system_zone() {
+    // Голый `next` (без `--from`): now с подписью системной зоны —
+    // суффиксы `from` и событий из `TZ` (см. docs/reference/cli.md).
+    // MSK круглый год +03:00 (без DST с 2014-го), tzdata есть и в CI.
+    let out = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "Europe/Moscow")],
+    );
+    let got = stdout_json(&out);
+    assert!(
+        got["from"].as_str().expect("строка").ends_with("+03:00"),
+        "from в зоне TZ: {}",
+        got["from"]
+    );
+    assert!(
+        got["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("+03:00"),
+        "событие в зоне TZ: {}",
+        got["events"][0]["time"]
+    );
+    let out_utc = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "UTC")],
+    );
+    let got_utc = stdout_json(&out_utc);
+    assert!(
+        got_utc["from"].as_str().expect("строка").ends_with("Z"),
+        "from в UTC: {}",
+        got_utc["from"]
+    );
+    assert!(
+        got_utc["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("Z"),
+        "событие в UTC: {}",
+        got_utc["events"][0]["time"]
+    );
 }
 
 #[test]
