@@ -48,7 +48,7 @@
 - Проверки после правок: `cargo test --workspace` (зелёный), `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets` (без предупреждений). То же гоняет CI (`.github/workflows/ci.yml`: fmt → clippy `-D warnings` → test, на push/PR в `main`/`dev`).
 
 ## Примеры
-- `examples/valid/*.cyclo` — только исполняемое (у каждого — `.expected.json`); всё подключаемое — только в `examples/valid/libs/` (урок: `route_lib.cyclo` переехал из корня `valid/`).
+- `examples/valid/*.cyclo` — только исполняемое (у каждого — `.expected.json`); фикстуры тестов — только в `examples/valid/libs/` (урок: `route_lib.cyclo` переехал из корня `valid/`); настоящие переиспользуемые библиотеки — только в `examples/real/libs/` (фикстурам там не место).
 - `examples/invalid/bad_*.cyclo` — по одному минимальному файлу на код (суффиксы `_neg`, `_until`, `_zero`, `_cycle` и т.п. — вариации того же кода).
 - `examples/real/` — живые расписания (`101.cyclo`, `fleet.cyclo` + `fleet_lib.cyclo`): прогонять бинарём и сверять результат глазами при изменении движка.
 - Комментарии в контрактных файлах запрещены де-факто: ломают дословность контракта.
