@@ -70,6 +70,25 @@ fn route_matches_expected_json() {
 }
 
 #[test]
+fn free_headers_matches_expected_json() {
+    // Обратный порядок полей шапки + timezone без висячей запятой:
+    // то же событие, что при прямом порядке.
+    let out = run(&[
+        "run",
+        "../../examples/valid/free_headers.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/free_headers.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn neg_offsets_matches_expected_json() {
     let out = run(&[
         "run",
@@ -552,6 +571,16 @@ fn validation_errors_go_to_stderr() {
             "bad_invalid-timezone",
             "invalid-timezone",
             "invalid timezone 'MSK'",
+        ),
+        (
+            "bad_missing-argument",
+            "missing-argument",
+            "missing argument 'duration'",
+        ),
+        (
+            "bad_duplicate-argument",
+            "duplicate-argument",
+            "duplicate argument 'duration'",
         ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");

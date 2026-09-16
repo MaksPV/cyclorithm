@@ -68,6 +68,18 @@ impl Error {
         Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
+    /// `missing-argument`: `missing argument 'duration'` — в шапке нет
+    /// обязательного поля (порядок полей свободный, см. syntax.md).
+    pub fn missing_argument(name: &str) -> Self {
+        Self::coded("missing-argument", format!("missing argument '{name}'"))
+    }
+
+    /// `duplicate-argument`: `duplicate argument 'attrs'` — поле шапки
+    /// указано дважды (порядок полей свободный, см. syntax.md).
+    pub fn duplicate_argument(name: &str) -> Self {
+        Self::coded("duplicate-argument", format!("duplicate argument '{name}'"))
+    }
+
     /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
     /// ничего нельзя, иначе момент молча затенит объявление.
     pub fn reserved_name(name: &str) -> Self {
