@@ -1338,29 +1338,42 @@
 
 
 <h1 id="_1">Синтаксис<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>EBNF-грамматика — в <code>crates/cyclorithm-parser/src/grammar.pest</code>.
+<p>EBNF-грамматика — в <code>crates/cyclorithm-core/src/parser/grammar.pest</code>.
 Здесь — правила словами и на примерах: что можно писать и где границы.
 Что означают сущности — в <a href="../concepts/">концептах</a>.</p>
 <h2 id="_2">Файл<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Файл — это шапка импортов, объявления и одно расписание:</p>
+<p>Файл — это импорты, объявления и одно расписание; <code>use</code> — вперемешку
+с объявлениями, но до расписания (расписание — конец файла):</p>
 <div class="highlight"><pre><span></span><code><span class="k">use</span> <span class="s">"libs/route_lib.cyclo"</span><span class="p">;</span>
 
 <span class="k">const</span> <span class="n">MORNING</span> <span class="o">=</span> <span class="m">6</span><span class="p">;</span>
+<span class="k">use</span> <span class="s">"libs/holidays.cyclo"</span><span class="p">;</span>  <span class="c1">// можно и здесь — всё равно до расписания</span>
 
 <span class="k">schedule</span> <span class="s">"Автобусный парк"</span> <span class="p">{</span>
   <span class="p">...</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Порядок членов расписания строгий: опциональная <code>timezone</code>, затем точки,
-затем рутины, затем циклы, затем корневой цикл (ровно один):</p>
+<p>Члены расписания — в любом порядке: точки, рутины, циклы, корневой цикл
+и опциональная <code>timezone</code> (один раз, без запятой). Корневой цикл ровно
+один, где угодно:</p>
 <div class="highlight"><pre><span></span><code><span class="k">schedule</span> <span class="s">"Автобусный парк"</span> <span class="p">{</span>
-  <span class="n">timezone</span> <span class="o">=</span> <span class="s">"+03:00"</span><span class="p">,</span>  <span class="c1">// или "Z" — опционально, первой строкой</span>
-  <span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем точки</span>
-  <span class="k">routine</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">TC</span><span class="p">)</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем рутины</span>
-  <span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// затем циклы</span>
-  <span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// корневой — последний</span>
+  <span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// хоть первым</span>
+  <span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
+  <span class="n">timezone</span> <span class="o">=</span> <span class="s">"+03:00"</span>  <span class="c1">// или "Z"</span>
+  <span class="k">routine</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">TC</span><span class="p">)</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
+  <span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>Поля шапок — в любом порядке (разделитель тот же: запятая у <code>root_cycle</code>,
+точка с запятой у <code>point</code>, пробел у <code>cycle</code>); висячие разделители запрещены,
+как везде в языке. Нет обязательного поля — ошибка <code>missing-argument</code>,
+поле дважды — <code>duplicate-argument</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span><span class="p">,</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// то же самое</span>
+<span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="k">attrs</span> <span class="o">=</span> <span class="p">{...};</span> <span class="k">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">depart</span><span class="p">];</span> <span class="p">}</span>  <span class="c1">// то же самое</span>
+<span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// параметры (если есть) — тоже в любом порядке</span>
+</code></pre></div>
+<p>У <code>time_const</code> и <code>routine</code> поле одно (<code>duration</code> / параметры), переставлять
+нечего; отсутствие табличного параметра рутины — <code>no-table-parameter</code>.</p>
 <p><code>timezone</code> — только <code>Z</code> или числовой <code>±HH:MM</code>. Имена зон (<code>MSK</code>,
 <code>Europe/...</code>) — ошибка <code>invalid-timezone</code>: пишите числовой офсет.
 Имена IANA с переходами DST — в <a href="../../todo/">todo</a>.</p>

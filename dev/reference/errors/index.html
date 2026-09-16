@@ -789,7 +789,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Имена
+        Шапки
       
     </span>
   </a>
@@ -800,7 +800,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Рекурсия
+        Имена
       
     </span>
   </a>
@@ -811,7 +811,7 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Таблицы
+        Рекурсия
       
     </span>
   </a>
@@ -822,7 +822,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Длительности и границы
+        Таблицы
       
     </span>
   </a>
@@ -833,7 +833,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Длительности и границы
       
     </span>
   </a>
@@ -844,7 +844,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Импорты
+        Условия
       
     </span>
   </a>
@@ -855,7 +855,7 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Атрибуты
+        Импорты
       
     </span>
   </a>
@@ -864,6 +864,17 @@
       
         <li class="md-nav__item">
   <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Атрибуты
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Даты
@@ -1255,7 +1266,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Имена
+        Шапки
       
     </span>
   </a>
@@ -1266,7 +1277,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Рекурсия
+        Имена
       
     </span>
   </a>
@@ -1277,7 +1288,7 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Таблицы
+        Рекурсия
       
     </span>
   </a>
@@ -1288,7 +1299,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Длительности и границы
+        Таблицы
       
     </span>
   </a>
@@ -1299,7 +1310,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Длительности и границы
       
     </span>
   </a>
@@ -1310,7 +1321,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Импорты
+        Условия
       
     </span>
   </a>
@@ -1321,7 +1332,7 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Атрибуты
+        Импорты
       
     </span>
   </a>
@@ -1330,6 +1341,17 @@
       
         <li class="md-nav__item">
   <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Атрибуты
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Даты
@@ -1367,13 +1389,38 @@
 <code>2</code> — некорректные аргументы CLI (текст usage).</p>
 <p>Каждая ошибка ниже названа по ситуации, а не по номеру: имя стабильно,
 новые ситуации вставляются без перенумерации. Тексты сообщений дословные.</p>
-<p>Ошибки синтаксиса (файл не разбирается по грамматике, включая отсутствие
-корневого цикла) возвращают код <code>1</code> без имени ситуации. Импорты
+<p>Ошибки синтаксиса (файл не разбирается по грамматике) возвращают код <code>1</code>
+без имени ситуации. Поля шапок со свободным порядком проверяет сборка:
+нет обязательного поля — <code>missing-argument</code> (включая отсутствие корневого
+цикла целиком), поле дважды — <code>duplicate-argument</code> (включая второй корень).
+Импорты
 (<code>cannot-read-import</code>, <code>schedule-in-import</code>) разрешаются раньше проверок
 решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
 побеждает: имена → рекурсия → таблицы → длительности и границы → условия →
 даты. Внутри фазы проверки идут в порядке объявления.</p>
-<h2 id="_2">Имена<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h2 id="_2">Шапки<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Ситуация</th>
+<th>Сообщение</th>
+<th>Исправление</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>missing-argument</code></td>
+<td><code>missing argument 'duration'</code>, <code>missing argument 'actions'</code>, <code>missing argument 'root_cycle'</code></td>
+<td>Добавить обязательное поле шапки (<code>start_time</code>/<code>duration</code> у <code>root_cycle</code>, <code>actions</code> у <code>point</code>, сам <code>root_cycle</code>)</td>
+</tr>
+<tr>
+<td><code>duplicate-argument</code></td>
+<td><code>duplicate argument 'duration'</code>, <code>duplicate argument 'timezone'</code>, <code>duplicate argument 'root_cycle'</code></td>
+<td>Оставить поле шапки один раз</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_3">Имена<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1415,7 +1462,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_3">Рекурсия<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="_4">Рекурсия<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1432,7 +1479,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_4">Таблицы<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<h2 id="_5">Таблицы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1459,7 +1506,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_5">Длительности и границы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_6">Длительности и границы<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1511,7 +1558,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_6">Условия<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Условия<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1593,7 +1640,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_7">Импорты<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">Импорты<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1625,7 +1672,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_8">Атрибуты<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<h2 id="_9">Атрибуты<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1642,7 +1689,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_9">Даты<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<h2 id="_10">Даты<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
