@@ -34,7 +34,7 @@
 | `action-not-allowed` | `action 'arrive' not allowed for point 'DEPOT'` | Добавить действие в `actions` точки |
 | `unknown-cycle` | `unknown cycle 'NIGHT_ROUTE'` | Объявить цикл `cycle`; проверить форму вызова `A()` или `A.b()` |
 | `duplicate` | `duplicate point 'DEPOT'`, `duplicate routine 'M'`, `duplicate table 'T'`, `duplicate slot '1st'`, `duplicate param 'a'` | Устранить повтор имени внутри файла |
-| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, объявлять так нельзя |
+| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, `here` — контекст инстанции, объявлять так нельзя |
 | `wrong-kind` | `point 'X' is not a cycle`, `cycle 'X' is not a point`, `point 'X' is not a routine`, `routine 'X' is not a point`, `routine 'X' is not a cycle` | Переименовать: имя занято сущностью другого рода |
 
 ## Рекурсия

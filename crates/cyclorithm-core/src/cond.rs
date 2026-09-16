@@ -30,6 +30,63 @@ pub enum Value {
 
 impl Eq for Value {}
 
+/// Момент строки как кадр: стена (`wall`) — представление в зоне кадра,
+/// абсолют (`abs`) — мс epoch, зона (`zone`) — сдвиг кадра в мс.
+/// Инвариант: `wall ≡ abs + zone`. В языке — словарь `{wall, abs, zone}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AtFrame {
+    pub wall: i64,
+    pub abs: i64,
+    pub zone: i64,
+}
+
+impl AtFrame {
+    /// Кадр из абсолюта и зоны кадра (зона — в мс, `file.or(query)`).
+    pub fn new(abs: i64, zone_ms: i64) -> Self {
+        Self {
+            wall: abs.saturating_add(zone_ms),
+            abs,
+            zone: zone_ms,
+        }
+    }
+
+    /// Нулевой кадр (статика атрибутов точек, константное сложение).
+    pub fn zero() -> Self {
+        Self {
+            wall: 0,
+            abs: 0,
+            zone: 0,
+        }
+    }
+
+    /// Словарь `{wall, abs, zone}` — значение `at` / `mkdate` / `event.at`.
+    pub fn to_value(&self) -> Value {
+        Value::Map(vec![
+            ("wall".to_owned(), Value::Num(self.wall)),
+            ("abs".to_owned(), Value::Num(self.abs)),
+            ("zone".to_owned(), Value::Num(self.zone)),
+        ])
+    }
+
+    /// Обратно из словаря (аргумент предиката): кривая форма — `None`.
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let Value::Map(pairs) = v else {
+            return None;
+        };
+        let get = |key: &str| {
+            pairs.iter().find_map(|(k, x)| match x {
+                Value::Num(n) if k == key => Some(*n),
+                _ => None,
+            })
+        };
+        Some(Self {
+            wall: get("wall")?,
+            abs: get("abs")?,
+            zone: get("zone")?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Ty {
     Num,
@@ -123,12 +180,13 @@ impl TableReg {
     }
 }
 
-/// `at` зарезервировано (момент строки): объявлять так ничего нельзя.
-/// Проверяют обе фазы именования — объявления (`resolve_units`) и сущности
-/// расписания (`validate_names`), плюс параметры циклов/рутин (но не предикатов:
-/// у предиката параметр обязан буквально зваться `at`).
+/// `at` (момент строки) и `here` (контекст инстанции) зарезервированы:
+/// объявлять так ничего нельзя. Проверяют обе фазы именования — объявления
+/// (`resolve_units`) и сущности расписания (`validate_names`), плюс параметры
+/// циклов/рутин (но не предикатов: у предиката параметр обязан буквально
+/// зваться `at`).
 pub(crate) fn check_reserved(name: &str) -> Result<(), Error> {
-    if name == "at" {
+    if name == "at" || name == "here" {
         return Err(Error::reserved_name(name));
     }
     Ok(())
@@ -271,14 +329,16 @@ fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
         }
         DefKind::Fun => {
             let body = def.expr.as_ref().expect("fun: тело");
+            // Параметр — динамика (число, словарь `at`/`here`, данные):
+            // форму добьёт момент строки.
             cx.vars
-                .insert(def.param.clone().expect("fun: параметр"), Ty::Num);
+                .insert(def.param.clone().expect("fun: параметр"), Ty::Dyn);
             cx.infer(body)?;
             Ok(())
         }
         DefKind::Pred => {
             let body = def.cond.as_ref().expect("pred: тело");
-            cx.vars.insert("at".to_owned(), Ty::Num);
+            cx.vars.insert("at".to_owned(), Ty::Map);
             cx.data = false;
             cx.infer_cond(body)?;
             Ok(())
@@ -299,6 +359,7 @@ struct CxEv<'a> {
     defs: &'a Defs,
     scope: Scope,
     vars: HashMap<String, Value>,
+    at: AtFrame,
 }
 
 /// Стек вызовов + текущий юнит: общий для статики (`CxTy`) и вычисления
@@ -351,15 +412,15 @@ fn resolve_pred<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, 
     }
 }
 
-/// Встроенные функции (`str`/`pad`/`floordiv`/`floormod`/`mkdate`) действуют,
-/// только если имя не затенено видимым объявлением. Общее для `infer_call`
+/// Встроенные функции (`str`/`pad`/`floordiv`/`floormod`/`mkdate`/`len`/`keys`/`values`)
+/// действуют, только если имя не затенено видимым объявлением. Общее для `infer_call`
 /// и `eval_call` (раньше проверки расходились).
 fn builtin_arity(defs: &Defs, name: &str, unit: usize) -> Option<usize> {
     if visible_def(defs, name, unit).is_some() {
         return None;
     }
     match name {
-        "str" => Some(1),
+        "str" | "len" | "keys" | "values" => Some(1),
         "pad" | "floordiv" | "floormod" => Some(2),
         "mkdate" => Some(7),
         _ => None,
@@ -367,7 +428,7 @@ fn builtin_arity(defs: &Defs, name: &str, unit: usize) -> Option<usize> {
 }
 
 /// Проверить все условия файла в порядке объявления: циклы, рутины, корень,
-/// затем пожары `->` таблиц.
+/// затем вызовы слотов `->` таблиц.
 /// Заодно — аргументы вызовов и блоки действий (та же фаза unknown-name/ошибки условий:
 /// сначала условие строки, затем вызов — как в момент развёртки).
 /// У вызова рутины первый аргумент — таблица (не выражение): пропускается.
@@ -407,7 +468,7 @@ pub fn check_conditions(
         check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
     }
     // Пожары таблиц — без параметров (данные рутин им недоступны статически;
-    // при развёртке пожар выполняется в пустом окружении).
+    // при развёртке вызов слота выполняется в пустом окружении).
     let empty: HashMap<String, Ty> = HashMap::new();
     for tname in &tables.tables.order {
         let t = tables
@@ -415,8 +476,8 @@ pub fn check_conditions(
             .get(tname.as_str())
             .expect("порядок — по реестру");
         for row in &t.rows {
-            if let Some(firing) = &row.firing {
-                check_row(row.condition.as_ref(), firing, defs, &empty, tables)?;
+            if let Some(slot_call) = &row.slot_call {
+                check_row(row.condition.as_ref(), slot_call, defs, &empty, tables)?;
             }
         }
     }
@@ -490,10 +551,11 @@ impl CxTy<'_> {
                     [a] => a,
                     _ => return Err(Error::wrong_arguments(name)),
                 };
-                // Аргумент предиката — число; Dyn (параметр/поле) пропускаем,
-                // момент строки проверит (type-mismatch).
+                // Аргумент предиката — словарь момента (`at`, `mkdate(...)`);
+                // Dyn (параметр/поле) пропускаем, момент строки проверит
+                // (type-mismatch).
                 match self.infer(arg)? {
-                    Ty::Num | Ty::Dyn => {}
+                    Ty::Map | Ty::Dyn => {}
                     _ => return Err(Error::type_mismatch()),
                 }
                 let def = resolve_pred(self.defs, name, self.scope.unit)?;
@@ -619,8 +681,14 @@ impl CxTy<'_> {
                 }
                 Ok(Ty::Dyn)
             }
-            Expr::At => Ok(Ty::Num),
+            // Момент — словарь `{wall, abs, zone}` (см. `AtFrame`).
+            Expr::At => Ok(Ty::Map),
             Expr::Name(name) => {
+                // `here` — синтетика развёртки (словарь инстанции):
+                // в скоупе всегда, объявлять/затенять нельзя.
+                if name == "here" {
+                    return Ok(Ty::Map);
+                }
                 if let Some(ty) = self.vars.get(name) {
                     return Ok(*ty);
                 }
@@ -693,24 +761,48 @@ impl CxTy<'_> {
     }
 
     fn infer_call(&mut self, name: &str, args: &[Expr]) -> Result<Ty, Error> {
-        // Встроенные — только если не затенены (`builtin_arity`); все берут числа.
+        // Встроенные — только если не затенены (`builtin_arity`).
         if let Some(want) = builtin_arity(self.defs, name, self.scope.unit) {
             if args.len() != want {
                 return Err(Error::wrong_arguments(name));
             }
-            // str принимает Num/Float, остальные — только Num (Float → type-mismatch)
-            if name == "str" {
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Float | Ty::Dyn => {}
-                        _ => return Err(Error::type_mismatch()),
+            // Допустимые типы аргументов по встроенным: числа — для
+            // арифметических, коллекции — для `len`/`keys`/`values`.
+            // Динамика (`Dyn`) — везде мимо: разберётся момент строки.
+            let number = |t: Ty| matches!(t, Ty::Num | Ty::Dyn);
+            let collection = |t: Ty| matches!(t, Ty::Map | Ty::Array | Ty::Dyn);
+            match name {
+                "str" => {
+                    for a in args {
+                        match self.infer(a)? {
+                            Ty::Num | Ty::Float | Ty::Dyn => {}
+                            _ => return Err(Error::type_mismatch()),
+                        }
                     }
+                    return Ok(Ty::Str);
                 }
-            } else {
-                for a in args {
-                    match self.infer(a)? {
-                        Ty::Num | Ty::Dyn => {}
-                        _ => return Err(Error::type_mismatch()),
+                "len" => {
+                    for a in args {
+                        match self.infer(a)? {
+                            Ty::Str | Ty::Map | Ty::Array | Ty::Dyn => {}
+                            _ => return Err(Error::type_mismatch()),
+                        }
+                    }
+                    return Ok(Ty::Num);
+                }
+                "keys" | "values" => {
+                    for a in args {
+                        if !collection(self.infer(a)?) {
+                            return Err(Error::type_mismatch());
+                        }
+                    }
+                    return Ok(Ty::Array);
+                }
+                _ => {
+                    for a in args {
+                        if !number(self.infer(a)?) {
+                            return Err(Error::type_mismatch());
+                        }
                     }
                 }
             }
@@ -727,21 +819,22 @@ impl CxTy<'_> {
                 }
                 return Ok(Ty::Num);
             }
-            // Конструктор даты — встроенная функция (см. docs/reference/expressions.md): ровно 7 чисел.
+            // Конструктор даты — встроенная функция (см. docs/reference/expressions.md):
+            // ровно 7 чисел, возвращает словарь момента `{wall, abs, zone}`.
             // Все-константа проверяется сразу (как константный ноль у деления),
             // иначе — в момент строки.
             if name == "mkdate" {
                 let mut vals = Vec::with_capacity(7);
                 for a in args {
                     match const_eval(a, self) {
-                        None => return Ok(Ty::Num),
+                        None => return Ok(Ty::Map),
                         Some(Err(e)) => return Err(e),
                         Some(Ok(Value::Num(v))) => vals.push(v),
                         Some(Ok(_)) => return Err(Error::type_mismatch()),
                     }
                 }
                 build_date(&vals, name)?;
-                return Ok(Ty::Num);
+                return Ok(Ty::Map);
             }
             return Ok(Ty::Str);
         }
@@ -799,8 +892,14 @@ impl CxTy<'_> {
 
     /// База доступа `.поле`/`[n]`: выводим тип и, для голого имени константы,
     /// применяем правило видимости данных (`hide_data`). Сам доступ всегда `Dyn`.
+    /// `here` — не объявление: резолв объявлений пропускаем.
     fn infer_access_base(&mut self, base: &Expr) -> Result<(), Error> {
         self.infer(base)?;
+        if let Expr::Name(name) = base
+            && name == "here"
+        {
+            return Ok(());
+        }
         if let Expr::Name(name) = base {
             // Параметр — динамика, пропускаем.
             if !self.vars.contains_key(name) {
@@ -861,8 +960,9 @@ fn check_map_dupes(pairs: &[(String, crate::parser::Expr)]) -> Result<(), Error>
 /// Разрешить атрибуты точек: `attrs` каждой точки в готовый словарь.
 /// Без `attrs` — пустой. Литерал — как есть (дубли — duplicate-attribute); ссылка —
 /// тело константы-мапы (неизвестное имя — unknown-name, не мапа — type-mismatch).
-/// Значения — выражения; вычисляются с `at = 0` без окружения (доступны только
-/// константы, параметров у точки нет). Вызывать после проверок, в начале развёртки.
+/// Значения — выражения; вычисляются в нулевом кадре без окружения (доступны только
+/// константы, параметров у точки нет; `here` там — unknown-name).
+/// Вызывать после проверок, в начале развёртки.
 pub fn resolve_point_attrs(
     schedule: &Schedule,
     defs: &Defs,
@@ -882,8 +982,12 @@ pub fn resolve_point_attrs(
                     DefKind::Const => {}
                     _ => return Err(Error::type_mismatch()),
                 }
-                match eval_expr_with_env(def.expr.as_ref().expect("const: тело"), 0, defs, &empty)?
-                {
+                match eval_expr_with_env(
+                    def.expr.as_ref().expect("const: тело"),
+                    &AtFrame::zero(),
+                    defs,
+                    &empty,
+                )? {
                     Value::Map(pairs) => pairs,
                     _ => return Err(Error::type_mismatch()),
                 }
@@ -903,7 +1007,7 @@ fn eval_attr_pairs(
 ) -> Result<Vec<(String, Value)>, Error> {
     pairs
         .iter()
-        .map(|(k, v)| eval_expr_with_env(v, 0, defs, env).map(|ev| (k.clone(), ev)))
+        .map(|(k, v)| eval_expr_with_env(v, &AtFrame::zero(), defs, env).map(|ev| (k.clone(), ev)))
         .collect()
 }
 
@@ -974,17 +1078,18 @@ fn normalize_date_literal(raw: &str) -> Result<String, Error> {
     Ok(full)
 }
 
-/// Вычисление константы; `None` — внутри есть `at` или параметр.
+/// Вычисление константы; `None` — внутри есть `at`/`here` или параметр.
 fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
-    if has_at(expr) || has_param(expr, cx) {
+    if has_at(expr) || has_here(expr) || has_param(expr, cx) {
         return None;
     }
     let mut ev = CxEv {
         defs: cx.defs,
         scope: cx.scope.clone(),
         vars: HashMap::new(),
+        at: AtFrame::zero(),
     };
-    let r = eval_expr(expr, 0, &mut ev);
+    let r = eval_expr(expr, &mut ev);
     Some(r)
 }
 
@@ -1017,6 +1122,43 @@ fn has_cond_at(cond: &Cond) -> bool {
                 || match right {
                     CondRhs::One(r) => has_at(r),
                     CondRhs::Alt(alts) => alts.iter().any(has_at),
+                }
+        }
+    }
+}
+
+/// `here` — тоже не константа (синтетика развёртки): там, где `has_at`
+/// запрещает константное сложение, запрещён и `here` (иначе `len(here...)`
+/// в делителе дал бы статичный `unknown-name` вместо вычисления в строке).
+fn has_here(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(n) => n == "here",
+        Expr::At | Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => false,
+        Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_here(v)),
+        Expr::Array(xs) => xs.iter().any(has_here),
+        Expr::Field { base, .. } => has_here(base),
+        Expr::Index { base, index } => has_here(base) || has_here(index),
+        Expr::Neg(x) => has_here(x),
+        Expr::Truth(c) => has_cond_here(c),
+        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
+            has_here(left) || has_here(right)
+        }
+        Expr::Concat(xs) => xs.iter().any(has_here),
+        Expr::Call { args, .. } => args.iter().any(has_here),
+    }
+}
+
+fn has_cond_here(cond: &Cond) -> bool {
+    match cond {
+        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_here),
+        Cond::Not(c) => has_cond_here(c),
+        Cond::Truthy(e) => has_here(e),
+        Cond::Pred { args, .. } => args.iter().any(has_here),
+        Cond::Cmp { left, right, .. } => {
+            has_here(left)
+                || match right {
+                    CondRhs::One(r) => has_here(r),
+                    CondRhs::Alt(alts) => alts.iter().any(has_here),
                 }
         }
     }
@@ -1056,8 +1198,8 @@ fn has_cond_param(cond: &Cond, cx: &CxTy<'_>) -> bool {
     }
 }
 
-/// Вычислить условие для абсолютного времени строки (`at`).
-pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
+/// Вычислить условие для момента строки (`at` — кадр `{wall, abs, zone}`).
+pub fn eval_cond(cond: &Cond, at: &AtFrame, defs: &Defs) -> Result<bool, Error> {
     CxEv {
         defs,
         scope: Scope {
@@ -1065,15 +1207,16 @@ pub fn eval_cond(cond: &Cond, at: i64, defs: &Defs) -> Result<bool, Error> {
             unit: defs.main,
         },
         vars: HashMap::new(),
+        at: *at,
     }
-    .eval_cond(cond, at)
+    .eval_cond(cond)
 }
 
 /// Вычислить условие в окружении параметров (динамический скоуп развёртки).
 /// Пустое окружение — то же, что `eval_cond`.
 pub fn eval_cond_with_env(
     cond: &Cond,
-    at: i64,
+    at: &AtFrame,
     defs: &Defs,
     env: &HashMap<String, Value>,
 ) -> Result<bool, Error> {
@@ -1084,15 +1227,16 @@ pub fn eval_cond_with_env(
             unit: defs.main,
         },
         vars: env.clone(),
+        at: *at,
     }
-    .eval_cond(cond, at)
+    .eval_cond(cond)
 }
 
 /// Вычислить выражение (аргумент вызова, значение блока) в окружении
 /// параметров. Несвязанное имя — unknown-name, как голое неизвестное имя.
 pub fn eval_expr_with_env(
     expr: &Expr,
-    at: i64,
+    at: &AtFrame,
     defs: &Defs,
     env: &HashMap<String, Value>,
 ) -> Result<Value, Error> {
@@ -1103,16 +1247,17 @@ pub fn eval_expr_with_env(
             unit: defs.main,
         },
         vars: env.clone(),
+        at: *at,
     };
-    eval_expr(expr, at, &mut cx)
+    eval_expr(expr, &mut cx)
 }
 
 impl CxEv<'_> {
-    fn eval_cond(&mut self, cond: &Cond, at: i64) -> Result<bool, Error> {
+    fn eval_cond(&mut self, cond: &Cond) -> Result<bool, Error> {
         match cond {
             Cond::Or(cs) => {
                 for c in cs {
-                    if self.eval_cond(c, at)? {
+                    if self.eval_cond(c)? {
                         return Ok(true);
                     }
                 }
@@ -1120,15 +1265,15 @@ impl CxEv<'_> {
             }
             Cond::And(cs) => {
                 for c in cs {
-                    if !self.eval_cond(c, at)? {
+                    if !self.eval_cond(c)? {
                         return Ok(false);
                     }
                 }
                 Ok(true)
             }
-            Cond::Not(c) => Ok(!self.eval_cond(c, at)?),
+            Cond::Not(c) => Ok(!self.eval_cond(c)?),
             // C-стиль: 0/`false` — ложь, ненулевое/`true` — истина.
-            Cond::Truthy(e) => Ok(match eval_expr(e, at, self)? {
+            Cond::Truthy(e) => Ok(match eval_expr(e, self)? {
                 Value::Num(n) => n != 0,
                 Value::Float(f) => f != 0.0,
                 Value::Bool(b) => b,
@@ -1136,31 +1281,33 @@ impl CxEv<'_> {
             }),
             Cond::Pred { name, args } => {
                 let arg = match args.as_slice() {
-                    [a] => eval_expr(a, at, self)?,
+                    [a] => eval_expr(a, self)?,
                     _ => return Err(Error::wrong_arguments(name)),
                 };
-                let at_arg = match arg {
-                    Value::Num(n) => n,
-                    _ => return Err(Error::type_mismatch()),
-                };
+                // Тело предиката выполняется в переданном моменте
+                // (словарь `{wall, abs, zone}` — `at`, `mkdate(...)`).
+                let frame = AtFrame::from_value(&arg).ok_or_else(Error::type_mismatch)?;
                 let defs = self.defs;
                 let def = resolve_pred(defs, name, self.scope.unit)?;
                 self.scope.enter(name, def.unit)?;
                 let body = def.cond.clone().expect("pred: тело");
-                let r = self.eval_cond(&body, at_arg);
+                let old = std::mem::replace(&mut self.at, frame);
+                let r = self.eval_cond(&body);
+                self.at = old;
                 self.scope.leave();
                 r
             }
             Cond::Cmp { op, left, right } => {
-                let l = eval_expr(left, at, self)?;
+                let l = eval_expr(left, self)?;
                 match right {
                     CondRhs::One(rexpr) => {
-                        let r = eval_expr(rexpr, at, self)?;
+                        let r = eval_expr(rexpr, self)?;
                         // Date-сравнение — то же правило, что в статике
-                        // (`date_sides`): голый `at` приводим к канонике.
+                        // (`date_sides`): голый `at` приводим к канонике стены.
+                        let wall = self.at.wall;
                         let canonical = || {
-                            crate::datetime::format_datetime_full(at).ok_or_else(|| {
-                                Error::invalid_date(&crate::datetime::format_datetime(at))
+                            crate::datetime::format_datetime_full(wall).ok_or_else(|| {
+                                Error::invalid_date(&crate::datetime::format_datetime(wall))
                             })
                         };
                         match date_sides(left, rexpr) {
@@ -1184,7 +1331,7 @@ impl CxEv<'_> {
                         }
                         let mut any_eq = false;
                         for a in alts {
-                            let v = eval_expr(a, at, self)?;
+                            let v = eval_expr(a, self)?;
                             if cmp_values(CmpOp::Eq, &l, &v)? {
                                 any_eq = true;
                                 break;
@@ -1292,8 +1439,9 @@ fn float_bin(a: f64, b: f64, op: &ArithOp) -> Result<Value, Error> {
     }
 }
 
-/// Вычислить выражение для `at`. Переполнение — integer-out-of-range.
-fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
+/// Вычислить выражение для момента строки (`cx.at` — кадр).
+/// Переполнение — integer-out-of-range.
+fn eval_expr(expr: &Expr, cx: &mut CxEv<'_>) -> Result<Value, Error> {
     match expr {
         Expr::Num(raw) => Ok(Value::Num(
             raw.parse().map_err(|_| Error::integer_out_of_range(raw))?,
@@ -1309,17 +1457,17 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
         Expr::Bool(b) => Ok(Value::Bool(*b)),
         Expr::Map(pairs) => pairs
             .iter()
-            .map(|(k, v)| eval_expr(v, at, cx).map(|ev| (k.clone(), ev)))
+            .map(|(k, v)| eval_expr(v, cx).map(|ev| (k.clone(), ev)))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Map),
         Expr::Array(xs) => xs
             .iter()
-            .map(|x| eval_expr(x, at, cx))
+            .map(|x| eval_expr(x, cx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::Array),
         // Доступ — только в момент строки: нет ключа / не-мапа / не-массив —
         // `unknown field`; индекс вне границ — `out of bounds`.
-        Expr::Field { base, field } => match eval_expr(base, at, cx)? {
+        Expr::Field { base, field } => match eval_expr(base, cx)? {
             Value::Map(pairs) => pairs
                 .iter()
                 .find(|(k, _)| k == field)
@@ -1328,11 +1476,11 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             _ => Err(Error::unknown_field(field)),
         },
         Expr::Index { base, index } => {
-            let i = match eval_expr(index, at, cx)? {
+            let i = match eval_expr(index, cx)? {
                 Value::Num(n) => n,
                 _ => return Err(Error::type_mismatch()),
             };
-            let items = match eval_expr(base, at, cx)? {
+            let items = match eval_expr(base, cx)? {
                 Value::Array(xs) => xs,
                 _ => return Err(Error::unknown_field(&i.to_string())),
             };
@@ -1344,7 +1492,8 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             }
             Ok(items[pos as usize].clone())
         }
-        Expr::At => Ok(Value::Num(at)),
+        // Момент — словарь кадра (явный `.wall`/`.abs`, коэрции нет).
+        Expr::At => Ok(cx.at.to_value()),
         Expr::Name(name) => {
             if let Some(v) = cx.vars.get(name) {
                 return Ok(v.clone());
@@ -1358,11 +1507,11 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                 Err(e) => return Err(e),
             };
             cx.scope.enter(name, unit)?;
-            let r = eval_expr(&body, at, cx);
+            let r = eval_expr(&body, cx);
             cx.scope.leave();
             r
         }
-        Expr::Neg(x) => match eval_expr(x, at, cx)? {
+        Expr::Neg(x) => match eval_expr(x, cx)? {
             Value::Num(v) => v
                 .checked_neg()
                 .map(Value::Num)
@@ -1376,10 +1525,10 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
             }
             _ => Err(Error::type_mismatch()),
         },
-        Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c, at)?))),
+        Expr::Truth(c) => Ok(Value::Num(i64::from(eval_cond_in(cx, c)?))),
         Expr::Bin { op, left, right } => {
-            let lv = eval_expr(left, at, cx)?;
-            let rv = eval_expr(right, at, cx)?;
+            let lv = eval_expr(left, cx)?;
+            let rv = eval_expr(right, cx)?;
             match (&lv, &rv) {
                 (Value::Num(a), Value::Num(b)) => {
                     let (a, b) = (*a, *b);
@@ -1424,7 +1573,7 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
         // Битовые (см. docs/reference/expressions.md): two's complement с wrap'ом, ошибок нет по построению.
         // `>>` — логический (добивка нулями), величина сдвига — по модулю 64.
         Expr::Bit { op, left, right } => {
-            let (a, b) = match (eval_expr(left, at, cx)?, eval_expr(right, at, cx)?) {
+            let (a, b) = match (eval_expr(left, cx)?, eval_expr(right, cx)?) {
                 (Value::Num(a), Value::Num(b)) => (a, b),
                 _ => return Err(Error::type_mismatch()),
             };
@@ -1441,19 +1590,19 @@ fn eval_expr(expr: &Expr, at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
         Expr::Concat(xs) => {
             let mut out = String::new();
             for x in xs {
-                match eval_expr(x, at, cx)? {
+                match eval_expr(x, cx)? {
                     Value::Str(s) => out.push_str(&s),
                     _ => return Err(Error::type_mismatch()),
                 }
             }
             Ok(Value::Str(out))
         }
-        Expr::Call { name, args } => eval_call(name, args, at, cx),
+        Expr::Call { name, args } => eval_call(name, args, cx),
     }
 }
 
-fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond, at: i64) -> Result<bool, Error> {
-    cx.eval_cond(cond, at)
+fn eval_cond_in(cx: &mut CxEv<'_>, cond: &Cond) -> Result<bool, Error> {
+    cx.eval_cond(cond)
 }
 
 fn float_to_string(f: f64) -> String {
@@ -1467,12 +1616,12 @@ fn float_to_string(f: f64) -> String {
     s
 }
 
-fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Value, Error> {
+fn eval_call(name: &str, args: &[Expr], cx: &mut CxEv<'_>) -> Result<Value, Error> {
     let defs = cx.defs;
     // Видимое объявление затеняет встроенную — то же правило, что в infer
     // (`builtin_arity` через `visible_def`).
     if let Some(def) = visible_def(defs, name, cx.scope.unit) {
-        return eval_def_call(name, def, args, at, cx);
+        return eval_def_call(name, def, args, cx);
     }
     match name {
         "str" => {
@@ -1480,7 +1629,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             if args.len() != 1 {
                 return Err(Error::wrong_arguments(name));
             }
-            match eval_expr(a, at, cx)? {
+            match eval_expr(a, cx)? {
                 Value::Num(n) => Ok(Value::Str(n.to_string())),
                 Value::Float(f) => Ok(Value::Str(float_to_string(f))),
                 _ => Err(Error::type_mismatch()),
@@ -1490,7 +1639,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             if args.len() != 2 {
                 return Err(Error::wrong_arguments(name));
             }
-            let (n, w) = match (eval_expr(&args[0], at, cx)?, eval_expr(&args[1], at, cx)?) {
+            let (n, w) = match (eval_expr(&args[0], cx)?, eval_expr(&args[1], cx)?) {
                 (Value::Num(n), Value::Num(w)) => (n, w),
                 _ => return Err(Error::type_mismatch()),
             };
@@ -1512,7 +1661,7 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             let [a, b] = args else {
                 return Err(Error::wrong_arguments(name));
             };
-            let (x, y) = match (eval_expr(a, at, cx)?, eval_expr(b, at, cx)?) {
+            let (x, y) = match (eval_expr(a, cx)?, eval_expr(b, cx)?) {
                 (Value::Num(x), Value::Num(y)) => (x, y),
                 _ => return Err(Error::type_mismatch()),
             };
@@ -1534,19 +1683,56 @@ fn eval_call(name: &str, args: &[Expr], at: i64, cx: &mut CxEv<'_>) -> Result<Va
             }
             let mut vals = Vec::with_capacity(7);
             for a in args {
-                match eval_expr(a, at, cx)? {
+                match eval_expr(a, cx)? {
                     Value::Num(v) => vals.push(v),
                     _ => return Err(Error::type_mismatch()),
                 }
             }
-            build_date(&vals, name).map(Value::Num)
+            // Компоненты — стена кадра: абсолют сдвигается на зону кадра.
+            let wall = build_date(&vals, name)?;
+            let abs = wall
+                .checked_sub(cx.at.zone)
+                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))?;
+            Ok(AtFrame::new(abs, cx.at.zone).to_value())
+        }
+        "len" => {
+            let [a] = args else {
+                return Err(Error::wrong_arguments(name));
+            };
+            match eval_expr(a, cx)? {
+                Value::Str(s) => Ok(Value::Num(s.chars().count() as i64)),
+                Value::Array(xs) => Ok(Value::Num(xs.len() as i64)),
+                Value::Map(pairs) => Ok(Value::Num(pairs.len() as i64)),
+                _ => Err(Error::type_mismatch()),
+            }
+        }
+        "keys" => {
+            let [a] = args else {
+                return Err(Error::wrong_arguments(name));
+            };
+            match eval_expr(a, cx)? {
+                Value::Map(pairs) => Ok(Value::Array(
+                    pairs.into_iter().map(|(k, _)| Value::Str(k)).collect(),
+                )),
+                _ => Err(Error::type_mismatch()),
+            }
+        }
+        "values" => {
+            let [a] = args else {
+                return Err(Error::wrong_arguments(name));
+            };
+            match eval_expr(a, cx)? {
+                Value::Map(pairs) => Ok(Value::Array(pairs.into_iter().map(|(_, v)| v).collect())),
+                _ => Err(Error::type_mismatch()),
+            }
         }
         _ => Err(Error::unknown_name(name)),
     }
 }
 
-/// Собрать дату из 7 чисел (см. docs/reference/expressions.md): кривые компоненты — `invalid date`,
-/// переполнение сборки — `integer out of range`. Сырь — числа как даны.
+/// Собрать стену даты из 7 чисел (см. docs/reference/expressions.md):
+/// кривые компоненты — `invalid date`, переполнение сборки — `integer out of range`.
+/// Сырь — числа как даны.
 fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
     let [y, mo, d, h, mi, s, ms] = v else {
         return Err(Error::wrong_arguments(name));
@@ -1559,13 +1745,7 @@ fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
     }
 }
 
-fn eval_def_call(
-    name: &str,
-    def: &Def,
-    args: &[Expr],
-    at: i64,
-    cx: &mut CxEv<'_>,
-) -> Result<Value, Error> {
+fn eval_def_call(name: &str, def: &Def, args: &[Expr], cx: &mut CxEv<'_>) -> Result<Value, Error> {
     if cx.scope.stack.iter().any(|(n, _)| n == name) {
         return Err(Error::recursive_definition(name));
     }
@@ -1576,20 +1756,20 @@ fn eval_def_call(
             }
             cx.scope.enter(name, def.unit)?;
             let body = def.expr.clone().expect("const: тело");
-            let r = eval_expr(&body, at, cx);
+            let r = eval_expr(&body, cx);
             cx.scope.leave();
             r
         }
         DefKind::Fun => {
             let arg = match args {
-                [a] => eval_expr(a, at, cx)?,
+                [a] => eval_expr(a, cx)?,
                 _ => return Err(Error::wrong_arguments(name)),
             };
             cx.scope.enter(name, def.unit)?;
             let param = def.param.clone().expect("fun: параметр");
             let body = def.expr.clone().expect("fun: тело");
             let old = cx.vars.insert(param.clone(), arg);
-            let r = eval_expr(&body, at, cx);
+            let r = eval_expr(&body, cx);
             match old {
                 Some(v) => {
                     cx.vars.insert(param, v);
@@ -1632,11 +1812,21 @@ mod tests {
         resolve_defs(&[]).expect("прелюдия обязана проверяться").0
     }
 
+    /// Кадр теста: зона нулевая, стена = абсолюту.
+    fn frame(t: i64) -> AtFrame {
+        AtFrame::new(t, 0)
+    }
+
+    /// Словарь момента литералом (аргумент календарных `fun` в тестах).
+    fn dt(t: i64) -> String {
+        format!("{{\"wall\": {t}, \"abs\": {t}, \"zone\": 0}}")
+    }
+
     fn yes(row: &str, at: i64) -> bool {
         let c = cond_of(row);
         let d = test_defs();
         check_single(&c, &d).expect("условие обязано проходить проверку");
-        eval_cond(&c, at, &d).expect("вычисление обязано удаваться")
+        eval_cond(&c, &frame(at), &d).expect("вычисление обязано удаваться")
     }
 
     fn no(row: &str, at: i64) -> bool {
@@ -1673,14 +1863,14 @@ mod tests {
         let d = defs_of(body)?;
         let c = cond_of(row);
         check_single(&c, &d)?;
-        eval_cond(&c, at, &d)
+        eval_cond(&c, &frame(at), &d)
     }
 
     #[test]
     fn arithmetic_follows_precedence() {
-        assert!(yes("at + 2 * 3 == 8", 2));
-        assert!(yes("(at + 2) * 3 == 12", 2));
-        assert!(yes("-at == 0 - 2", 2));
+        assert!(yes("at.wall + 2 * 3 == 8", 2));
+        assert!(yes("(at.wall + 2) * 3 == 12", 2));
+        assert!(yes("-at.wall == 0 - 2", 2));
     }
 
     #[test]
@@ -1734,10 +1924,10 @@ mod tests {
     fn bitwise_shift_by_zero_expression_never_errors() {
         // Правый операнд-константа 0 — не деление: статика проходит,
         // в момент строки ошибки тоже нет.
-        let c = cond_of("1 << (at - at) == 1");
+        let c = cond_of("1 << (at.wall - at.wall) == 1");
         let d = test_defs();
         check_single(&c, &d).expect("сдвиг на ноль выражения — не ошибка");
-        assert!(eval_cond(&c, 100, &d).expect("вычисление обязано пройти"));
+        assert!(eval_cond(&c, &frame(100), &d).expect("вычисление обязано пройти"));
     }
 
     #[test]
@@ -1765,7 +1955,7 @@ mod tests {
             let c = cond_of(row);
             let d = test_defs();
             check_single(&c, &d).expect("ширина не константа границ — статика проходит");
-            let e = eval_cond(&c, 0, &d).expect_err("ширина за лимитом — ошибка");
+            let e = eval_cond(&c, &frame(0), &d).expect_err("ширина за лимитом — ошибка");
             assert_eq!(e.code, "string-too-long", "для {row}");
             assert_eq!(
                 e.message.as_str(),
@@ -1777,23 +1967,23 @@ mod tests {
 
     #[test]
     fn logic_and_alternation() {
-        assert!(yes("not at == 1", 2));
-        assert!(no("not at == 1", 1));
-        assert!(yes("at == 1 or at == 2", 2));
-        assert!(yes("at == (1 or 2)", 2));
-        assert!(no("at == (1 or 2)", 3));
-        assert!(yes("at != (1 or 2)", 3));
+        assert!(yes("not at.wall == 1", 2));
+        assert!(no("not at.wall == 1", 1));
+        assert!(yes("at.wall == 1 or at.wall == 2", 2));
+        assert!(yes("at.wall == (1 or 2)", 2));
+        assert!(no("at.wall == (1 or 2)", 3));
+        assert!(yes("at.wall != (1 or 2)", 3));
     }
 
     #[test]
     fn and_binds_tighter_than_or() {
-        // Без скобок: `at == 1 or (at == 2 and at == 2)`.
-        assert!(yes("at == 1 or at == 2 and at == 2", 1));
-        assert!(no("at == 1 or at == 2 and at == 2", 3));
-        // Группа переопределяет: `(at == 1 or at == 2) and at == 2`.
-        assert!(no("(at == 1 or at == 2) and at == 2", 1));
-        assert!(yes("(at == 1 or at == 2) and at == 2", 2));
-        assert!(yes("not (at == 1 or at == 2)", 3));
+        // Без скобок: `at.wall == 1 or (at.wall == 2 and at.wall == 2)`.
+        assert!(yes("at.wall == 1 or at.wall == 2 and at.wall == 2", 1));
+        assert!(no("at.wall == 1 or at.wall == 2 and at.wall == 2", 3));
+        // Группа переопределяет: `(at.wall == 1 or at.wall == 2) and at.wall == 2`.
+        assert!(no("(at.wall == 1 or at.wall == 2) and at.wall == 2", 1));
+        assert!(yes("(at.wall == 1 or at.wall == 2) and at.wall == 2", 2));
+        assert!(yes("not (at.wall == 1 or at.wall == 2)", 3));
     }
 
     #[test]
@@ -1804,14 +1994,22 @@ mod tests {
         assert!(yes("true", 0));
         assert!(no("false", 0));
         assert!(yes("1 + 2", 0));
-        assert!(no("at - at", 100));
-        assert!(yes("at", 100));
+        assert!(no("at.wall - at.wall", 100));
+        // Голый словарь в позиции условия — «забытое сравнение», как мапы.
+        let e = static_err("at");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
         assert!(yes("not 0", 0));
-        assert!(yes("5 and at == at", 7));
+        assert!(yes("5 and at.wall == at.wall", 7));
         // Скобочное условие как операнд: истина вносится как 1/0.
-        assert!(yes("(at == 1) == 1", 1));
-        assert!(no("(at == 1) == 1", 2));
-        assert!(yes("at == (1 and 2)", 1));
+        assert!(yes("(at.wall == 1) == 1", 1));
+        assert!(no("(at.wall == 1) == 1", 2));
+        assert!(yes("at.wall == (1 and 2)", 1));
         // Строки/словари/массивы в позиции условия — «забытое сравнение».
         for bad in ["\"x\"", "{\"a\": 1}", "[1]"] {
             let e = static_err(bad);
@@ -1828,17 +2026,20 @@ mod tests {
 
     #[test]
     fn truth_bridge_takes_and_or() {
-        assert!(yes("2 * (at == 1 or at == 2) == 2", 2));
-        assert!(yes("2 * (at == 1 or at == 2) == 0", 3));
-        assert!(yes("1 + (at == 1 and not at == 2) == 2", 1));
-        assert!(yes("1 + (at == 1 and not at == 2) == 1", 2));
+        assert!(yes("2 * (at.wall == 1 or at.wall == 2) == 2", 2));
+        assert!(yes("2 * (at.wall == 1 or at.wall == 2) == 0", 3));
+        assert!(yes("1 + (at.wall == 1 and not at.wall == 2) == 2", 1));
+        assert!(yes("1 + (at.wall == 1 and not at.wall == 2) == 1", 2));
     }
 
     #[test]
     fn truth_bridge_short_circuits() {
         // Ленивость or действует и внутри мостика: деление на ноль
         // в мёртвой ветке не срабатывает при истинной первой.
-        assert!(yes("1 * (at == 1 or 1 / (at - at) == 0) == 1", 1));
+        assert!(yes(
+            "1 * (at.wall == 1 or 1 / (at.wall - at.wall) == 0) == 1",
+            1
+        ));
     }
 
     fn rand_vals(t0: i64, step: i64, n: usize) -> Vec<i64> {
@@ -1850,15 +2051,21 @@ mod tests {
                 unit: d.main,
             },
             vars: HashMap::new(),
+            at: AtFrame::zero(),
         };
         (0..n)
             .map(|i| {
                 let t = t0 + i as i64 * step;
+                // `rand` берёт словарь момента: стена = метка, зона нулевая.
                 let e = Expr::Call {
                     name: "rand".to_owned(),
-                    args: vec![Expr::Num(t.to_string())],
+                    args: vec![Expr::Map(vec![
+                        ("wall".to_owned(), Expr::Num(t.to_string())),
+                        ("abs".to_owned(), Expr::Num(t.to_string())),
+                        ("zone".to_owned(), Expr::Num("0".to_owned())),
+                    ])],
                 };
-                match eval_expr(&e, 0, &mut cx) {
+                match eval_expr(&e, &mut cx) {
                     Ok(Value::Num(v)) => v,
                     _ => panic!("rand обязан давать число"),
                 }
@@ -1921,30 +2128,30 @@ mod tests {
     #[test]
     fn workday_weekends() {
         // Метки — полночи UTC: 2026-01-01 чт, далее пт/сб/вс/пн.
-        assert!(yes("workday(1767225600000)", 0));
-        assert!(yes("workday(1767312000000)", 0));
-        assert!(no("workday(1767398400000)", 0));
-        assert!(no("workday(1767484800000)", 0));
-        assert!(yes("workday(1767571200000)", 0));
+        assert!(yes(&format!("workday({})", dt(1767225600000)), 0));
+        assert!(yes(&format!("workday({})", dt(1767312000000)), 0));
+        assert!(no(&format!("workday({})", dt(1767398400000)), 0));
+        assert!(no(&format!("workday({})", dt(1767484800000)), 0));
+        assert!(yes(&format!("workday({})", dt(1767571200000)), 0));
     }
 
     #[test]
     fn quarter_boundaries() {
-        assert!(yes("quarter(1767225600000) == 1", 0)); // 01.01
-        assert!(yes("quarter(1774915200000) == 1", 0)); // 31.03
-        assert!(yes("quarter(1775001600000) == 2", 0)); // 01.04
-        assert!(yes("quarter(1776211200000) == 2", 0)); // 15.04
-        assert!(yes("quarter(1784073600000) == 3", 0)); // 15.07
-        assert!(yes("quarter(1792022400000) == 4", 0)); // 15.10
-        assert!(yes("quarter(1797292800000) == 4", 0)); // 15.12
+        assert!(yes(&format!("quarter({}) == 1", dt(1767225600000)), 0)); // 01.01
+        assert!(yes(&format!("quarter({}) == 1", dt(1774915200000)), 0)); // 31.03
+        assert!(yes(&format!("quarter({}) == 2", dt(1775001600000)), 0)); // 01.04
+        assert!(yes(&format!("quarter({}) == 2", dt(1776211200000)), 0)); // 15.04
+        assert!(yes(&format!("quarter({}) == 3", dt(1784073600000)), 0)); // 15.07
+        assert!(yes(&format!("quarter({}) == 4", dt(1792022400000)), 0)); // 15.10
+        assert!(yes(&format!("quarter({}) == 4", dt(1797292800000)), 0)); // 15.12
     }
 
     #[test]
     fn is_leap_century_rules() {
-        assert!(yes("is_leap(1704067200000) == 1", 0)); // 2024
-        assert!(yes("is_leap(1767225600000) == 0", 0)); // 2026
-        assert!(yes("is_leap(946684800000) == 1", 0)); // 2000 (% 400)
-        assert!(yes("is_leap(0 - 2208988800000) == 0", 0)); // 1900 (% 100)
+        assert!(yes(&format!("is_leap({}) == 1", dt(1704067200000)), 0)); // 2024
+        assert!(yes(&format!("is_leap({}) == 0", dt(1767225600000)), 0)); // 2026
+        assert!(yes(&format!("is_leap({}) == 1", dt(946684800000)), 0)); // 2000 (% 400)
+        assert!(yes(&format!("is_leap({}) == 0", dt(-2208988800000)), 0)); // 1900 (% 100)
     }
 
     #[test]
@@ -1964,19 +2171,47 @@ mod tests {
             (1794700800000i64, 30),
             (1797292800000i64, 31),
         ] {
-            assert!(yes(&format!("days_in_month({t}) == {want}"), 0));
+            assert!(yes(&format!("days_in_month({}) == {want}", dt(t)), 0));
         }
-        assert!(yes("days_in_month(1707955200000) == 29", 0)); // 02.2024
-        assert!(yes("days_in_month(0 - 2205100800000) == 28", 0)); // 02.1900
+        assert!(yes(
+            &format!("days_in_month({}) == 29", dt(1707955200000)),
+            0
+        )); // 02.2024
+        assert!(yes(
+            &format!("days_in_month({}) == 28", dt(-2205100800000)),
+            0
+        )); // 02.1900
     }
 
     #[test]
     fn start_of_day_month_rounding() {
-        assert!(yes("start_of_day(1767225600000) == 1767225600000", 0)); // полночь
-        assert!(yes("start_of_day(1767268800123) == 1767225600000", 0)); // 12:00:00.123
-        assert!(yes("start_of_month(1768478400000) == 1767225600000", 0)); // 15.01 12:00
-        assert!(yes("start_of_month(1773554400000) == 1772323200000", 0)); // 15.03 06:00
-        assert!(yes("day(start_of_month(1773554400000)) == 1", 0)); // композиция
+        // Начала — словари момента: сравниваем стены.
+        assert!(yes(
+            &format!("start_of_day({}).wall == 1767225600000", dt(1767225600000)),
+            0
+        )); // полночь
+        assert!(yes(
+            &format!("start_of_day({}).wall == 1767225600000", dt(1767268800123)),
+            0
+        )); // 12:00:00.123
+        assert!(yes(
+            &format!(
+                "start_of_month({}).wall == 1767225600000",
+                dt(1768478400000)
+            ),
+            0
+        )); // 15.01 12:00
+        assert!(yes(
+            &format!(
+                "start_of_month({}).wall == 1772323200000",
+                dt(1773554400000)
+            ),
+            0
+        )); // 15.03 06:00
+        assert!(yes(
+            &format!("day(start_of_month({})) == 1", dt(1773554400000)),
+            0
+        )); // композиция
     }
 
     #[test]
@@ -2003,8 +2238,8 @@ mod tests {
 
     #[test]
     fn truth_bridge_gives_one_zero() {
-        assert!(yes("12 * (at >= 2) == 12", 2));
-        assert!(yes("12 * (at >= 3) == 0", 2));
+        assert!(yes("12 * (at.wall >= 2) == 12", 2));
+        assert!(yes("12 * (at.wall >= 3) == 0", 2));
     }
 
     #[test]
@@ -2023,7 +2258,7 @@ mod tests {
             (e.code, e.message.as_str()),
             ("wrong-arguments", "wrong arguments for 'str'")
         );
-        let e = static_err("at + \"x\" == \"y\"");
+        let e = static_err("at.wall + \"x\" == \"y\"");
         assert_eq!(
             (e.code, e.message.as_str()),
             (
@@ -2035,33 +2270,46 @@ mod tests {
 
     #[test]
     fn mkdate_epoch_and_known_dates() {
-        assert!(yes("mkdate(1970, 1, 1, 0, 0, 0, 0) == 0", 0));
-        assert!(yes("mkdate(2026, 1, 1, 0, 0, 0, 0) == 1767225600000", 0));
+        // `mkdate` — словарь момента: сравниваем стены.
+        assert!(yes("mkdate(1970, 1, 1, 0, 0, 0, 0).wall == 0", 0));
         assert!(yes(
-            "mkdate(2026, 1, 1, 12, 30, 15, 250) == 1767270615250",
+            "mkdate(2026, 1, 1, 0, 0, 0, 0).wall == 1767225600000",
             0
         ));
-        assert!(yes("mkdate(2000, 2, 29, 0, 0, 0, 0) == 951782400000", 0));
         assert!(yes(
-            "mkdate(1960, 5, 5, 12, 30, 15, 250) == 0 - 304774184750",
+            "mkdate(2026, 1, 1, 12, 30, 15, 250).wall == 1767270615250",
             0
         ));
+        assert!(yes(
+            "mkdate(2000, 2, 29, 0, 0, 0, 0).wall == 951782400000",
+            0
+        ));
+        assert!(yes(
+            "mkdate(1960, 5, 5, 12, 30, 15, 250).wall == 0 - 304774184750",
+            0
+        ));
+        // Без зоны стена = абсолют.
+        assert!(yes(
+            "mkdate(2026, 1, 1, 0, 0, 0, 0).abs == 1767225600000",
+            0
+        ));
+        assert!(yes("mkdate(2026, 1, 1, 0, 0, 0, 0).zone == 0", 0));
     }
 
     #[test]
     fn mkdate_validates_components_statically() {
         for bad in [
-            "mkdate(2026, 13, 1, 0, 0, 0, 0) == 0",
-            "mkdate(2026, 0, 1, 0, 0, 0, 0) == 0",
-            "mkdate(2026, 4, 31, 0, 0, 0, 0) == 0",
-            "mkdate(2026, 2, 29, 0, 0, 0, 0) == 0",
-            "mkdate(2026, 1, 0, 0, 0, 0, 0) == 0",
-            "mkdate(2026, 1, 1, 24, 0, 0, 0) == 0",
-            "mkdate(2026, 1, 1, 0, 60, 0, 0) == 0",
-            "mkdate(2026, 1, 1, 0, 0, 60, 0) == 0",
-            "mkdate(2026, 1, 1, 0, 0, 0, 1000) == 0",
-            "mkdate(2026, 1, 1, 0, 0, 0, 0 - 1) == 0",
-            "mkdate(1900, 2, 29, 0, 0, 0, 0) == 0",
+            "mkdate(2026, 13, 1, 0, 0, 0, 0).wall == 0",
+            "mkdate(2026, 0, 1, 0, 0, 0, 0).wall == 0",
+            "mkdate(2026, 4, 31, 0, 0, 0, 0).wall == 0",
+            "mkdate(2026, 2, 29, 0, 0, 0, 0).wall == 0",
+            "mkdate(2026, 1, 0, 0, 0, 0, 0).wall == 0",
+            "mkdate(2026, 1, 1, 24, 0, 0, 0).wall == 0",
+            "mkdate(2026, 1, 1, 0, 60, 0, 0).wall == 0",
+            "mkdate(2026, 1, 1, 0, 0, 60, 0).wall == 0",
+            "mkdate(2026, 1, 1, 0, 0, 0, 1000).wall == 0",
+            "mkdate(2026, 1, 1, 0, 0, 0, 0 - 1).wall == 0",
+            "mkdate(1900, 2, 29, 0, 0, 0, 0).wall == 0",
         ] {
             let e = static_err(bad);
             assert_eq!(e.code, "invalid-date", "{bad}");
@@ -2075,17 +2323,17 @@ mod tests {
 
     #[test]
     fn mkdate_rejects_bad_arity_mixing_and_overflow() {
-        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0) == 0");
+        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0).wall == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("wrong-arguments", "wrong arguments for 'mkdate'")
         );
-        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0, 0, 0) == 0");
+        let e = static_err("mkdate(2026, 1, 1, 0, 0, 0, 0, 0).wall == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("wrong-arguments", "wrong arguments for 'mkdate'")
         );
-        let e = static_err("mkdate(2026, \"x\", 1, 0, 0, 0, 0) == 0");
+        let e = static_err("mkdate(2026, \"x\", 1, 0, 0, 0, 0).wall == 0");
         assert_eq!(
             (e.code, e.message.as_str()),
             (
@@ -2093,7 +2341,7 @@ mod tests {
                 "type mismatch: cannot mix number and string"
             )
         );
-        let e = static_err("mkdate(300000000, 1, 1, 0, 0, 0, 0) == 0");
+        let e = static_err("mkdate(300000000, 1, 1, 0, 0, 0, 0).wall == 0");
         assert_eq!(e.code, "integer-out-of-range");
         assert!(
             e.message.starts_with("integer out of range"),
@@ -2106,7 +2354,7 @@ mod tests {
     fn mkdate_huge_year_overflows_instead_of_panicking() {
         // Год — весь `i64`: константа ловится сразу, выражение — в момент строки.
         for y in ["9223372036854775807", "(0 - 9223372036854775807 - 1)"] {
-            let e = static_err(&format!("mkdate({y}, 1, 1, 0, 0, 0, 0) == 0"));
+            let e = static_err(&format!("mkdate({y}, 1, 1, 0, 0, 0, 0).wall == 0"));
             assert_eq!(e.code, "integer-out-of-range", "для года {y}");
             assert!(
                 e.message.starts_with("integer out of range"),
@@ -2114,10 +2362,11 @@ mod tests {
                 e.message
             );
         }
-        let c = cond_of("mkdate(at - at + 9000000000000000000, 1, 1, 0, 0, 0, 0) == 0");
+        let c =
+            cond_of("mkdate(at.wall - at.wall + 9000000000000000000, 1, 1, 0, 0, 0, 0).wall == 0");
         let d = test_defs();
         check_single(&c, &d).expect("год не константа — статика проходит");
-        let e = eval_cond(&c, 0, &d).expect_err("год вне диапазона — ошибка");
+        let e = eval_cond(&c, &frame(0), &d).expect_err("год вне диапазона — ошибка");
         assert_eq!(e.code, "integer-out-of-range");
     }
 
@@ -2125,10 +2374,10 @@ mod tests {
     fn mkdate_runtime_invalid_is_error_not_skip() {
         // 29 февраля невисокосного через выражение: статика проходит,
         // в момент строки — ошибка (как деление на ноль выражением).
-        let c = cond_of("mkdate(2026, 2, 27 + (at - at) + 2, 0, 0, 0, 0) == 0");
+        let c = cond_of("mkdate(2026, 2, 27 + (at.wall - at.wall) + 2, 0, 0, 0, 0).wall == 0");
         let d = test_defs();
         check_single(&c, &d).expect("день не константа — статика проходит");
-        let e = eval_cond(&c, 100, &d).expect_err("кривая дата — ошибка");
+        let e = eval_cond(&c, &frame(100), &d).expect_err("кривая дата — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("invalid-date", "invalid date '2026-2-29T0:0:0.0'")
@@ -2137,17 +2386,19 @@ mod tests {
 
     #[test]
     fn mkdate_roundtrips_calendar() {
-        // Разборка собирается обратно в ту же метку (включая до эпохи).
+        // Разборка собирается обратно в ту же стену (включая до эпохи).
         for t in [
             1767225600000i64,
             1767270615250,
             0,
             946684800000,
-            0 - 2208988800000,
+            -2208988800000,
         ] {
+            let moment = dt(t);
             let row = format!(
-                "mkdate(year({t}), month({t}), day({t}), hour({t}), \
-                minute({t}), second({t}), millisecond({t})) == {t}"
+                "mkdate(year({m}), month({m}), day({m}), hour({m}), \
+                minute({m}), second({m}), millisecond({m})).wall == {t}",
+                m = moment,
             );
             assert!(yes(&row, 0), "{t}");
         }
@@ -2179,10 +2430,10 @@ mod tests {
 
     #[test]
     fn runtime_division_by_zero_is_error_not_skip() {
-        let c = cond_of("1 / (at - at + 1 - 1) == 0");
+        let c = cond_of("1 / (at.wall - at.wall + 1 - 1) == 0");
         let d = test_defs();
         check_single(&c, &d).expect("делитель не константа — статика проходит");
-        let e = eval_cond(&c, 100, &d).expect_err("ноль в момент строки — ошибка");
+        let e = eval_cond(&c, &frame(100), &d).expect_err("ноль в момент строки — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("division-by-zero", "division by zero")
@@ -2207,7 +2458,7 @@ mod tests {
         let c = cond_of("9223372036854775807 + 1 == 0");
         let d = test_defs();
         check_single(&c, &d).expect("переполнение не константа — статика проходит");
-        let e = eval_cond(&c, 0, &d).expect_err("переполнение в момент строки — ошибка");
+        let e = eval_cond(&c, &frame(0), &d).expect_err("переполнение в момент строки — ошибка");
         assert_eq!(
             (e.code, e.message.as_str()),
             (
@@ -2243,13 +2494,13 @@ mod tests {
     fn euclid_min_div_neg_one_is_runtime_error() {
         // Неконстантный делитель: статика пропускает, падает вычисление (не паника).
         for row in [
-            "floordiv((1 << 63), at - at - 1) == 0",
-            "floormod((1 << 63), at - at - 1) == 0",
+            "floordiv((1 << 63), at.wall - at.wall - 1) == 0",
+            "floormod((1 << 63), at.wall - at.wall - 1) == 0",
         ] {
             let c = cond_of(row);
             let d = test_defs();
             check_single(&c, &d).expect("делитель не константа — статика проходит");
-            let e = eval_cond(&c, 0, &d).expect_err("MIN / -1 в момент строки — ошибка");
+            let e = eval_cond(&c, &frame(0), &d).expect_err("MIN / -1 в момент строки — ошибка");
             assert_eq!(
                 (e.code, e.message.as_str()),
                 (
@@ -2264,8 +2515,8 @@ mod tests {
     #[test]
     fn or_and_short_circuit_dead_branches() {
         // Правая часть при at=1 и at=2 — деление на ноль; ленивость её не трогает.
-        assert!(yes("at == 1 or 1 / (at - 1) == 0", 1));
-        assert!(no("at == 1 and 1 / (at - 2) == 0", 2));
+        assert!(yes("at.wall == 1 or 1 / (at.wall - 1) == 0", 1));
+        assert!(no("at.wall == 1 and 1 / (at.wall - 2) == 0", 2));
     }
 
     #[test]
@@ -2295,7 +2546,7 @@ mod tests {
     #[test]
     fn alternation_beyond_eq_ne_is_static_error() {
         // Оператор смотрит статика: `check_single` падает, до вычисления не доходит.
-        let e = static_err("at < (1 or 2)");
+        let e = static_err("at.wall < (1 or 2)");
         assert_eq!(
             (e.code, e.message.as_str()),
             (
@@ -2304,9 +2555,9 @@ mod tests {
             )
         );
         // Рантайм-ветка осталась страховкой для прямых вызовов `eval_cond`.
-        let c = cond_of("at < (1 or 2)");
+        let c = cond_of("at.wall < (1 or 2)");
         let d = test_defs();
-        let e = eval_cond(&c, 1, &d).expect_err("только == и !=");
+        let e = eval_cond(&c, &frame(1), &d).expect_err("только == и !=");
         assert_eq!(
             (e.code, e.message.as_str()),
             (
@@ -2322,17 +2573,25 @@ mod tests {
     }
 
     #[test]
-    fn pred_accepts_any_numeric_argument() {
-        // Аргумент предиката — не обязательно голый `at`: станет временем тела.
-        let r = eval_with("pred big(at) = at > 10;", "big(at - at + 50)", 0)
-            .expect("вычисление обязано удаваться");
+    fn pred_accepts_moment_argument() {
+        // Аргумент предиката — словарь момента: станет временем тела.
+        // Не обязательно голый `at` — годится и `mkdate(...)`.
+        let r = eval_with(
+            "pred big(at) = at.wall > 10;",
+            "big(mkdate(2026, 1, 1, 0, 0, 0, 0))",
+            0,
+        )
+        .expect("вычисление обязано удаваться");
         assert!(r);
+        let e =
+            eval_with("pred big(at) = at.wall > 10;", "big(50)", 0).expect_err("число — не момент");
+        assert_eq!(e.code, "type-mismatch");
     }
 
     #[test]
     fn const_body_sees_call_site_time() {
         // `at` в теле объявления — время места вызова, не объявления.
-        let r = eval_with("const K = at;", "K == 100", 100).expect("должно вычисляться");
+        let r = eval_with("const K = at.wall;", "K == 100", 100).expect("должно вычисляться");
         assert!(r);
     }
 
@@ -2683,20 +2942,22 @@ mod tests {
     #[test]
     fn rejects_mixing_beyond_bare_at() {
         // Не голый `at` и не литерал — обычное смешение.
-        for row in [
-            "hour(at) >= \"2026\"",
-            "at + 1 >= \"2026-01-01\"",
-            "at >= datestr(at)",
-        ] {
-            let e = static_err(row);
-            assert_eq!(
-                (e.code, e.message.as_str()),
-                (
-                    "type-mismatch",
-                    "type mismatch: cannot mix number and string"
-                ),
-                "для {row:?}"
-            );
+        let e = static_err("at >= datestr(at)");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "type-mismatch",
+                "type mismatch: cannot mix number and string"
+            )
+        );
+        // Доступ к полю и вызов календаря — динамика: статика пропускает,
+        // падает строка.
+        for row in ["at.wall + 1 >= \"2026-01-01\"", "hour(at) >= \"2026\""] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("динамика — статика проходит");
+            let e = eval_cond(&c, &frame(0), &d).expect_err("число со строкой — ошибка");
+            assert_eq!(e.code, "type-mismatch", "для {row}");
         }
     }
 
@@ -2707,7 +2968,7 @@ mod tests {
         let (d, _) = resolve_units(&[imp, vec![]]).expect("склейка обязана сходиться");
         let c = cond_of("weekend(at)");
         check_single(&c, &d).unwrap();
-        assert!(eval_cond(&c, 0, &d).unwrap());
+        assert!(eval_cond(&c, &frame(0), &d).unwrap());
     }
 
     #[test]
@@ -2722,11 +2983,11 @@ mod tests {
             ("unknown-name", "unknown name '__h'")
         );
         // Своё `__` внутри своего файла работает.
-        let prog = p::parse_decls("fun __p(t) = t + 1;").unwrap();
+        let prog = p::parse_decls("fun __p(t) = t.wall + 1;").unwrap();
         let (d, _) = resolve_units(&[vec![], prog]).expect("склейка обязана сходиться");
         let c = cond_of("__p(at) == 3");
         check_single(&c, &d).unwrap();
-        assert!(eval_cond(&c, 2, &d).unwrap());
+        assert!(eval_cond(&c, &frame(2), &d).unwrap());
     }
 
     #[test]
@@ -2735,10 +2996,10 @@ mod tests {
         let a = p::parse_decls("const K = 1;").unwrap();
         let b = p::parse_decls("const K = 2;").unwrap();
         let (d, _) = resolve_units(&[a, b]).expect("склейка обязана сходиться");
-        let c = cond_of("at >= K");
+        let c = cond_of("at.wall >= K");
         check_single(&c, &d).unwrap();
-        assert!(eval_cond(&c, 2, &d).unwrap());
-        assert!(!eval_cond(&c, 1, &d).unwrap());
+        assert!(eval_cond(&c, &frame(2), &d).unwrap());
+        assert!(!eval_cond(&c, &frame(1), &d).unwrap());
     }
 
     #[test]
@@ -2758,13 +3019,13 @@ mod tests {
     }
 
     #[test]
-    fn table_firing_conditions_checked() {
-        // Условия пожаров проверяются без параметров (unknown-name), вызов — как строка.
+    fn table_slot_call_conditions_checked() {
+        // Условия вызовов слотов проверяются без параметров (unknown-name), вызов — как строка.
         let src = "time_const D duration = 2h { [banana == 1] tick: 0m -> A.x(); } \
             schedule \"T\" { point A { actions = [x]; } \
             routine M(TC) { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: M(D); } }";
-        let e = check_rows(src).expect_err("имя в пожаре обязано проверяться");
+        let e = check_rows(src).expect_err("имя в вызове слота обязано проверяться");
         assert_eq!(
             (e.code, e.message.as_str()),
             ("unknown-name", "unknown name 'banana'")
@@ -2796,6 +3057,70 @@ mod tests {
             (e.code, e.message.as_str()),
             ("unknown-name", "unknown name 'D'")
         );
+    }
+
+    #[test]
+    fn at_is_wall_abs_zone_dict() {
+        // Момент — словарь кадра: стена, абсолют, зона.
+        assert!(yes(
+            "at.wall == 100 and at.abs == 100 and at.zone == 0",
+            100
+        ));
+        assert!(yes("len(keys(at)) == 3", 0));
+        assert!(yes(
+            "keys(at)[0] == \"wall\" and keys(at)[2] == \"zone\"",
+            0
+        ));
+        assert!(yes("len(at) == 3", 0));
+        // Коэрции нет: голый словарь ни с чем не сравнивается и не складывается.
+        let e = static_err("at == 100");
+        assert_eq!(e.code, "type-mismatch");
+        let e = static_err("at + 1 == 101");
+        assert_eq!(e.code, "type-mismatch");
+    }
+
+    #[test]
+    fn here_is_reserved() {
+        // `here` — синтетика развёртки: объявлять так ничего нельзя.
+        for body in [
+            "const here = 1;",
+            "fun here(t) = t;",
+            "pred here(at) = at.wall == 1;",
+            "time_const here duration = 1h { 1st: 0m; }",
+        ] {
+            let e = defs_of(body).expect_err("here зарезервировано");
+            assert_eq!(
+                (e.code, e.message.as_str()),
+                ("reserved-name", "reserved name 'here'"),
+                "для {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn len_keys_values_over_collections() {
+        assert!(yes("len(\"hello\") == 5", 0));
+        assert!(yes("len([1, 2, 3]) == 3", 0));
+        assert!(yes("len({\"a\": 1, \"b\": 2}) == 2", 0));
+        assert!(yes("keys({\"b\": 1, \"a\": 2})[0] == \"b\"", 0));
+        assert!(yes("keys({\"b\": 1, \"a\": 2})[1] == \"a\"", 0));
+        assert!(yes("len(values({\"b\": 1, \"a\": 2})) == 2", 0));
+        assert!(yes("values({\"b\": 1, \"a\": 2})[0] == 1", 0));
+        assert!(yes("values(at)[0] == at.wall", 5));
+        for bad in ["len(1) == 1", "keys(1) == [1]", "values(\"x\") == [\"x\"]"] {
+            let e = static_err(bad);
+            assert_eq!(e.code, "type-mismatch", "для {bad}");
+        }
+        // Массив под `keys`/`values` — динамика: статика пропускает, падает строка.
+        for row in ["len(keys([1])) == 1", "len(values([1])) == 1"] {
+            let c = cond_of(row);
+            let d = test_defs();
+            check_single(&c, &d).expect("динамика — статика проходит");
+            let e = eval_cond(&c, &frame(0), &d).expect_err("массив — не словарь");
+            assert_eq!(e.code, "type-mismatch", "для {row}");
+        }
+        let e = static_err("len(1, 2) == 2");
+        assert_eq!(e.code, "wrong-arguments");
     }
 
     #[test]
