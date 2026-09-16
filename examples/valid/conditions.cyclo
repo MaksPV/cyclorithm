@@ -23,9 +23,9 @@ schedule "Автобусный парк" {  point DEPOT {
     start_time = "2026-01-01T00:00:00",
     duration = 24h
   {
-    [at % 86400000 < 43200000] 6h: CITY_ROUTE();
-    [at % 86400000 >= 43200000] 18h: CITY_ROUTE();
-    [at == (1768003200000 or 1768089600000)] 0m: DEPOT.depart();
+    [at.wall % 86400000 < 43200000] 6h: CITY_ROUTE();
+    [at.wall % 86400000 >= 43200000] 18h: CITY_ROUTE();
+    [at.wall == (1768003200000 or 1768089600000)] 0m: DEPOT.depart();
     [rush(at)] 8h: CITY_ROUTE();
     [morning(at)] 9h: CITY_ROUTE();
     [weekend(at)] 12h: CITY_ROUTE();
