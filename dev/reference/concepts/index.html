@@ -1648,6 +1648,12 @@
   <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="nf">BREAK_5</span><span class="p">();</span>   <span class="c1">// остатки: 1:20-1:25, 1:25-1:30, 3:50-3:55, 3:55-4:00</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>Направление упаковки — <code>pack left|right|center</code> (default — <code>left</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">left</span> <span class="nf">BREAK_20</span><span class="p">();</span>    <span class="c1">// встык к началу дыры</span>
+<span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">right</span> <span class="nf">BREAK_20</span><span class="p">();</span>   <span class="c1">// встык к концу дыры</span>
+<span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">center</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// по центру дыры, остаток пополам вниз</span>
+<span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">right</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// комбинируется с until</span>
+</code></pre></div>
 <p>Остаток, куда очередной вызов не влез, молча пропускается. Условие строки
 проверяется на каждый экземпляр в его старте. Подробности — в
 <a href="../semantics/#повторы">семантике</a>.</p>
