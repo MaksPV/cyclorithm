@@ -210,16 +210,12 @@ repeat_mod  = { repeat_n | fill_mod }
 repeat_n    = { repeat_kw ~ repeat_count }
 repeat_kw   = @{ "repeat" ~ !word_tail }
 repeat_count = @{ ASCII_DIGIT+ ~ !word_tail }
-// `gaps` — отдельный модификатор добивки пустот: `fill gaps [pack DIR] [until [−]T]`.
-// `pack` — направление упаковки в свободных отрезках: `left` (default,
-// текущее поведение — встык слева), `right` (встык справа), `center`
-// (по центру, остаток делится пополам с округлением вниз).
+// `gaps` — отдельный модификатор добивки пустот: `fill gaps [until [−]T]`.
 // `!"("` смотрит через пробелы (`fill gaps ()` — тоже откат): при `(` вместо
-// `pack`/`until` ветка `gaps_mod` падает целиком и PEG возвращается к голому `fill`,
+// `until` ветка `gaps_mod` падает целиком и PEG возвращается к голому `fill`,
 // а `gaps(...)` читается именем вызова (`Repeat::Fill` + `CycleCall`, не `FillGaps`).
 // Цикл с именем `gaps` (`6h: fill gaps();`) остаётся вызовом именно поэтому.
 // Границы слова: `fillgaps()` — вызов цикла `fillgaps`, а не `fill` + `gaps()`.
-// `packleft`/`leftovers` — имена, а не модификатор + мусор (атомарные границы).
 // Длительность горизонта — `until_dur`, а не `duration`: граница проверяется
 // сразу за последним компонентом атомарно (`fill until 1msx()` — синтаксическая
 // ошибка, а не `fill until 1ms` + `x()`). Отдельный `~ !word_tail` после
@@ -232,10 +228,7 @@ fill_mod    = { fill_kw ~ (gaps_mod | (until_kw ~ neg_sign? ~ until_dur))? }
 fill_kw     = @{ "fill" ~ !word_tail }
 until_kw    = @{ "until" ~ !word_tail }
 until_dur   = ${ duration_item ~ ((WHITESPACE | COMMENT)* ~ duration_item)* ~ !word_tail }
-gaps_mod    = { kw_gaps ~ !"(" ~ pack_dir? ~ (until_kw ~ neg_sign? ~ until_dur)? }
-pack_dir    = { pack_kw ~ pack_val }
-pack_kw     = @{ "pack" ~ !word_tail }
-pack_val    = @{ ("left" | "right" | "center") ~ !word_tail }
+gaps_mod    = { kw_gaps ~ !"(" ~ (until_kw ~ neg_sign? ~ until_dur)? }
 // Атомарно, чтобы граница слова проверялась до неявных пробелов
 // (`gaps X` — модификатор, `gapsX` — имя цикла).
 kw_gaps     = @{ "gaps" ~ !word_tail }

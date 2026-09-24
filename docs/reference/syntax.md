@@ -89,8 +89,6 @@ cycle X duration = 1h { ... }  // ошибка wrong-kind: имя занято
 [not weekend(at)] 10h: repeat 2 SHUTTLE();  // условие + смещение + повтор + вызов
 14h: fill until 15h SHUTTLE();
 0h: fill gaps BREAK_20();  // добивка пустот, без until — до конца цикла
-0h: fill gaps pack right BREAK_20();  // встык справа
-0h: fill gaps pack center until 2h30m BREAK_5();  // по центру отрезка
 0h: fill gaps until 2h30m BREAK_5();
 6h: CITY_ROUTE();
 ```

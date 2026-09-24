@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::parser::{
-    Expr, Invocation, Pack, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
+    Expr, Invocation, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
 };
 
 use crate::Error;
@@ -684,12 +684,12 @@ pub(crate) fn plan_stmts_with(
     occupied: &mut Vec<(i64, i64)>,
 ) -> Result<Vec<Placement>, Error> {
     let mut plans: Vec<Placement> = Vec::with_capacity(stmts.len());
-    // (индекс строки, начало окна, горизонт, шаг filler-а, упаковка) — второй проход.
-    let mut fillers: Vec<(usize, i64, i64, i64, Pack)> = Vec::new();
+    // (индекс строки, начало окна, горизонт, шаг filler-а) — второй проход.
+    let mut fillers: Vec<(usize, i64, i64, i64)> = Vec::new();
     for (i, st) in stmts.iter().enumerate() {
         let offset = effective_offset_ms(st, limit, limit_raw)?;
         match &st.repeat {
-            Repeat::FillGaps { until, pack } => {
+            Repeat::FillGaps { until } => {
                 let step = gaps_step_of(&st.invocation, tables)?;
                 let horizon = fill_horizon(until, limit, limit_raw)?;
                 // `until` раньше старта строки — out of bounds (вина — на `until`).
@@ -704,7 +704,7 @@ pub(crate) fn plan_stmts_with(
                     starts: Vec::new(),
                     end: None,
                 });
-                fillers.push((i, offset, horizon, step, *pack));
+                fillers.push((i, offset, horizon, step));
             }
             _ => {
                 let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
@@ -740,32 +740,17 @@ pub(crate) fn plan_stmts_with(
             }
         }
     }
-    for (i, from, to, step, pack) in fillers {
+    for (i, from, to, step) in fillers {
         let mut starts = Vec::new();
         for (a, b) in free_segments(occupied, from, to) {
             let n = (b - a) / step;
-            if n <= 0 {
-                continue;
-            }
-            // Старт блока в отрезке зависит от упаковки:
-            // left — встык слева, right — встык справа,
-            // center — по центру с округлением сдвига вниз.
-            let base = match pack {
-                Pack::Left => a,
-                Pack::Right => b - n * step,
-                Pack::Center => a + ((b - a) - n * step) / 2,
-            };
             for j in 0..n {
-                starts.push(base + j * step);
+                starts.push(a + j * step);
             }
-            occupied.push((base, base + n * step));
+            if n > 0 {
+                occupied.push((a, a + n * step));
+            }
         }
-        // Старты отрезков идут слева направо, но внутри `starts` порядок
-        // объявления отрезков уже соблюдён; для `right`/`center` внутри
-        // отрезка старты тоже возрастают — сортировка не нужна.
-        // Однако несколько отрезков могут дать неупорядоченность, если
-        // предыдущий filler занял кусок позже? Нет: `free_segments` возвращает
-        // отрезки слева направо, `starts` дописывается в том же порядке.
         let end = starts.last().map(|s| s + step);
         plans[i] = Placement { starts, end };
     }

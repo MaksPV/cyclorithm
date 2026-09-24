@@ -1628,63 +1628,6 @@ schedule "Редкое" {
     }
 
     #[test]
-    fn gaps_pack_directions() {
-        // Окно DAY 2h30m: LESSON 0-60м и 90-150м, дыра 60-90м (30м).
-        // BREAK20 (20м): left → 1:00, right → 1:10, center → 1:05.
-        let head = "schedule \"T\" { point A { actions = [x]; } \
-            cycle LESSON duration = 1h { 0m: A.x(); } \
-            cycle BREAK20 duration = 20m { 0m: A.x(); } \
-            cycle DAY duration = 2h30m { \
-            0h: LESSON(); 1h30m: LESSON(); \
-            0h: fill gaps";
-        let tail = " until 2h30m BREAK20(); } \
-            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: DAY(); } }";
-        for (pack, expected) in [
-            ("", "2026-01-01T01:00:00"),
-            ("pack left", "2026-01-01T01:00:00"),
-            ("pack right", "2026-01-01T01:10:00"),
-            ("pack center", "2026-01-01T01:05:00"),
-        ] {
-            let src = if pack.is_empty() {
-                format!("{head}{tail}")
-            } else {
-                format!("{head} {pack}{tail}")
-            };
-            let (ast, t, d) = setup(&src);
-            let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
-            let got = times(&expand(ast, &t, d, s, e, None).unwrap());
-            assert_eq!(
-                got,
-                vec!["2026-01-01T00:00:00", expected, "2026-01-01T01:30:00",],
-                "pack `{pack}`"
-            );
-        }
-    }
-
-    #[test]
-    fn gaps_pack_center_rounds_down() {
-        // Дыра 30м, шаг 20м: остаток 10м делится пополам → сдвиг 5м вниз.
-        // Дыра 25м (LESSON в 1h25m), шаг 20м: остаток 5м → сдвиг 2м30с вниз.
-        let src = "schedule \"T\" { point A { actions = [x]; } \
-            cycle LESSON duration = 1h { 0m: A.x(); } \
-            cycle BREAK20 duration = 20m { 0m: A.x(); } \
-            cycle DAY duration = 2h30m { \
-            0h: LESSON(); 1h25m: LESSON(); \
-            0h: fill gaps pack center until 2h30m BREAK20(); } \
-            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0h: DAY(); } }";
-        let (ast, t, d) = setup(src);
-        let (s, e) = window("2026-01-01T00:00:00", "2026-01-02T00:00:00");
-        assert_eq!(
-            times(&expand(ast, &t, d, s, e, None).unwrap()),
-            vec![
-                "2026-01-01T00:00:00",
-                "2026-01-01T01:02:30",
-                "2026-01-01T01:25:00",
-            ]
-        );
-    }
-
-    #[test]
     fn gaps_without_until_fill_to_parent_end() {
         // Без until добивается весь свободный хвост до конца цикла.
         let src = "schedule \"T\" { point A { actions = [x]; } \

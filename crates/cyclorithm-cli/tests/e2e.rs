@@ -353,24 +353,6 @@ fn gaps_matches_expected_json() {
 }
 
 #[test]
-fn gaps_pack_matches_expected_json() {
-    // fill gaps pack: left — встык слева, right — справа, center — по центру.
-    let out = run(&[
-        "run",
-        "../../examples/valid/gaps_pack.cyclo",
-        "--start",
-        "2026-01-01T00:00:00",
-        "--end",
-        "2026-01-02T00:00:00",
-    ]);
-    let got = stdout_json(&out);
-    let expected = include_str!("../../../examples/valid/gaps_pack.expected.json");
-    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
-    assert_eq!(got, expected);
-    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
-}
-
-#[test]
 fn routines_matches_expected_json() {
     // Рутины по таблице: понедельник — пара 9:00 и обед 12:00,
     // суббота — тишина (пустая рутина, обед только по будням).
