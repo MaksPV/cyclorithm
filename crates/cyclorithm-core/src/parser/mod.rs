@@ -1023,10 +1023,19 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
                     let mut ginner = p.into_inner();
                     let kw = ginner.next().expect("gaps_mod: ключевое слово");
                     debug_assert_eq!(kw.as_rule(), Rule::kw_gaps);
-                    match ginner.next() {
-                        None => Ok(Repeat::FillGaps { until: None }),
+                    let mut pack = Pack::Left;
+                    let mut next = ginner.next();
+                    if let Some(ref q) = next
+                        && q.as_rule() == Rule::pack_dir
+                    {
+                        pack = build_pack(q.clone())?;
+                        next = ginner.next();
+                    }
+                    match next {
+                        None => Ok(Repeat::FillGaps { until: None, pack }),
                         Some(f) => Ok(Repeat::FillGaps {
                             until: Some(build_until_from(f, &mut ginner, span)?),
+                            pack,
                         }),
                     }
                 }
@@ -1036,6 +1045,21 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
             }
         }
         r => unreachable!("repeat_mod: неожиданное правило {r:?}"),
+    }
+}
+
+/// Направление `pack` в `fill gaps pack DIR`: значение `pack_val`.
+fn build_pack(pair: Pair<Rule>) -> Result<Pack, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::pack_dir);
+    let val = pair
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::pack_val)
+        .expect("pack_dir: значение");
+    match val.as_str() {
+        "left" => Ok(Pack::Left),
+        "right" => Ok(Pack::Right),
+        "center" => Ok(Pack::Center),
+        v => unreachable!("pack: неожиданное значение {v:?}"),
     }
 }
 
@@ -1362,10 +1386,23 @@ pub enum Repeat {
     Fill {
         until: Option<Until>,
     },
-    /// `fill gaps [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
+    /// `fill gaps [pack DIR] [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
     FillGaps {
         until: Option<Until>,
+        pack: Pack,
     },
+}
+
+/// Направление упаковки `fill gaps` в свободных отрезках.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pack {
+    /// Встык слева (поведение по умолчанию, как без `pack`).
+    #[default]
+    Left,
+    /// Встык справа.
+    Right,
+    /// По центру отрезка; нечётный остаток делится с округлением вниз.
+    Center,
 }
 
 /// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
@@ -2464,22 +2501,76 @@ mod tests {
         let s = parse(src).expect("fill gaps обязан разбираться");
         assert_eq!(
             s.schedule.root.stmts[0].repeat,
-            Repeat::FillGaps { until: None }
+            Repeat::FillGaps {
+                until: None,
+                pack: Pack::Left
+            }
         );
         match &s.schedule.root.stmts[1].repeat {
-            Repeat::FillGaps { until: Some(u) } => {
+            Repeat::FillGaps {
+                until: Some(u),
+                pack,
+            } => {
                 assert!(!u.negative);
                 assert_eq!(u.raw(), "12h");
+                assert_eq!(*pack, Pack::Left);
             }
             r => panic!("ожидался fill gaps until, получено {r:?}"),
         }
         match &s.schedule.root.stmts[2].repeat {
-            Repeat::FillGaps { until: Some(u) } => {
+            Repeat::FillGaps {
+                until: Some(u),
+                pack,
+            } => {
                 assert!(u.negative);
                 assert_eq!(u.raw(), "-2h");
+                assert_eq!(*pack, Pack::Left);
             }
             r => panic!("ожидался fill gaps until -2h, получено {r:?}"),
         }
+    }
+
+    #[test]
+    fn parses_fill_gaps_pack() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: fill gaps pack left R(); \
+            1h: fill gaps pack right R(); \
+            2h: fill gaps pack center R(); \
+            3h: fill gaps pack right until 15h R(); } }";
+        let s = parse(src).expect("fill gaps pack обязан разбираться");
+        match &s.schedule.root.stmts[0].repeat {
+            Repeat::FillGaps { pack, until } => {
+                assert_eq!(*pack, Pack::Left);
+                assert!(until.is_none());
+            }
+            r => panic!("ожидался pack left, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[1].repeat {
+            Repeat::FillGaps { pack, .. } => assert_eq!(*pack, Pack::Right),
+            r => panic!("ожидался pack right, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[2].repeat {
+            Repeat::FillGaps { pack, .. } => assert_eq!(*pack, Pack::Center),
+            r => panic!("ожидался pack center, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[3].repeat {
+            Repeat::FillGaps { pack, until } => {
+                assert_eq!(*pack, Pack::Right);
+                assert_eq!(until.as_ref().expect("until").raw(), "15h");
+            }
+            r => panic!("ожидался pack right until, получено {r:?}"),
+        }
+        // `pack` без значения и неизвестное направление — синтаксические ошибки.
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        assert!(parse(&format!("{head} 0h: fill gaps pack R(); {tail}")).is_err());
+        assert!(parse(&format!("{head} 0h: fill gaps pack up R(); {tail}")).is_err());
+        // Границы слова: `packleft` и `leftovers` — имена, а не модификатор.
+        assert!(parse(&format!("{head} 0h: fill gaps packleft R(); {tail}")).is_err());
     }
 
     #[test]
@@ -2714,7 +2805,7 @@ mod tests {
             let src_gaps = format!("{head} 6h: fill gaps until {dur} R(); {tail}");
             let g = parse(&src_gaps).expect("gaps-горизонт обязан разбираться: {dur}");
             match &g.schedule.root.stmts[0].repeat {
-                Repeat::FillGaps { until: Some(u) } => assert_eq!(u.raw(), dur),
+                Repeat::FillGaps { until: Some(u), .. } => assert_eq!(u.raw(), dur),
                 r => panic!("ожидался fill gaps until, получено {r:?}"),
             }
         }
