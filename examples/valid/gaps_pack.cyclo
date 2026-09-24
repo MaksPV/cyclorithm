@@ -1,0 +1,50 @@
+schedule "Fill gaps pack" {
+  point BELL {
+    actions = [ring];
+  }
+
+  cycle LESSON
+    duration = 1h
+  {
+    0m: BELL.ring();
+  }
+
+  cycle BREAK_20
+    duration = 20m
+  {
+    0m: BELL.ring();
+  }
+
+  cycle DAY_LEFT
+    duration = 2h30m
+  {
+    0h: LESSON();
+    1h30m: LESSON();
+    0h: fill gaps pack left until 2h30m BREAK_20();
+  }
+
+  cycle DAY_RIGHT
+    duration = 2h30m
+  {
+    0h: LESSON();
+    1h30m: LESSON();
+    0h: fill gaps pack right until 2h30m BREAK_20();
+  }
+
+  cycle DAY_CENTER
+    duration = 2h30m
+  {
+    0h: LESSON();
+    1h30m: LESSON();
+    0h: fill gaps pack center until 2h30m BREAK_20();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    0h: DAY_LEFT();
+    3h: DAY_RIGHT();
+    6h: DAY_CENTER();
+  }
+}

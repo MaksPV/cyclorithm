@@ -203,6 +203,15 @@ cycle DAY duration = 4h {
 }
 ```
 
+Направление упаковки — `pack left|right|center` (default — `left`):
+
+```cyclo
+0h: fill gaps pack left BREAK_20();    // встык к началу дыры
+0h: fill gaps pack right BREAK_20();   // встык к концу дыры
+0h: fill gaps pack center BREAK_20();  // по центру дыры, остаток пополам вниз
+0h: fill gaps pack right until 15h BREAK_20();  // комбинируется с until
+```
+
 Остаток, куда очередной вызов не влез, молча пропускается. Условие строки
 проверяется на каждый экземпляр в его старте. Подробности — в
 [семантике](semantics.md#повторы).
