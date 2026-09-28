@@ -277,7 +277,7 @@ launch_label = { kw_as ~ label }
 invocation  = { point_action | cycle_call }
 // Вызов точки: блок атрибутов — тот же JSON-словарь `map_lit`, либо
 // ссылка на константу-мапу (`BELL.ring() CORPUS;`). У цикла после `)` блока нет.
-point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | IDENT)? }
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | !kw_as ~ IDENT)? }
 cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 duration     = { duration_item+ }
 // Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),

@@ -9,7 +9,9 @@ use crate::cond::{Defs, check_conditions, resolve_units};
 use crate::datetime::parse_timezone;
 use crate::imports::{ImportError, collect_units};
 use crate::parser::{self, Schedule, SourceFile};
-use crate::validate::{NameTables, check_bounds, check_recursion, check_tables, validate_names};
+use crate::validate::{
+    NameTables, check_bounds, check_recursion, check_tables, validate_moments, validate_names,
+};
 
 /// Ошибка валидации с сохранением типа для маппинга в `PipelineError`/`Diag`.
 #[derive(Debug, Clone)]
@@ -54,6 +56,7 @@ where
     let (defs, reg) = resolve_units(&groups).map_err(EngineError::Core)?;
     let tables = validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| validate_moments(ast).map(|()| t))
         .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
@@ -79,6 +82,7 @@ where
     let (defs, reg) = resolve_units(&groups).map_err(EngineError::Core)?;
     let tables = validate_names(ast, &reg)
         .and_then(|t| check_recursion(ast, &t).map(|()| t))
+        .and_then(|t| validate_moments(ast).map(|()| t))
         .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))

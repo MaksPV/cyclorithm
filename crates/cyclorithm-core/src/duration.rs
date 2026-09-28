@@ -108,7 +108,10 @@ pub fn effective_offset_ms(
                 Ok(x)
             }
         }
-        _ => Err(Error::invalid_routine_moment(&stmt.moment_raw())),
+        // Не-абсолютные моменты сюда доходят только из `reverse`
+        // (`plan_stmts` их пропускает): зеркало определено лишь для
+        // абсолютных смещений.
+        _ => Err(Error::reverse_dynamic_moment(&stmt.moment_raw())),
     }
 }
 /// Миллисекунды в человеческую строку для сообщений границ.

@@ -351,6 +351,56 @@ impl Error {
             format!("routine moment '{moment_raw}' must be absolute duration or slot label"),
         )
     }
+
+    /// `unknown-label`: `unknown label 'W1'` — ссылки на несуществующую метку запуска.
+    pub fn unknown_label(label: &str) -> Self {
+        Self::coded("unknown-label", format!("unknown label '{label}'"))
+    }
+
+    /// `forward-label-reference`: `label 'W1' used before declaration` —
+    /// ссылка на метку, объявленную ниже по scope (разрешены только ссылки назад).
+    pub fn forward_label_reference(label: &str) -> Self {
+        Self::coded(
+            "forward-label-reference",
+            format!("label '{label}' used before declaration"),
+        )
+    }
+
+    /// `label-not-cycle-call`: `label 'W1' is not a cycle call` —
+    /// метка `as` на действии точки (метки — только на запусках циклов).
+    pub fn label_not_cycle_call(label: &str) -> Self {
+        Self::coded(
+            "label-not-cycle-call",
+            format!("label '{label}' is not a cycle call"),
+        )
+    }
+
+    /// `invalid-moment-function`: неверные аргументы функции момента
+    /// (`start`/`end` — ровно 1 голая метка, `max`/`min` — ≥1 аргумента).
+    pub fn invalid_moment_function(details: &str) -> Self {
+        Self::coded(
+            "invalid-moment-function",
+            format!("invalid moment function: {details}"),
+        )
+    }
+
+    /// `cursor-before-first`: относительный момент `+:` или `+10m:` используется
+    /// до первого испущенного события в scope (курсор не инициализирован).
+    pub fn cursor_before_first() -> Self {
+        Self::coded(
+            "cursor-before-first",
+            "cursor used before first event in scope".to_owned(),
+        )
+    }
+
+    /// `reverse-dynamic-moment`: `reverse` цикла с динамическим моментом
+    /// (`+`, `after/at/until`, функции) — зеркало определено только для абсолютных смещений.
+    pub fn reverse_dynamic_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "reverse-dynamic-moment",
+            format!("cannot reverse dynamic moment '{moment_raw}'"),
+        )
+    }
 }
 
 impl fmt::Display for Error {
