@@ -1399,15 +1399,30 @@
 ошибка <code>invalid-duration</code>). <code>ms</code> — единый юнит, а не <code>m</code> + <code>s</code>. Значение обязано влезать
 в <code>i64</code> миллисекунд.</p>
 <h2 id="_5">Строки и повторы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p>Строка — условие, смещение, необязательный повтор и вызов:</p>
-<div class="highlight"><pre><span></span><code><span class="p">[</span><span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="k">repeat</span> <span class="m">2</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// условие + смещение + повтор + вызов</span>
+<p>Строка — условие, момент, необязательный повтор, вызов и необязательная
+метка запуска:</p>
+<div class="highlight"><pre><span></span><code><span class="p">[</span><span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="k">repeat</span> <span class="m">2</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// условие + момент + повтор + вызов</span>
 <span class="m">14h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// добивка пустот, без until — до конца цикла</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">right</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// встык справа</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">center</span> <span class="k">until</span> <span class="m">2h30m</span> <span class="nf">BREAK_5</span><span class="p">();</span>  <span class="c1">// по центру отрезка</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="k">until</span> <span class="m">2h30m</span> <span class="nf">BREAK_5</span><span class="p">();</span>
 <span class="m">6h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>
+<span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>  <span class="c1">// метка запуска для ссылок after/at/until</span>
+<span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>  <span class="c1">// зависимость от конца W1</span>
+<span class="o">+</span><span class="m">10m</span><span class="p">:</span> <span class="nf">COFFEE</span><span class="p">();</span>  <span class="c1">// через 10 минут после курсора scope</span>
+<span class="o">+</span><span class="p">:</span> <span class="nf">SHOWER</span><span class="p">();</span>  <span class="c1">// сразу после курсора scope</span>
+<span class="nf">max</span><span class="p">(</span><span class="m">8h</span><span class="p">,</span> <span class="nf">end</span><span class="p">(</span><span class="n">W1</span><span class="p">)):</span> <span class="nf">INSPECTION</span><span class="p">();</span>  <span class="c1">// функция момента</span>
 </code></pre></div>
+<p>Момент — ровно один источник на строку: абсолютный timestamp (<code>0h:</code>,
+<code>8h30m:</code>, <code>-0m:</code> от старта родителя), относительный (<code>+:</code> или <code>+10m:</code> от
+курсора scope), зависимость (<code>after W1:</code>, <code>at W1:</code>, <code>until W1:</code>) или функция
+(<code>start(W1)</code>, <code>end(W1)</code>, <code>max(...)</code>, <code>min(...)</code>). Смешение двух источников
+(<code>0h: FOO() after W1;</code>) — синтаксическая ошибка. Ссылки — только на метки,
+объявленные выше по scope; метка <code>as</code> — только на вызовах циклов, не на
+действиях точек. В рутинах — только длительности и метки слотов таблицы
+(<code>1st:</code>); зависимости и функции там — ошибка <code>invalid-routine-moment</code>.
+У <code>fill gaps</code> и <code>reverse</code>-источника — только абсолютные смещения.</p>
 <p>Повторы — только для циклов: повтор действия точки — ошибка <code>repeat-point-action</code>,
 <code>repeat 0</code> запрещён. Горизонт <code>until</code> считается от старта объемлющего цикла,
 а не от строки.</p>

@@ -1176,7 +1176,19 @@
 </tr>
 <tr>
 <td>метка <code>label</code></td>
-<td>Имя смещения в таблице времени</td>
+<td>Имя смещения в таблице времени (<code>1st:</code> в рутине) или имя запуска цикла (<code>as W1</code>)</td>
+</tr>
+<tr>
+<td>метка запуска</td>
+<td>Имя конкретного запуска цикла (<code>0h: WARMUP() as W1</code>); старт — <code>start(W1)</code>, конец — <code>end(W1)</code></td>
+</tr>
+<tr>
+<td>курсор scope</td>
+<td>Неявная позиция scope: <code>max(end)</code> уже испущенных прямых детей; читается относительными моментами (<code>+10m:</code>)</td>
+</tr>
+<tr>
+<td>момент</td>
+<td>Единая ось времени строки: timestamp, относительный момент, зависимость (<code>after/at/until</code>) или функция (<code>start/end/max/min</code>) — ровно один источник на строку</td>
 </tr>
 <tr>
 <td>рутина <code>routine</code></td>

@@ -822,7 +822,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Таблицы
+        Моменты
       
     </span>
   </a>
@@ -833,7 +833,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Длительности и границы
+        Таблицы
       
     </span>
   </a>
@@ -844,7 +844,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Длительности и границы
       
     </span>
   </a>
@@ -855,7 +855,7 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Импорты
+        Условия
       
     </span>
   </a>
@@ -866,7 +866,7 @@
   <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Атрибуты
+        Импорты
       
     </span>
   </a>
@@ -875,6 +875,17 @@
       
         <li class="md-nav__item">
   <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Атрибуты
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Даты
@@ -1299,7 +1310,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Таблицы
+        Моменты
       
     </span>
   </a>
@@ -1310,7 +1321,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Длительности и границы
+        Таблицы
       
     </span>
   </a>
@@ -1321,7 +1332,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Длительности и границы
       
     </span>
   </a>
@@ -1332,7 +1343,7 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Импорты
+        Условия
       
     </span>
   </a>
@@ -1343,7 +1354,7 @@
   <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Атрибуты
+        Импорты
       
     </span>
   </a>
@@ -1352,6 +1363,17 @@
       
         <li class="md-nav__item">
   <a href="#_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Атрибуты
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Даты
@@ -1396,8 +1418,8 @@
 Импорты
 (<code>cannot-read-import</code>, <code>schedule-in-import</code>) разрешаются раньше проверок
 решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
-побеждает: имена → рекурсия → таблицы → длительности и границы → условия →
-даты. Внутри фазы проверки идут в порядке объявления.</p>
+побеждает: имена → рекурсия → моменты → таблицы → длительности и границы →
+условия → даты. Внутри фазы проверки идут в порядке объявления.</p>
 <h2 id="_2">Шапки<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1447,7 +1469,7 @@
 </tr>
 <tr>
 <td><code>duplicate</code></td>
-<td><code>duplicate point 'DEPOT'</code>, <code>duplicate routine 'M'</code>, <code>duplicate table 'T'</code>, <code>duplicate slot '1st'</code>, <code>duplicate param 'a'</code></td>
+<td><code>duplicate point 'DEPOT'</code>, <code>duplicate routine 'M'</code>, <code>duplicate table 'T'</code>, <code>duplicate slot '1st'</code>, <code>duplicate param 'a'</code>, <code>duplicate label 'W1'</code></td>
 <td>Устранить повтор имени внутри файла</td>
 </tr>
 <tr>
@@ -1479,7 +1501,54 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_5">Таблицы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_5">Моменты<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Ситуация</th>
+<th>Сообщение</th>
+<th>Исправление</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>unknown-label</code></td>
+<td><code>unknown label 'NOPE'</code></td>
+<td>Объявить метку <code>as</code> выше по scope</td>
+</tr>
+<tr>
+<td><code>forward-label-reference</code></td>
+<td><code>label 'W1' used before declaration</code></td>
+<td>Ссылаться только на метки, объявленные выше</td>
+</tr>
+<tr>
+<td><code>label-not-cycle-call</code></td>
+<td><code>label 'W1' is not a cycle call</code></td>
+<td>Ставить <code>as</code> только на вызовы циклов, не на действия точек</td>
+</tr>
+<tr>
+<td><code>invalid-moment-function</code></td>
+<td><code>invalid moment function: 'start' takes a bare label</code></td>
+<td><code>start</code>/<code>end</code> — ровно 1 голая метка; <code>max</code>/<code>min</code> — ≥1 аргумента</td>
+</tr>
+<tr>
+<td><code>invalid-routine-moment</code></td>
+<td><code>routine moment 'after W1' must be absolute duration or slot label</code></td>
+<td>В рутинах — только длительности и метки слотов таблицы</td>
+</tr>
+<tr>
+<td><code>gaps-dynamic-moment</code></td>
+<td><code>fill gaps with dynamic moment 'after W1' is not supported</code></td>
+<td>У <code>fill gaps</code> — только абсолютное смещение</td>
+</tr>
+<tr>
+<td><code>reverse-dynamic-moment</code></td>
+<td><code>cannot reverse dynamic moment '+'</code></td>
+<td>У <code>reverse</code>-цикла в источнике — только абсолютные смещения</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_6">Таблицы<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1506,7 +1575,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_6">Длительности и границы<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Длительности и границы<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1558,7 +1627,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_7">Условия<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">Условия<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1640,7 +1709,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_8">Импорты<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<h2 id="_9">Импорты<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1672,7 +1741,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_9">Атрибуты<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<h2 id="_10">Атрибуты<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1689,7 +1758,7 @@
 </tr>
 </tbody>
 </table>
-<h2 id="_10">Даты<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<h2 id="_11">Даты<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>

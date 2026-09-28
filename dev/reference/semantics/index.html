@@ -791,6 +791,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Метки запуска, зависимости и курсор
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#overruns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -802,7 +813,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -813,7 +824,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -824,7 +835,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -869,7 +880,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
         Снимки
@@ -880,7 +891,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Пример целиком
@@ -896,7 +907,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -907,7 +918,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
+  <a href="#_12" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1357,6 +1368,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Метки запуска, зависимости и курсор
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#overruns" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1368,7 +1390,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -1379,7 +1401,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -1390,7 +1412,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -1435,7 +1457,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
         Снимки
@@ -1446,7 +1468,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         Пример целиком
@@ -1462,7 +1484,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -1473,7 +1495,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
+  <a href="#_12" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1544,6 +1566,31 @@ T(k) = T_0 + k \cdot P, \quad k = 0, 1, 2, \dots
 внутри строка на <code>40m</code> — событие в 6:40 (<code>arrive</code>, <code>AIRPORT</code>).</p>
 <p>Вызов действия даёт событие в момент строки. Пропуск родителя (ложное
 условие) подавляет потомков.</p>
+<h2 id="_5">Метки запуска, зависимости и курсор<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>Метка запуска (<code>as</code>) даёт имя конкретному запуску цикла:</p>
+<div class="highlight"><pre><span></span><code><span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>
+<span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>
+</code></pre></div>
+<p><code>W1</code> — момент старта, конец — через <code>end(W1)</code>. Виды зависимостей:
+<code>after W1:</code> — старт по концу <code>W1</code>, <code>at W1:</code> — старт по старту <code>W1</code>,
+<code>until W1:</code> — то же, что <code>after</code> (конец <code>W1</code>). Функции момента:
+<code>start(W1)</code>, <code>end(W1)</code> (ровно 1 голая метка), <code>max(...)</code>/<code>min(...)</code> (≥1
+аргумента: моменты, длительности от старта scope, голые метки как концы).</p>
+<p>Курсор scope ведётся движком неявно и равен <code>max(end)</code> всех уже испущенных
+прямых детей scope; стартовое значение — 0 (старт scope). Относительный
+момент читает курсор: <code>+:</code> — в точке курсора, <code>+10m:</code> — через 10 минут
+после него. У каждого инстанса цикла/рутины — свой курсор; метки видны
+внутри всего инстанса <code>root_cycle</code>, ссылки — только назад по scope.</p>
+<p>Если элемент не испустил событие (условие ложно), курсор не двигается:</p>
+<div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">workday</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="o">+</span><span class="m">0m</span><span class="p">:</span> <span class="nf">LUNCH</span><span class="p">();</span>
+<span class="o">+</span><span class="m">30m</span><span class="p">:</span> <span class="nf">TEA</span><span class="p">();</span>
+</code></pre></div>
+<p>В выходной <code>LUNCH</code> выпадает, курсор стоит, и <code>TEA</code> стартует через 30 минут
+после той же точки, где мог бы быть <code>LUNCH</code>. Если зависимость не
+разрешилась (метка не испущена), строка каскадно скипается вместе со всеми
+зависящими от неё — тоже без движения курсора.</p>
+<p>Ограничения: <code>fill gaps</code> и <code>reverse</code>-источник принимают только абсолютные
+смещения; в рутинах — только длительности и метки слотов.</p>
 <h2 id="overruns">Границы (<code>overruns</code>)<a class="headerlink" href="#overruns" title="Permanent link">&para;</a></h2>
 <p>Фактическая длительность цикла — самый поздний конец его строк:</p>
 <div class="arithmatex">\[
@@ -1565,7 +1612,7 @@ actual(C) = \max_i (o_i + d(X_i))
 </code></pre></div>
 <p>Цепочки, пересекающие границу периода корневого цикла, запрещены; для них
 выбирается больший <code>duration</code> или сдвинутый <code>start_time</code>.</p>
-<h2 id="_5">Повторы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_6">Повторы<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p>Про <code>repeat</code> и <code>fill</code> — в <a href="../concepts/">концептах</a>. Здесь формальные
 детали: горизонт <code>fill</code> — конец объемлющего цикла, граница включительная
 (<code>старт + duration ≤ горизонт</code>); <code>fill X()</code> эквивалентен
@@ -1584,7 +1631,7 @@ Filler-ы идут в порядке объявления, и каждый
 видит занятость обычных строк и предыдущих filler-ов. <code>o &gt; h</code> — окно
 пустое и это ошибка. Условие на <code>fill gaps</code> проверяется на каждый
 экземпляр в его старте; влезло ноль — ноль событий, это не ошибка.</p>
-<h2 id="_6">Разворот циклов<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Разворот циклов<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p><code>cycle BACK reverse FWD;</code> разворачивается в обычный цикл до всех проверок:
 смещения зеркалятся относительно длительности (<code>o' = duration − o</code>
 от эффективного смещения — минус уже разрешён), вызовы, условия, повторы,
@@ -1597,7 +1644,7 @@ Filler-ы идут в порядке объявления, и каждый
 ошибка. Цепочки запрещены — источник обязан быть явным циклом
 (иначе <code>recursive</code>); рутина или точка как источник — <code>wrong-kind</code>,
 нет имени — <code>unknown-cycle</code>.</p>
-<h2 id="_7">Условия и момент строки<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_8">Условия и момент строки<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>Момент строки <code>at</code> — словарь кадра <code>{wall, abs, zone}</code>: <code>wall</code> — стена
 (представление в зоне кадра <code>file.or(query)</code>), <code>abs</code> — миллисекунды epoch,
 <code>zone</code> — сдвиг кадра в мс. Инвариант: <code>wall ≡ abs + zone</code>; без зон
@@ -1688,7 +1735,7 @@ Filler-ы идут в порядке объявления, и каждый
 (у значений нет null): доступ к ним — <code>unknown-field</code>. Индекс вне границ —
 <code>index-out-of-bounds</code>. Невыполненная строка аргументы не вычисляет:
 её <code>params</code> пусты (у рутины — только дескриптор <code>TC</code>, таблица — литерал).</p>
-<h3 id="_8">Снимки<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<h3 id="_9">Снимки<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
 <p>Снимок — «на данный момент» в порядке развёртки: условие строки видит
 кандидатов ранее разобранных строк своей инстанции. Вызовы слотов <code>-&gt;</code>
 видят итоговый список тела (детерминирован) — так условие отличает пустое
@@ -1698,7 +1745,7 @@ Filler-ы идут в порядке объявления, и каждый
 <p>Пустое тело — обеда нет. Блок действий видит <code>here</code> уже с собственным
 кандидатом, а в <code>action_attrs</code> словарь замораживается копированием:
 <code>{"snap": here}</code> кладёт мёртвый JSON момента, живых ссылок нет.</p>
-<h3 id="_9">Пример целиком<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<h3 id="_10">Пример целиком<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
 <p>Программа (понедельник 07.09.2026, в <code>LESSON</code> одна строка отключена):</p>
 <div class="highlight"><pre><span></span><code><span class="k">const</span> <span class="n">SUBJ</span> <span class="o">=</span> <span class="p">{</span><span class="s">"name"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">,</span> <span class="s">"teacher"</span><span class="p">:</span> <span class="s">"Иванов"</span><span class="p">};</span>
 <span class="k">time_const</span> <span class="n">DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">2h</span> <span class="p">{</span>
@@ -1759,7 +1806,7 @@ Filler-ы идут в порядке объявления, и каждый
 </code></pre></div>
 <p>Статический расчёт фактической длительности и проверка границ идут
 в предположении истинности всех условий.</p>
-<h2 id="_10">Параметры и данные<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<h2 id="_11">Параметры и данные<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <p>Аргументы вызова вычисляются в момент строки — и текут вниз по цепочке
 вызовов вместе с окружением. Область видимости динамическая: вызванный цикл
 видит параметры вызывающего, даже если своих у него нет.</p>
@@ -1783,7 +1830,7 @@ Filler-ы идут в порядке объявления, и каждый
 именем. Имя константы-данных прямо в условии запрещено (<code>unknown-name</code>) — данные
 входят в условие только через параметр. Табличный параметр рутины в условиях
 и атрибутах действия невидим (<code>unknown-name</code>).</p>
-<h2 id="_11">Таблицы времени и рутины<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
+<h2 id="_12">Таблицы времени и рутины<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
 <p>Вызов <code>ИМЯ(ТАБЛИЦА, …)</code> заменяет метки тела смещениями таблицы, вызовы
 таблицы добавляются после строк тела; длительность вызова равна длительности
 таблицы. Рутина ниже на таблице <code>SHORT_DAY</code> даёт звонки в 9:00 и 10:30:</p>

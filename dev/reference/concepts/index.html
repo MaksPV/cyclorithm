@@ -751,6 +751,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Момент строки: ось, метки и курсор
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#repeat-fill" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -828,7 +839,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Как связаны
@@ -1406,6 +1417,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Момент строки: ось, метки и курсор
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#repeat-fill" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1483,7 +1505,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Как связаны
@@ -1616,6 +1638,19 @@
 (<code>at.wall</code>, <code>at.abs</code>). Рядом — словарь инстанции <code>here</code> (<code>stack</code>, <code>events</code>,
 <code>enabled_events</code>/<code>disabled_events</code>): условие видит, что инстанция уже
 породила, — например <code>[workday(at) and len(here.enabled_events) &gt; 0]</code>.</p>
+<h2 id="_2">Момент строки: ось, метки и курсор<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>Момент строки — это не обязательно timestamp. Timestamp и зависимость —
+два вида одного выражения: абсолютный (<code>6h:</code>), относительный от курсора
+(<code>+10m:</code>), зависимость от чужого запуска (<code>after W1:</code>) или функция
+(<code>max(8h, end(W1)):</code>). На строке — ровно один источник момента.</p>
+<p>Метка запуска (<code>as</code>) именует конкретный запуск:</p>
+<div class="highlight"><pre><span></span><code><span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>
+<span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>  <span class="c1">// стартует, когда закончится WARMUP</span>
+</code></pre></div>
+<p>Курсор scope — неявная позиция «где мы сейчас»: максимум концов уже
+испущенных прямых детей scope. Относительные моменты читают его, выпавшие
+строки (ложное условие, неразрешённая зависимость) его не двигают —
+поэтому цепочки <code>+10m:</code> не расползаются от пропусков.</p>
 <h2 id="repeat-fill">Повтор (<code>repeat</code> / <code>fill</code>)<a class="headerlink" href="#repeat-fill" title="Permanent link">&para;</a></h2>
 <p>Одна строка запускает цикл несколько раз подряд. Сколько раз — задаёт
 модификатор между <code>:</code> и вызовом:</p>
@@ -1743,7 +1778,7 @@
   <span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<h2 id="_2">Как связаны<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h2 id="_3">Как связаны<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>точка point → действия actions (+ атрибуты attrs → point_attrs)
 действие action → атрибуты {"k": v} → action_attrs
 событие event — оба словаря в момент времени
