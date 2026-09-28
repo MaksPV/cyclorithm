@@ -343,6 +343,14 @@ impl Error {
             format!("invalid table argument for '{name}'"),
         )
     }
+
+    /// `invalid-routine-moment`: момент в рутине должен быть абсолютной длительностью или меткой слота.
+    pub fn invalid_routine_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "invalid-routine-moment",
+            format!("routine moment '{moment_raw}' must be absolute duration or slot label"),
+        )
+    }
 }
 
 impl fmt::Display for Error {

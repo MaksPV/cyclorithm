@@ -89,22 +89,28 @@ pub fn root_period_ms(root: &RootCycle) -> Result<i64, Error> {
 /// `X > parent_ms` — offset-out-of-bounds (`offset '-2h' out of bounds (duration 1h20m)`);
 /// `parent_raw` — сырой текст длительности родителя для сообщения.
 /// Невалидная запись самого смещения (`1h2h`) — сначала invalid-duration.
+/// Для не-абсолютных моментов (relative, dependency, func) возвращает Err,
+/// так как их разрешение происходит только на этапе развёртки.
 pub fn effective_offset_ms(
     stmt: &crate::parser::Stmt,
     parent_ms: i64,
     parent_raw: &str,
 ) -> Result<i64, Error> {
-    let x = duration_ms(&stmt.offset)?;
-    if stmt.negative {
-        if x > parent_ms {
-            return Err(Error::offset_out_of_bounds(&stmt.offset_raw(), parent_raw));
+    match &stmt.moment {
+        crate::parser::MomentExpr::Absolute { negative, duration } => {
+            let x = duration_ms(duration)?;
+            if *negative {
+                if x > parent_ms {
+                    return Err(Error::offset_out_of_bounds(&stmt.moment_raw(), parent_raw));
+                }
+                Ok(parent_ms - x)
+            } else {
+                Ok(x)
+            }
         }
-        Ok(parent_ms - x)
-    } else {
-        Ok(x)
+        _ => Err(Error::invalid_routine_moment(&stmt.moment_raw())),
     }
 }
-
 /// Миллисекунды в человеческую строку для сообщений границ.
 ///
 /// Формат прибит примером из главы ошибок: `by 20m (80m > 60m)` — все три числа
@@ -221,16 +227,19 @@ mod tests {
 
     #[test]
     fn resolves_negative_offsets() {
-        use crate::parser::Stmt;
+        use crate::parser::{MomentExpr, Stmt};
         let stmt = |negative: bool, raw: &str, items: &[(&str, DurationUnit)]| Stmt {
-            offset: dur(raw, items),
-            negative,
+            moment: MomentExpr::Absolute {
+                negative,
+                duration: dur(raw, items),
+            },
             repeat: crate::parser::Repeat::Once,
             condition: None,
             invocation: crate::parser::Invocation::CycleCall {
                 name: "R".to_owned(),
                 args: Vec::new(),
             },
+            launch_label: None,
         };
         use DurationUnit::*;
         // Родитель 1h20m = 4_800_000 мс.
@@ -251,18 +260,21 @@ mod tests {
 
     #[test]
     fn rejects_negative_out_of_bounds() {
-        use crate::parser::Stmt;
+        use crate::parser::{MomentExpr, Stmt};
         use DurationUnit::*;
         // -2h при родителе 1h20m: эффективное -40m — offset-out-of-bounds, слаг и сообщение по главе ошибок.
         let st = Stmt {
-            offset: dur("2h", &[("2", Hour)]),
-            negative: true,
+            moment: MomentExpr::Absolute {
+                negative: true,
+                duration: dur("2h", &[("2", Hour)]),
+            },
             repeat: crate::parser::Repeat::Once,
             condition: None,
             invocation: crate::parser::Invocation::CycleCall {
                 name: "R".to_owned(),
                 args: Vec::new(),
             },
+            launch_label: None,
         };
         let err = effective_offset_ms(&st, 4_800_000, "1h20m").expect_err("вылет ниже нуля");
         assert_eq!(err.code, "offset-out-of-bounds");

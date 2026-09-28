@@ -16,7 +16,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::parser::{
-    Expr, Invocation, Pack, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
+    Expr, Invocation, MomentExpr, Pack, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt,
+    Until,
 };
 
 use crate::Error;
@@ -443,11 +444,14 @@ pub fn instantiation_pairs<'a>(
 /// вызов слота без повторов в смещении слота.
 fn slot_call_stmt(row: &SlotRow, slot_call: &Invocation) -> Stmt {
     Stmt {
-        offset: row.offset.clone(),
-        negative: false,
+        moment: MomentExpr::Absolute {
+            negative: false,
+            duration: row.offset.clone(),
+        },
         repeat: Repeat::Once,
         condition: row.condition.clone(),
         invocation: slot_call.clone(),
+        launch_label: None,
     }
 }
 
@@ -486,6 +490,17 @@ pub fn instantiate(
                 Some(slot) => (slot.offset.clone(), Some(label.clone())),
                 None => return Err(Error::unknown_slot(label)),
             },
+            RoutineOffset::Moment(m) => match m {
+                MomentExpr::Absolute {
+                    negative: false,
+                    duration,
+                } => (duration.clone(), None),
+                _ => {
+                    return Err(Error::invalid_routine_moment(
+                        "relative/dependency/func moment",
+                    ));
+                }
+            },
         };
         body_labels.push(label);
         let invocation = match &st.invocation {
@@ -504,11 +519,14 @@ pub fn instantiate(
             other => other.clone(),
         };
         body.push(Stmt {
-            offset,
-            negative: st.negative,
+            moment: MomentExpr::Absolute {
+                negative: false,
+                duration: offset,
+            },
             repeat: st.repeat.clone(),
             condition: st.condition.clone(),
             invocation,
+            launch_label: None,
         });
     }
     let mut slot_calls = Vec::new();
@@ -1447,7 +1465,13 @@ mod tests {
         let slot_calls = &inst.slot_calls;
         assert_eq!(body.len(), 4);
         assert_eq!(slot_calls.len(), 1);
-        let raws: Vec<&str> = body.iter().map(|st| st.offset.raw.as_str()).collect();
+        let raws: Vec<&str> = body
+            .iter()
+            .map(|st| match &st.moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            })
+            .collect();
         assert_eq!(raws, vec!["9h", "45m", "0m", "0m"]);
         // Проброс подставлен, литералы и циклы не тронуты.
         let table_of = |st: &Stmt| match &st.invocation {
@@ -1466,7 +1490,13 @@ mod tests {
             slot_calls[0].invocation,
             Invocation::CycleCall { ref name, .. } if name == "LUNCH"
         ));
-        assert_eq!(slot_calls[0].offset.raw.as_str(), "12h");
+        assert_eq!(
+            match &slot_calls[0].moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            },
+            "12h"
+        );
     }
 
     #[test]
