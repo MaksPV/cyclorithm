@@ -238,6 +238,13 @@ fn validate_moment_scope(stmts: &[Stmt]) -> Result<(), Error> {
             }
         }
         validate_moment_expr(&st.moment, &seen, &all)?;
+        // `fill gaps` с динамическим моментом — gaps-dynamic-moment
+        // (упаковка требует статических границ).
+        if matches!(st.repeat, Repeat::FillGaps { .. })
+            && !matches!(st.moment, MomentExpr::Absolute { .. })
+        {
+            return Err(Error::gaps_dynamic_moment(&st.moment_raw()));
+        }
         // Метка становится видимой только после своей строки (ссылки назад).
         if let Some(label) = &st.launch_label {
             seen.insert(label.0.as_str());
@@ -828,6 +835,16 @@ fn stmts_end(
         {
             best = (end, Some(i));
         }
+    }
+    // Динамические моменты (issue 45) статически не планируются:
+    // их конец неизвестен — консервативно считаем занятым весь лимит
+    // (горизонт S для решётки), переполнения абсолютных строк при этом
+    // всё равно ловятся выше. Границы динамики — в рантайме развёртки.
+    if stmts
+        .iter()
+        .any(|st| !matches!(st.moment, MomentExpr::Absolute { .. }))
+    {
+        best.0 = best.0.max(limit);
     }
     Ok(best)
 }

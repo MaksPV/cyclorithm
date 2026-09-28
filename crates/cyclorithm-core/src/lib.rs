@@ -384,21 +384,21 @@ impl Error {
         )
     }
 
-    /// `cursor-before-first`: относительный момент `+:` или `+10m:` используется
-    /// до первого испущенного события в scope (курсор не инициализирован).
-    pub fn cursor_before_first() -> Self {
-        Self::coded(
-            "cursor-before-first",
-            "cursor used before first event in scope".to_owned(),
-        )
-    }
-
     /// `reverse-dynamic-moment`: `reverse` цикла с динамическим моментом
     /// (`+`, `after/at/until`, функции) — зеркало определено только для абсолютных смещений.
     pub fn reverse_dynamic_moment(moment_raw: &str) -> Self {
         Self::coded(
             "reverse-dynamic-moment",
             format!("cannot reverse dynamic moment '{moment_raw}'"),
+        )
+    }
+
+    /// `gaps-dynamic-moment`: `fill gaps` с динамическим моментом —
+    /// упаковка в пустоты требует статических границ, перенос в развёртку невозможен.
+    pub fn gaps_dynamic_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "gaps-dynamic-moment",
+            format!("fill gaps with dynamic moment '{moment_raw}' is not supported"),
         )
     }
 }

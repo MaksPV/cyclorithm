@@ -13,14 +13,14 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{Expr, Invocation, Routine, Schedule};
+use crate::parser::{DepKind, Expr, Invocation, MomentArg, MomentExpr, Routine, Schedule};
 
 use crate::Error;
 use crate::cond::{
     AtFrame, Defs, TimeTable, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs,
 };
 use crate::datetime::{parse_in_frame, parse_timezone};
-use crate::duration::{duration_ms, root_period_ms};
+use crate::duration::{duration_ms, format_duration, root_period_ms};
 use crate::validate::{NameTables, instantiate, plan_stmts, plan_stmts_with, root_actual_ms};
 
 /// Зона кадра в мс (`file.or(query)`, минуты → мс): стена = абсолют + зона.
@@ -35,6 +35,38 @@ fn frame_zone_ms(file_zone: Option<i16>, query_zone: Option<i16>) -> i64 {
 struct StackFrame {
     name: String,
     params: Vec<(String, Value)>,
+}
+
+/// Разрешённая метка запуска (issue 45): абсолютные времена старта/конца
+/// инстанции и флаг эмиссии. Неиспущенная метка (условие ложно или
+/// зависимость не разрешилась) в таблице отсутствует — ссылки на неё
+/// дают каскадный skip, а не ошибку.
+#[derive(Debug, Clone)]
+struct LabelResolution {
+    start_ms: i128,
+    end_ms: i128,
+    emitted: bool,
+}
+
+/// Курсор scope (issue 45): `max(end)` всех уже испущенных прямых детей
+/// scope в смещениях от старта scope. Стартовое значение — 0 (старт scope):
+/// первое `+30m:` — это 30m от старта. Невыполненная строка (условие ложно
+/// или зависимость не разрешилась) курсор не двигает.
+#[derive(Debug, Clone, Default)]
+struct Cursor {
+    position_ms: i64,
+}
+
+impl Cursor {
+    fn get(&self) -> i64 {
+        self.position_ms
+    }
+
+    fn advance(&mut self, end_ms: i64) {
+        if end_ms > self.position_ms {
+            self.position_ms = end_ms;
+        }
+    }
 }
 
 /// Кандидат `here.events`: строка инстанции с флагом `enabled`.
@@ -237,6 +269,321 @@ fn routine_call_values(
     Ok((params, child))
 }
 
+// ---------------------------------------------------------------------------
+// Моменты issue 45: разрешение единой оси в абсолютное время.
+// ---------------------------------------------------------------------------
+
+/// Разрешить выражение момента в абсолютное время (мс epoch).
+/// Возвращает `None`, если зависимость не разрешена (метка не испущена) —
+/// вызывающий делает каскадный skip: событие не испускается, курсор стоит.
+/// `scope_base` — старт scope (мс epoch), `scope_limit` — длительность scope.
+/// Границы здесь не проверяются (кроме `-X` больше лимита) — их смотрит вызывающий.
+fn resolve_moment(
+    moment: &MomentExpr,
+    cursor: &Cursor,
+    labels: &HashMap<String, LabelResolution>,
+    scope_base: i128,
+    scope_limit: i64,
+    limit_raw: &str,
+    moment_raw: &str,
+) -> Result<Option<i128>, Error> {
+    match moment {
+        MomentExpr::Absolute { negative, duration } => {
+            let x = duration_ms(duration)?;
+            if *negative {
+                if x > scope_limit {
+                    return Err(Error::offset_out_of_bounds(moment_raw, limit_raw));
+                }
+                Ok(Some(scope_base + (scope_limit - x) as i128))
+            } else {
+                Ok(Some(scope_base + x as i128))
+            }
+        }
+        MomentExpr::Relative { offset } => {
+            let add = match offset {
+                Some(d) => duration_ms(d)?,
+                None => 0,
+            };
+            Ok(Some(scope_base + cursor.get() as i128 + add as i128))
+        }
+        MomentExpr::Dependency { kind, label } => match labels.get(label.as_str()) {
+            Some(lr) if lr.emitted => Ok(Some(match kind {
+                DepKind::After | DepKind::Until => lr.end_ms,
+                DepKind::At => lr.start_ms,
+            })),
+            _ => Ok(None),
+        },
+        MomentExpr::Func { name, args } => resolve_moment_func(
+            name,
+            args,
+            cursor,
+            labels,
+            scope_base,
+            scope_limit,
+            limit_raw,
+            moment_raw,
+        ),
+    }
+}
+
+/// Аргументы функций момента: голая метка — конец её инстанции
+/// (как `after`), длительность — от старта scope, выражение — рекурсивно.
+/// `None` — каскад (метка не испущена).
+fn resolve_moment_arg(
+    arg: &MomentArg,
+    cursor: &Cursor,
+    labels: &HashMap<String, LabelResolution>,
+    scope_base: i128,
+    scope_limit: i64,
+    limit_raw: &str,
+    moment_raw: &str,
+) -> Result<Option<i128>, Error> {
+    match arg {
+        MomentArg::Label(l) => match labels.get(l.as_str()) {
+            Some(lr) if lr.emitted => Ok(Some(lr.end_ms)),
+            _ => Ok(None),
+        },
+        MomentArg::Duration(d) => Ok(Some(scope_base + duration_ms(d)? as i128)),
+        MomentArg::Expr(e) => resolve_moment(
+            e,
+            cursor,
+            labels,
+            scope_base,
+            scope_limit,
+            limit_raw,
+            moment_raw,
+        ),
+    }
+}
+
+/// Функции момента: `start/end` — ровно 1 голая метка (старт/конец),
+/// `max/min` — ≥1 аргумента. Неразрешённый аргумент — каскадный `None`.
+/// Арность проверена в `validate_moments`; здесь — защита на случай
+/// прямого вызова без валидации.
+#[allow(clippy::too_many_arguments)]
+fn resolve_moment_func(
+    name: &str,
+    args: &[MomentArg],
+    cursor: &Cursor,
+    labels: &HashMap<String, LabelResolution>,
+    scope_base: i128,
+    scope_limit: i64,
+    limit_raw: &str,
+    moment_raw: &str,
+) -> Result<Option<i128>, Error> {
+    match name {
+        "start" | "end" => {
+            let label = match args {
+                [MomentArg::Label(l)] => l,
+                _ => {
+                    return Err(Error::invalid_moment_function(&format!(
+                        "'{name}' takes a bare label"
+                    )));
+                }
+            };
+            match labels.get(label.as_str()) {
+                Some(lr) if lr.emitted => Ok(Some(if name == "start" {
+                    lr.start_ms
+                } else {
+                    lr.end_ms
+                })),
+                _ => Ok(None),
+            }
+        }
+        "max" | "min" => {
+            if args.is_empty() {
+                return Err(Error::invalid_moment_function(&format!(
+                    "'{name}' takes at least 1 argument"
+                )));
+            }
+            let mut values = Vec::with_capacity(args.len());
+            for arg in args {
+                match resolve_moment_arg(
+                    arg,
+                    cursor,
+                    labels,
+                    scope_base,
+                    scope_limit,
+                    limit_raw,
+                    moment_raw,
+                )? {
+                    Some(t) => values.push(t),
+                    None => return Ok(None),
+                }
+            }
+            let result = if name == "max" {
+                values.into_iter().max()
+            } else {
+                values.into_iter().min()
+            };
+            Ok(result)
+        }
+        _ => Err(Error::invalid_moment_function(&format!(
+            "unknown moment function '{name}'"
+        ))),
+    }
+}
+
+/// Длина вызова: `0` для действия точки, объявленная длительность
+/// для цикла, длительность таблицы для рутины.
+fn invocation_span(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
+    match invocation {
+        Invocation::PointAction { .. } => Ok(0),
+        Invocation::CycleCall { name, args } => {
+            if tables.routines.contains_key(name.as_str()) {
+                match args.first() {
+                    Some(Expr::Name(t)) => {
+                        let table = tables
+                            .tables
+                            .get(t.as_str())
+                            .expect("таблица уже проверена");
+                        duration_ms(&table.duration)
+                    }
+                    _ => unreachable!("форма вызова рутины проверена в validate_names"),
+                }
+            } else {
+                let cycle = tables
+                    .cycles
+                    .get(name.as_str())
+                    .expect("имена уже проверены");
+                duration_ms(&cycle.duration)
+            }
+        }
+    }
+}
+
+/// Шаг цепочки повторов: длина вызова; повтор действия точки —
+/// `repeat-point-action` (как в статическом `chain`).
+fn invocation_step(invocation: &Invocation, tables: &NameTables<'_>) -> Result<i64, Error> {
+    match invocation {
+        Invocation::PointAction { action, .. } => Err(Error::repeat_point_action(action)),
+        Invocation::CycleCall { .. } => invocation_span(invocation, tables),
+    }
+}
+
+/// Горизонт `fill`: конец scope по умолчанию, иначе `until`
+/// (зеркало `fill_horizon` из validate — та же семантика границ).
+fn dynamic_horizon(
+    until: &Option<crate::parser::Until>,
+    limit: i64,
+    limit_raw: &str,
+) -> Result<i64, Error> {
+    match until {
+        None => Ok(limit),
+        Some(u) => {
+            let t = duration_ms(&u.duration)?;
+            let h = if u.negative {
+                if t > limit {
+                    return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+                }
+                limit - t
+            } else {
+                t
+            };
+            if h > limit {
+                return Err(Error::until_out_of_bounds(&u.raw(), limit_raw));
+            }
+            Ok(h)
+        }
+    }
+}
+
+/// Вина за переполнение динамической строки: цикл — `cycle-overruns`,
+/// действие точки — `action-overruns` (зеркало `blame` из validate).
+fn blame_dynamic(stmt: &crate::parser::Stmt, outer: &str, end: i64, limit: i64) -> Error {
+    let excess = format_duration(end - limit);
+    let end_s = format_duration(end);
+    let limit_s = format_duration(limit);
+    match &stmt.invocation {
+        Invocation::PointAction { action, .. } => {
+            Error::action_overruns(action, outer, &excess, &end_s, &limit_s)
+        }
+        Invocation::CycleCall { name, .. } => {
+            Error::cycle_overruns(name, outer, &excess, &end_s, &limit_s)
+        }
+    }
+}
+
+/// Старты экземпляров динамической строки от первого разрешённого смещения.
+/// Семантика — как у статического `chain` + материализация: `Once` — один,
+/// `repeat N` — встык, `fill` — до горизонта; всё, что за лимитом, —
+/// вина `blame_dynamic`. `FillGaps` здесь быть не должно (валидация
+/// отклоняет `gaps-dynamic-moment` раньше).
+fn dynamic_starts(
+    stmt: &crate::parser::Stmt,
+    first: i64,
+    limit: i64,
+    limit_raw: &str,
+    outer: &str,
+    tables: &NameTables<'_>,
+) -> Result<Vec<i64>, Error> {
+    use crate::parser::Repeat;
+    match &stmt.repeat {
+        Repeat::Once => {
+            let span = invocation_span(&stmt.invocation, tables)?;
+            let end = first.saturating_add(span);
+            if end > limit {
+                return Err(blame_dynamic(stmt, outer, end, limit));
+            }
+            Ok(if first <= limit {
+                vec![first]
+            } else {
+                Vec::new()
+            })
+        }
+        Repeat::Times(raw) => {
+            let n: u64 = raw.parse().map_err(|_| Error::invalid_repeat_count(raw))?;
+            if n == 0 {
+                return Err(Error::invalid_repeat_count(raw));
+            }
+            let step = invocation_step(&stmt.invocation, tables)?;
+            let end = first as i128 + n as i128 * step as i128;
+            let end = i64::try_from(end).unwrap_or(i64::MAX);
+            if end > limit {
+                return Err(blame_dynamic(stmt, outer, end, limit));
+            }
+            // Материализация только влезающих (как в статическом плане).
+            let mut starts = Vec::new();
+            let mut t = first as i128;
+            for _ in 0..n {
+                if t > limit as i128 {
+                    break;
+                }
+                starts.push(t as i64);
+                t += step as i128;
+            }
+            Ok(starts)
+        }
+        Repeat::Fill { until } => {
+            let step = invocation_step(&stmt.invocation, tables)?;
+            if step == 0 {
+                return Err(match &stmt.invocation {
+                    Invocation::CycleCall { name, .. } => Error::fill_zero_duration(name),
+                    Invocation::PointAction { action, .. } => Error::repeat_point_action(action),
+                });
+            }
+            let horizon = dynamic_horizon(until, limit, limit_raw)?;
+            if first >= horizon {
+                return Ok(Vec::new());
+            }
+            let n = ((horizon - first) / step) as u64;
+            let end = first as i128 + n as i128 * step as i128;
+            let end = i64::try_from(end).unwrap_or(i64::MAX);
+            if end > limit {
+                return Err(blame_dynamic(stmt, outer, end, limit));
+            }
+            let mut starts = Vec::new();
+            let mut t = first as i128;
+            while t < horizon as i128 && t <= limit as i128 {
+                starts.push(t as i64);
+                t += step as i128;
+            }
+            Ok(starts)
+        }
+        Repeat::FillGaps { .. } => Err(Error::gaps_dynamic_moment(&stmt.moment_raw())),
+    }
+}
+
 /// Спан экземпляра цикла для таймлайна: имя цикла и границы
 /// `[start, end)` в мс epoch (конец — по объявленной длительности).
 /// У действий напрямую в `root_cycle` — `cycle: "root_cycle"`.
@@ -290,6 +637,7 @@ fn unfold_root_instance(
         point_attrs,
         out,
         seq,
+        labels: HashMap::new(),
     };
     let plans = plan_stmts(
         &schedule.root.stmts,
@@ -302,20 +650,41 @@ fn unfold_root_instance(
         params: Vec::new(),
     }];
     let mut events = Vec::new();
+    // Курсор корня (issue 45): движется только испущенными строками
+    // (внутри `unfold_stmt`/`unfold_stmt_dynamic`).
+    let mut root_cursor = Cursor::default();
     for (st, pl) in schedule.root.stmts.iter().zip(plans.iter()) {
-        unfold_stmt(
-            st,
-            &pl.starts,
-            None,
-            base,
-            k,
-            &root_span,
-            &mut ctx,
-            &root_env,
-            &stack,
-            &mut events,
-            zone_ms,
-        )?;
+        if matches!(st.moment, crate::parser::MomentExpr::Absolute { .. }) {
+            unfold_stmt(
+                st,
+                &pl.starts,
+                None,
+                base,
+                k,
+                &root_span,
+                &mut ctx,
+                &root_env,
+                &stack,
+                &mut events,
+                zone_ms,
+                &mut root_cursor,
+            )?;
+        } else {
+            unfold_stmt_dynamic(
+                st,
+                base,
+                k,
+                &root_span,
+                &mut ctx,
+                &root_env,
+                &stack,
+                &mut events,
+                zone_ms,
+                period_ms,
+                &schedule.root.duration.raw,
+                &mut root_cursor,
+            )?;
+        }
     }
     Ok(())
 }
@@ -540,6 +909,10 @@ struct Ctx<'a, 'n, 'o, 'm> {
     point_attrs: &'m HashMap<String, Vec<(String, Value)>>,
     out: &'o mut Vec<RawEvent>,
     seq: &'o mut usize,
+    /// Метки запуска текущего инстанса корня (issue 45): свежие на каждый `k`
+    /// (Ctx создаётся заново в `unfold_root_instance`), общие для вложенных
+    /// вызовов — ссылки видны внутри всего инстанса root_cycle.
+    labels: HashMap<String, LabelResolution>,
 }
 /// Развёртка строки: старты экземпляров уже посчитаны `plan_stmts`
 /// (валидация прошла, счёт конечен). Порядок обхода задаёт `seq` для сортировки.
@@ -548,6 +921,9 @@ struct Ctx<'a, 'n, 'o, 'm> {
 /// кандидаты ранее разобранных строк), `row_label` — метка строки в рутине.
 /// Невыполненная строка пишется в `here.events` с `enabled: false` и дальше
 /// не идёт (в timeline попадают только выполненные).
+/// `cursor` — курсор scope (issue 45): двигается только испущенными
+/// экземплярами (`max(end)`); метка `as` регистрируется в `ctx.labels`
+/// на каждый испущенный экземпляр (последний побеждает).
 #[allow(clippy::too_many_arguments)]
 fn unfold_stmt(
     stmt: &crate::parser::Stmt,
@@ -561,6 +937,7 @@ fn unfold_stmt(
     stack: &[StackFrame],
     events: &mut Vec<Candidate>,
     zone_ms: i64,
+    cursor: &mut Cursor,
 ) -> Result<(), Error> {
     for &start in starts {
         let abs = i64::try_from(base + start as i128).unwrap_or(i64::MAX);
@@ -594,6 +971,119 @@ fn unfold_stmt(
             events,
             zone_ms,
         )?;
+        let span = invocation_span(&stmt.invocation, ctx.tables)?;
+        cursor.advance(start.saturating_add(span));
+        if let Some(label) = &stmt.launch_label {
+            ctx.labels.insert(
+                label.0.clone(),
+                LabelResolution {
+                    start_ms: base + start as i128,
+                    end_ms: base + start as i128 + span as i128,
+                    emitted: true,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Развёртка строки с динамическим моментом (issue 45): момент разрешается
+/// в рантайме через курсор scope и таблицу меток, старты — через
+/// `dynamic_starts`, дальше — как обычно (условие на каждый экземпляр,
+/// каскадный skip без движения курсора, курсор — max(end) испущенных,
+/// метка `as` — старт/конец каждого испущенного экземпляра, последний побеждает).
+/// `scope_limit`/`limit_raw` — длительность объемлющего scope.
+#[allow(clippy::too_many_arguments)]
+fn unfold_stmt_dynamic(
+    stmt: &crate::parser::Stmt,
+    base: i128,
+    k: i128,
+    parent: &Span,
+    ctx: &mut Ctx<'_, '_, '_, '_>,
+    env: &HashMap<String, Value>,
+    stack: &[StackFrame],
+    events: &mut Vec<Candidate>,
+    zone_ms: i64,
+    scope_limit: i64,
+    limit_raw: &str,
+    cursor: &mut Cursor,
+) -> Result<(), Error> {
+    let raw = stmt.moment_raw();
+    let first = match resolve_moment(
+        &stmt.moment,
+        cursor,
+        &ctx.labels,
+        base,
+        scope_limit,
+        limit_raw,
+        &raw,
+    )? {
+        Some(t) => t,
+        None => {
+            // Каскадный skip: зависимость от неиспущенной метки.
+            // Смещение для `here` бессмысленно — кладём 0, курсор стоит.
+            let at = AtFrame::new(clamp_i64(base), zone_ms);
+            events.push(disabled_candidate(&stmt.invocation, None, 0, at, ctx)?);
+            return Ok(());
+        }
+    };
+    if first < base || first > base + scope_limit as i128 {
+        return Err(Error::offset_out_of_bounds(&raw, limit_raw));
+    }
+    let first_offset = (first - base) as i64;
+    let starts = dynamic_starts(
+        stmt,
+        first_offset,
+        scope_limit,
+        limit_raw,
+        &parent.cycle,
+        ctx.tables,
+    )?;
+    for start_offset in starts {
+        let abs = base + start_offset as i128;
+        let at = AtFrame::new(clamp_i64(abs), zone_ms);
+        let mut cond_env = env.clone();
+        cond_env.insert("here".to_owned(), here_value(stack, events));
+        let enabled = match &stmt.condition {
+            Some(cond) => eval_cond_with_env(cond, &at, ctx.defs, &cond_env)?,
+            None => true,
+        };
+        if !enabled {
+            events.push(disabled_candidate(
+                &stmt.invocation,
+                None,
+                start_offset,
+                at,
+                ctx,
+            )?);
+            continue;
+        }
+        unfold(
+            &stmt.invocation,
+            None,
+            start_offset,
+            abs,
+            k,
+            parent,
+            ctx,
+            env,
+            stack,
+            events,
+            zone_ms,
+        )?;
+        // Курсор — max(end) испущенных; метка — старт/конец инстанции.
+        let span = invocation_span(&stmt.invocation, ctx.tables)?;
+        cursor.advance(start_offset.saturating_add(span));
+        if let Some(label) = &stmt.launch_label {
+            ctx.labels.insert(
+                label.0.clone(),
+                LabelResolution {
+                    start_ms: abs,
+                    end_ms: abs + span as i128,
+                    emitted: true,
+                },
+            );
+        }
     }
     Ok(())
 }
@@ -815,20 +1305,40 @@ fn unfold(
                     .collect();
                 let mut child_events = Vec::new();
                 let plans = plan_stmts(&cycle.stmts, limit, &cycle.duration.raw, ctx.tables)?;
+                // Курсор инстанса цикла (issue 45): свой на каждый вызов.
+                let mut child_cursor = Cursor::default();
                 for (st, pl) in cycle.stmts.iter().zip(plans.iter()) {
-                    unfold_stmt(
-                        st,
-                        &pl.starts,
-                        None,
-                        base,
-                        k,
-                        &child_span,
-                        ctx,
-                        &child,
-                        &child_stack,
-                        &mut child_events,
-                        zone_ms,
-                    )?;
+                    if matches!(st.moment, crate::parser::MomentExpr::Absolute { .. }) {
+                        unfold_stmt(
+                            st,
+                            &pl.starts,
+                            None,
+                            base,
+                            k,
+                            &child_span,
+                            ctx,
+                            &child,
+                            &child_stack,
+                            &mut child_events,
+                            zone_ms,
+                            &mut child_cursor,
+                        )?;
+                    } else {
+                        unfold_stmt_dynamic(
+                            st,
+                            base,
+                            k,
+                            &child_span,
+                            ctx,
+                            &child,
+                            &child_stack,
+                            &mut child_events,
+                            zone_ms,
+                            limit,
+                            &cycle.duration.raw,
+                            &mut child_cursor,
+                        )?;
+                    }
                 }
                 Ok(())
             }
@@ -917,6 +1427,9 @@ fn unfold_routine(
     // на инстанцию: тело пишет, вызовы слотов читают итог.
     let mut occupied: Vec<(i64, i64)> = Vec::new();
     let mut routine_events = Vec::new();
+    // Тела рутин — только абсолютные моменты (проверяет `validate_moments`):
+    // курсор scope здесь не нужен, меток `as` в рутинах нет по грамматике.
+    let mut routine_cursor = Cursor::default();
     let body = plan_stmts_with(
         &inst.body,
         limit,
@@ -942,6 +1455,7 @@ fn unfold_routine(
             &child_stack,
             &mut routine_events,
             zone_ms,
+            &mut routine_cursor,
         )?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
@@ -970,6 +1484,7 @@ fn unfold_routine(
             &child_stack,
             &mut routine_events,
             zone_ms,
+            &mut routine_cursor,
         )?;
     }
     Ok(())
