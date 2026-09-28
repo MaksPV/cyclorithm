@@ -35,7 +35,7 @@ slot_row    = { condition_block? ~ label ~ ":" ~ duration ~ slot_call? ~ ";" }
 slot_call   = { "->" ~ invocation }
 // Метка слота: цифры в начале разрешены (`1st`, `lunch_start`).
 // Ловушка как с `ms`: `1ms` разберётся длительностью, а не меткой
-// (в `routine_offset` длительность пробуется раньше) — таких имён не давать.
+// (в `moment_expr` длительность пробуется раньше) — таких имён не давать.
 label       = @{ (ASCII_ALPHANUMERIC | "_")+ }
 // Тело const/fun — склейка или битовое выражение (datestr возвращает строку).
 // Порядок как у операндов: сначала concat, иначе bitor съедает префикс.
@@ -76,13 +76,12 @@ duration_field = { kw_duration ~ "=" ~ duration }
 // данные как у цикла. В теле метки стоят вместо смещений; вызов routine —
 // тот же `cycle_call` (`MONDAY(DAY)`), routine от цикла отличит валидация.
 routine     = { kw_routine ~ IDENT ~ cycle_params? ~ "{" ~ routine_stmt* ~ "}" }
-routine_stmt = { condition_block? ~ routine_offset ~ ":" ~ stmt_body ~ ";" }
-// Сначала длительность, потом метка: иначе `45m` съестся как метка.
-// Граница `!word_tail` — чтобы `1st` не резалось на длительность `1s` + мусор:
-// PEG не возвращается в альтернативу, если правило уже успело (потом падает `:`).
-// Минус — только у длительности (`-10m` от конца таблицы; `-1st` нет).
-routine_offset = { neg_sign? ~ duration ~ !word_tail | label }
-stmt        = { condition_block? ~ neg_sign? ~ duration ~ ":" ~ stmt_body ~ ";" }
+// routine moment: duration с границей слова (как в старом routine_offset),
+// затем label (слот), затем moment_expr (absolute/relative).
+routine_moment = { neg_sign? ~ duration ~ !word_tail | label | moment_expr }
+routine_stmt = { condition_block? ~ routine_moment ~ ":" ~ stmt_body ~ ";" }
+// Строка цикла/root_cycle: [условие] момент: [повтор] вызов [as метка];
+stmt        = { condition_block? ~ moment_expr ~ ":" ~ stmt_body ~ launch_label? ~ ";" }
 // Условия. `concat` раньше `bitor`: иначе `bitor` съедает
 // строковый префикс. Смешение типов разбирается, бракуется валидацией (type-mismatch).
 condition_block = { "[" ~ condition ~ "]" }
@@ -125,6 +124,15 @@ kw_root_cycle = @{ "root_cycle" ~ !word_tail }
 kw_start_time = @{ "start_time" ~ !word_tail }
 kw_timezone = @{ "timezone" ~ !word_tail }
 kw_duration   = @{ "duration" ~ !word_tail }
+// Ключевые слова для моментов и меток (issue 45)
+kw_as         = @{ "as" ~ !word_tail }
+kw_after      = @{ "after" ~ !word_tail }
+kw_at         = @{ "at" ~ !word_tail }
+kw_until      = @{ "until" ~ !word_tail }
+kw_start      = @{ "start" ~ !word_tail }
+kw_end        = @{ "end" ~ !word_tail }
+kw_max        = @{ "max" ~ !word_tail }
+kw_min        = @{ "min" ~ !word_tail }
 word_tail   = _{ ASCII_ALPHANUMERIC | "_" }
 comparison  = { cmp_side ~ cmp_op ~ cmp_right }
 // Длинные операторы раньше коротких, иначе `<=` режется на `<` + `=`.
@@ -244,10 +252,32 @@ kw_gaps     = @{ "gaps" ~ !word_tail }
 // `build_routine_stmt` и `build_until_from` (обе ветки `fill until`);
 // неявные пробелы `~` здесь пропускают пробел осознанно.
 neg_sign    = { "-" }
+
+// Выражение момента (единая ось момента — issue 45):
+// Порядок альтернатив важен: PEG выбирает первую удачную.
+// 1. Функции момента: start(W1), end(W1), max(8h, end(W1)), min(...)
+moment_func = { (kw_start | kw_end | kw_max | kw_min) ~ "(" ~ moment_arg ~ ("," ~ moment_arg)* ~ ")" }
+// 2. Зависимость от метки: after W1:, at W1:, until W1:
+moment_dep  = { (kw_after | kw_at | kw_until) ~ label }
+// 3. Относительный момент: +: или +10m:
+moment_rel  = { "+" ~ duration? }
+// 4. Абсолютный timestamp: 0h:, 8h30m:, -0m:
+moment_abs  = { neg_sign? ~ duration }
+// Единое выражение момента — ровно один источник на строку
+moment_expr = { moment_func | moment_dep | moment_rel | moment_abs }
+
+// Аргумент функции момента: moment_expr, duration или голая метка
+// (`start(W1)`, `max(8h, end(W1))`). Порядок: сначала moment_expr
+// (`8h` — Absolute), затем duration, затем label (`W1`).
+moment_arg  = { moment_expr | duration | label }
+
+// Метка запуска (launch label): `as LABEL`
+launch_label = { kw_as ~ label }
+
 invocation  = { point_action | cycle_call }
 // Вызов точки: блок атрибутов — тот же JSON-словарь `map_lit`, либо
 // ссылка на константу-мапу (`BELL.ring() CORPUS;`). У цикла после `)` блока нет.
-point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | IDENT)? }
+point_action = { IDENT ~ "." ~ IDENT ~ "(" ~ ")" ~ (map_lit | !kw_as ~ IDENT)? }
 cycle_call   = { IDENT ~ "(" ~ (cond_arg ~ ("," ~ cond_arg)*)? ~ ")" }
 duration     = { duration_item+ }
 // Компакт-атомарное: внутри компонента пробелы запрещены (`1 h` — ошибка),

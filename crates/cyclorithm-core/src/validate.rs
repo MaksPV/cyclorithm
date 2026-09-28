@@ -16,7 +16,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::parser::{
-    Expr, Invocation, Pack, Repeat, Routine, RoutineOffset, Schedule, SlotRow, Stmt, Until,
+    DepKind, Expr, Invocation, MomentArg, MomentExpr, Pack, Repeat, Routine, RoutineOffset,
+    Schedule, SlotRow, Stmt, Until,
 };
 
 use crate::Error;
@@ -189,6 +190,168 @@ where
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Моменты issue 45: метки запуска (`as`), зависимости (`after/at/until`),
+// относительные моменты (`+`) и функции (`start/end/max/min`).
+// Вызывать после `validate_names` (вызовы уже разрешены), до `check_bounds`:
+// метки — это имена (unknown-label/forward-label/duplicate),
+// функции — арность (invalid-moment-function).
+// Метки — по scope (тело цикла, тело root_cycle): ссылки только назад
+// внутри своего списка строк. Рутины: слоты таблиц — отдельное пространство,
+// здесь проверяются только Moment-варианты (non-Absolute, кроме Relative —
+// invalid-routine-moment; Relative в рутине разрешён и проходит дальше).
+// ---------------------------------------------------------------------------
+
+/// Проверить метки и моменты во всех телах (циклы, root_cycle, рутины).
+/// Порядок обхода — порядок объявления (циклы, рутины, корень):
+/// первая ошибка побеждает.
+pub fn validate_moments(schedule: &Schedule) -> Result<(), Error> {
+    for c in &schedule.cycles {
+        validate_moment_scope(&c.stmts)?;
+    }
+    for r in &schedule.routines {
+        validate_routine_moments(r)?;
+    }
+    validate_moment_scope(&schedule.root.stmts)?;
+    Ok(())
+}
+
+/// Метки и моменты одного списка строк (тело цикла или root_cycle).
+fn validate_moment_scope(stmts: &[Stmt]) -> Result<(), Error> {
+    // Полный набор меток scope — для различения unknown vs forward.
+    let all: HashSet<&str> = stmts
+        .iter()
+        .filter_map(|st| st.launch_label.as_ref().map(|l| l.0.as_str()))
+        .collect();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for st in stmts {
+        // Метка: reserved, дубли, только на вызовах циклов.
+        if let Some(label) = &st.launch_label {
+            check_reserved(&label.0)?;
+            if !seen.insert(label.0.as_str()) {
+                return Err(Error::duplicate("label", &label.0));
+            }
+            if matches!(st.invocation, Invocation::PointAction { .. }) {
+                return Err(Error::label_not_cycle_call(&label.0));
+            }
+        }
+        validate_moment_expr(&st.moment, &seen, &all)?;
+        // `fill gaps` с динамическим моментом — gaps-dynamic-moment
+        // (упаковка требует статических границ).
+        if matches!(st.repeat, Repeat::FillGaps { .. })
+            && !matches!(st.moment, MomentExpr::Absolute { .. })
+        {
+            return Err(Error::gaps_dynamic_moment(&st.moment_raw()));
+        }
+        // Метка становится видимой только после своей строки (ссылки назад).
+        if let Some(label) = &st.launch_label {
+            seen.insert(label.0.as_str());
+        }
+    }
+    Ok(())
+}
+
+/// Метки и моменты тела рутины: слоты (`Label`) пропускаются (их проверяет
+/// `instantiate` как unknown-slot), `Moment(Absolute)` — дальше, остальные —
+/// invalid-routine-moment (относительные моменты и зависимости в рутинах
+/// пока не поддерживаются: курсор рутины — будущая работа).
+fn validate_routine_moments(routine: &Routine) -> Result<(), Error> {
+    for st in &routine.stmts {
+        match &st.offset {
+            RoutineOffset::Duration(_) | RoutineOffset::Label(_) => {}
+            RoutineOffset::Moment(m) => match m {
+                MomentExpr::Absolute { .. } => {}
+                other => {
+                    let raw = match other {
+                        MomentExpr::Dependency { kind, label } => {
+                            let kw = match kind {
+                                DepKind::After => "after",
+                                DepKind::At => "at",
+                                DepKind::Until => "until",
+                            };
+                            format!("{kw} {label}")
+                        }
+                        MomentExpr::Func { name, .. } => format!("{name}(..)"),
+                        _ => unreachable!("Absolute/Relative отфильтрованы выше"),
+                    };
+                    return Err(Error::invalid_routine_moment(&raw));
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
+/// Проверить выражение момента: ссылки на метки (unknown/forward),
+/// арность и типы аргументов функций.
+fn validate_moment_expr(
+    moment: &MomentExpr,
+    seen: &HashSet<&str>,
+    all: &HashSet<&str>,
+) -> Result<(), Error> {
+    match moment {
+        MomentExpr::Absolute { .. } | MomentExpr::Relative { .. } => Ok(()),
+        MomentExpr::Dependency { label, .. } => {
+            check_label_ref(label, seen, all)?;
+            Ok(())
+        }
+        MomentExpr::Func { name, args } => validate_moment_func(name, args, seen, all),
+    }
+}
+
+/// Ссылка на метку: есть в scope — ок, объявлена ниже — forward, нет — unknown.
+fn check_label_ref(label: &str, seen: &HashSet<&str>, all: &HashSet<&str>) -> Result<(), Error> {
+    if seen.contains(label) {
+        Ok(())
+    } else if all.contains(label) {
+        Err(Error::forward_label_reference(label))
+    } else {
+        Err(Error::unknown_label(label))
+    }
+}
+
+/// Арность и типы аргументов функций момента.
+fn validate_moment_func(
+    name: &str,
+    args: &[MomentArg],
+    seen: &HashSet<&str>,
+    all: &HashSet<&str>,
+) -> Result<(), Error> {
+    match name {
+        "start" | "end" => {
+            if args.len() != 1 {
+                return Err(Error::invalid_moment_function(&format!(
+                    "'{name}' takes exactly 1 argument"
+                )));
+            }
+            match &args[0] {
+                MomentArg::Label(l) => check_label_ref(l, seen, all),
+                _ => Err(Error::invalid_moment_function(&format!(
+                    "'{name}' takes a bare label"
+                ))),
+            }
+        }
+        "max" | "min" => {
+            if args.is_empty() {
+                return Err(Error::invalid_moment_function(&format!(
+                    "'{name}' takes at least 1 argument"
+                )));
+            }
+            for arg in args {
+                match arg {
+                    MomentArg::Label(l) => check_label_ref(l, seen, all)?,
+                    MomentArg::Duration(_) => {}
+                    MomentArg::Expr(e) => validate_moment_expr(e, seen, all)?,
+                }
+            }
+            Ok(())
+        }
+        _ => Err(Error::invalid_moment_function(&format!(
+            "unknown moment function '{name}'"
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -443,11 +606,14 @@ pub fn instantiation_pairs<'a>(
 /// вызов слота без повторов в смещении слота.
 fn slot_call_stmt(row: &SlotRow, slot_call: &Invocation) -> Stmt {
     Stmt {
-        offset: row.offset.clone(),
-        negative: false,
+        moment: MomentExpr::Absolute {
+            negative: false,
+            duration: row.offset.clone(),
+        },
         repeat: Repeat::Once,
         condition: row.condition.clone(),
         invocation: slot_call.clone(),
+        launch_label: None,
     }
 }
 
@@ -486,6 +652,17 @@ pub fn instantiate(
                 Some(slot) => (slot.offset.clone(), Some(label.clone())),
                 None => return Err(Error::unknown_slot(label)),
             },
+            RoutineOffset::Moment(m) => match m {
+                MomentExpr::Absolute {
+                    negative: false,
+                    duration,
+                } => (duration.clone(), None),
+                _ => {
+                    return Err(Error::invalid_routine_moment(
+                        "relative/dependency/func moment",
+                    ));
+                }
+            },
         };
         body_labels.push(label);
         let invocation = match &st.invocation {
@@ -504,11 +681,14 @@ pub fn instantiate(
             other => other.clone(),
         };
         body.push(Stmt {
-            offset,
-            negative: st.negative,
+            moment: MomentExpr::Absolute {
+                negative: false,
+                duration: offset,
+            },
             repeat: st.repeat.clone(),
             condition: st.condition.clone(),
             invocation,
+            launch_label: None,
         });
     }
     let mut slot_calls = Vec::new();
@@ -656,6 +836,16 @@ fn stmts_end(
             best = (end, Some(i));
         }
     }
+    // Динамические моменты (issue 45) статически не планируются:
+    // их конец неизвестен — консервативно считаем занятым весь лимит
+    // (горизонт S для решётки), переполнения абсолютных строк при этом
+    // всё равно ловятся выше. Границы динамики — в рантайме развёртки.
+    if stmts
+        .iter()
+        .any(|st| !matches!(st.moment, MomentExpr::Absolute { .. }))
+    {
+        best.0 = best.0.max(limit);
+    }
     Ok(best)
 }
 
@@ -687,6 +877,16 @@ pub(crate) fn plan_stmts_with(
     // (индекс строки, начало окна, горизонт, шаг filler-а, упаковка) — второй проход.
     let mut fillers: Vec<(usize, i64, i64, i64, Pack)> = Vec::new();
     for (i, st) in stmts.iter().enumerate() {
+        // Динамические моменты (issue 45) статически не планируются:
+        // их старты разрешаются в развёртке (курсор/метки), границы —
+        // в рантайме. Здесь — пустое размещение, занятость не трогаем.
+        if !matches!(st.moment, MomentExpr::Absolute { .. }) {
+            plans.push(Placement {
+                starts: Vec::new(),
+                end: None,
+            });
+            continue;
+        }
         let offset = effective_offset_ms(st, limit, limit_raw)?;
         match &st.repeat {
             Repeat::FillGaps { until, pack } => {
@@ -1447,7 +1647,13 @@ mod tests {
         let slot_calls = &inst.slot_calls;
         assert_eq!(body.len(), 4);
         assert_eq!(slot_calls.len(), 1);
-        let raws: Vec<&str> = body.iter().map(|st| st.offset.raw.as_str()).collect();
+        let raws: Vec<&str> = body
+            .iter()
+            .map(|st| match &st.moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            })
+            .collect();
         assert_eq!(raws, vec!["9h", "45m", "0m", "0m"]);
         // Проброс подставлен, литералы и циклы не тронуты.
         let table_of = |st: &Stmt| match &st.invocation {
@@ -1466,7 +1672,13 @@ mod tests {
             slot_calls[0].invocation,
             Invocation::CycleCall { ref name, .. } if name == "LUNCH"
         ));
-        assert_eq!(slot_calls[0].offset.raw.as_str(), "12h");
+        assert_eq!(
+            match &slot_calls[0].moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            },
+            "12h"
+        );
     }
 
     #[test]
@@ -1872,5 +2084,123 @@ mod tests {
         check_recursion(ast, &t).expect("рекурсии нет");
         check_bounds(ast, &t).expect("цепочки в границах");
         assert_eq!(root_actual_ms(ast, &t), Ok(86_400_000));
+    }
+
+    #[test]
+    fn accepts_launch_labels_and_dependencies() {
+        // Метка + after/at + относительные + функции — валидны.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle W duration = 2h { 0m: A.x(); } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: W() as W1; after W1: P(); at W1: P(); +30m: P(); +: P(); \
+            max(8h, end(W1)): P(); min(start(W1), 10h): P(); } }";
+        let (ast, _) = tables(src);
+        validate_moments(ast).expect("метки и моменты валидны");
+    }
+
+    #[test]
+    fn rejects_unknown_label() {
+        // Ссылка на несуществующую метку — unknown-label.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            after NOPE: P(); } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("метки нет");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("unknown-label", "unknown label 'NOPE'")
+        );
+    }
+
+    #[test]
+    fn rejects_forward_label_reference() {
+        // Ссылка на метку, объявленную ниже, — forward-label-reference.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle W duration = 2h { 0m: A.x(); } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            after W1: P(); 0h: W() as W1; } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("ссылка вперёд");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (
+                "forward-label-reference",
+                "label 'W1' used before declaration"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_launch_label() {
+        // Две метки с одним именем в scope — duplicate.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle W duration = 2h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: W() as W1; 1h: W() as W1; } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("дубль метки");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("duplicate", "duplicate label 'W1'")
+        );
+    }
+
+    #[test]
+    fn rejects_label_on_point_action() {
+        // Метка `as` на действии точки — label-not-cycle-call.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0m: A.x() as W1; } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("метка на точке");
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            ("label-not-cycle-call", "label 'W1' is not a cycle call")
+        );
+    }
+
+    #[test]
+    fn rejects_bad_moment_function_args() {
+        // `start` с двумя аргументами — invalid-moment-function.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: P() as W1; max(start(W1), end(W1), 1h, 2h, 3h, 4h): P(); \
+            start(W1, W1): P(); } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("арность start");
+        assert_eq!(e.code, "invalid-moment-function");
+    }
+
+    #[test]
+    fn rejects_moment_function_of_duration() {
+        // `start(8h)` — голая длительность вместо метки — invalid-moment-function.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            start(8h): P(); } }";
+        let (ast, _) = tables(src);
+        let e = validate_moments(ast).expect_err("start от длительности");
+        assert_eq!(e.code, "invalid-moment-function");
+    }
+
+    #[test]
+    fn dynamic_moments_skip_static_bounds() {
+        // Динамические моменты не планируют статически: пустые старты, без ошибки.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: P() as W1; after W1: P(); } }";
+        let (ast, t) = tables(src);
+        validate_moments(ast).expect("моменты валидны");
+        check_bounds(ast, &t).expect("динамика границы не ломает");
+        let plans = plan_stmts(&ast.root.stmts, 86_400_000, "24h", &t).expect("план строится");
+        assert_eq!(plans.len(), 2);
+        assert!(!plans[0].starts.is_empty());
+        assert!(plans[1].starts.is_empty());
+        assert_eq!(plans[1].end, None);
     }
 }

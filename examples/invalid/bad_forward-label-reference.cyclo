@@ -1,0 +1,25 @@
+schedule "forward-label-reference" {
+  point A {
+    actions = [x];
+  }
+
+  cycle W
+    duration = 2h
+  {
+    0m: A.x();
+  }
+
+  cycle P
+    duration = 1h
+  {
+    0m: A.x();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    after W1: P();
+    0h: W() as W1;
+  }
+}

@@ -16,8 +16,8 @@
 Импорты
 (`cannot-read-import`, `schedule-in-import`) разрешаются раньше проверок
 решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
-побеждает: имена → рекурсия → таблицы → длительности и границы → условия →
-даты. Внутри фазы проверки идут в порядке объявления.
+побеждает: имена → рекурсия → моменты → таблицы → длительности и границы →
+условия → даты. Внутри фазы проверки идут в порядке объявления.
 
 ## Шапки
 
@@ -33,7 +33,7 @@
 | `unknown-point` | `unknown point 'PORT'` | Объявить точку `point` или исправить имя |
 | `action-not-allowed` | `action 'arrive' not allowed for point 'DEPOT'` | Добавить действие в `actions` точки |
 | `unknown-cycle` | `unknown cycle 'NIGHT_ROUTE'` | Объявить цикл `cycle`; проверить форму вызова `A()` или `A.b()` |
-| `duplicate` | `duplicate point 'DEPOT'`, `duplicate routine 'M'`, `duplicate table 'T'`, `duplicate slot '1st'`, `duplicate param 'a'` | Устранить повтор имени внутри файла |
+| `duplicate` | `duplicate point 'DEPOT'`, `duplicate routine 'M'`, `duplicate table 'T'`, `duplicate slot '1st'`, `duplicate param 'a'`, `duplicate label 'W1'` | Устранить повтор имени внутри файла |
 | `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, `here` — контекст инстанции, объявлять так нельзя |
 | `wrong-kind` | `point 'X' is not a cycle`, `cycle 'X' is not a point`, `point 'X' is not a routine`, `routine 'X' is not a point`, `routine 'X' is not a cycle` | Переименовать: имя занято сущностью другого рода |
 
@@ -42,6 +42,18 @@
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
 | `recursive` | `recursive cycle 'A'`, `recursive routine 'M'`, `recursive table 'T'` | Разорвать цепочку вызовов |
+
+## Моменты
+
+| Ситуация | Сообщение | Исправление |
+|----------|-----------|-------------|
+| `unknown-label` | `unknown label 'NOPE'` | Объявить метку `as` выше по scope |
+| `forward-label-reference` | `label 'W1' used before declaration` | Ссылаться только на метки, объявленные выше |
+| `label-not-cycle-call` | `label 'W1' is not a cycle call` | Ставить `as` только на вызовы циклов, не на действия точек |
+| `invalid-moment-function` | `invalid moment function: 'start' takes a bare label` | `start`/`end` — ровно 1 голая метка; `max`/`min` — ≥1 аргумента |
+| `invalid-routine-moment` | `routine moment 'after W1' must be absolute duration or slot label` | В рутинах — только длительности и метки слотов таблицы |
+| `gaps-dynamic-moment` | `fill gaps with dynamic moment 'after W1' is not supported` | У `fill gaps` — только абсолютное смещение |
+| `reverse-dynamic-moment` | `cannot reverse dynamic moment '+'` | У `reverse`-цикла в источнике — только абсолютные смещения |
 
 ## Таблицы
 

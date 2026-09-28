@@ -1,0 +1,31 @@
+schedule "Зависимости" {
+  point A {
+    actions = [x];
+  }
+
+  cycle W duration = 2h {
+    0m: A.x();
+  }
+
+  cycle P duration = 1h {
+    0m: A.x();
+  }
+
+  cycle S duration = 30m {
+    0m: A.x();
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+    0h: W() as W1;
+    after W1: P();
+    at W1: S();
+    +30m: S();
+    +: S();
+    5h: P() as P1;
+    max(8h, end(P1)): S();
+    min(start(P1), 10h): S();
+    after W1: repeat 2 S();
+    [false] 12h: W() as W2;
+    after W2: S();
+  }
+}

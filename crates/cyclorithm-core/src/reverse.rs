@@ -6,7 +6,7 @@
 //! Дальше узел — обычный цикл: все проверки идут общим порядком
 //! (см. docs/reference/semantics.md).
 
-use crate::parser::{Cycle, Schedule, Stmt};
+use crate::parser::{Cycle, MomentExpr, Schedule, Stmt};
 
 use crate::Error;
 use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
@@ -85,12 +85,19 @@ fn mirror_rows(src: &Cycle, limit: i64) -> Result<Vec<Stmt>, Error> {
             // переворачиваем знак, валидация результата добьёт общим порядком.
             (true, eff - limit)
         };
+        let mut dur = duration_from_ms(magnitude);
+        if negative {
+            dur.raw = format!("-{}", dur.raw);
+        }
         stmts.push(Stmt {
-            offset: duration_from_ms(magnitude),
-            negative,
+            moment: MomentExpr::Absolute {
+                negative,
+                duration: dur,
+            },
             repeat: row.repeat.clone(),
             condition: row.condition.clone(),
             invocation: row.invocation.clone(),
+            launch_label: None,
         });
     }
     Ok(stmts)
@@ -118,7 +125,7 @@ mod tests {
         schedule.cycles[1]
             .stmts
             .iter()
-            .map(|s| s.offset_raw())
+            .map(|s| s.moment_raw())
             .collect()
     }
 
@@ -138,7 +145,10 @@ mod tests {
         // `-10m` при 1h — это 50m, зеркало — 10m обычной длительностью.
         let s = mirror_of("-10m: A.x();");
         assert_eq!(offsets(&s), vec!["10m"]);
-        assert!(!s.cycles[1].stmts[0].negative);
+        match &s.cycles[1].stmts[0].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(!negative),
+            _ => panic!("expected Absolute moment"),
+        }
     }
 
     #[test]

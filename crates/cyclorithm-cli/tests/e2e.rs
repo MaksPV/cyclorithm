@@ -353,6 +353,25 @@ fn gaps_matches_expected_json() {
 }
 
 #[test]
+fn dependencies_matches_expected_json() {
+    // Issue 45: метки as, зависимости after/at, курсор +/+:, функции
+    // max/min/start/end, repeat с динамическим стартом, каскадный skip.
+    let out = run(&[
+        "run",
+        "../../examples/valid/dependencies.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/dependencies.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
 fn gaps_pack_matches_expected_json() {
     // fill gaps pack: left — встык слева, right — справа, center — по центру.
     let out = run(&[
@@ -635,6 +654,32 @@ fn validation_errors_go_to_stderr() {
             "bad_duplicate-argument",
             "duplicate-argument",
             "duplicate argument 'duration'",
+        ),
+        ("bad_unknown-label", "unknown-label", "unknown label 'NOPE'"),
+        (
+            "bad_forward-label-reference",
+            "forward-label-reference",
+            "label 'W1' used before declaration",
+        ),
+        (
+            "bad_label-not-cycle-call",
+            "label-not-cycle-call",
+            "label 'W1' is not a cycle call",
+        ),
+        (
+            "bad_invalid-moment-function",
+            "invalid-moment-function",
+            "invalid moment function: 'start' takes a bare label",
+        ),
+        (
+            "bad_gaps-dynamic-moment",
+            "gaps-dynamic-moment",
+            "fill gaps with dynamic moment 'after W1' is not supported",
+        ),
+        (
+            "bad_reverse-dynamic-moment",
+            "reverse-dynamic-moment",
+            "cannot reverse dynamic moment '+'",
         ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");

@@ -468,61 +468,173 @@ fn build_routine(pair: Pair<Rule>) -> Result<Routine, pest::error::Error<Rule>> 
 
 fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
-    let span = pair.as_span();
     let mut inner = pair.into_inner();
-    let mut first = inner.next().expect("stmt: условие, минус или смещение");
+    let mut first = inner.next().expect("stmt: условие или момент");
     let mut condition = None;
     if first.as_rule() == Rule::condition_block {
         let cond = first.into_inner().next().expect("condition_block: условие");
         condition = Some(build_cond(cond));
-        first = inner.next().expect("stmt: смещение или минус");
+        first = inner.next().expect("stmt: момент");
     }
-    // Слитность минуса — по спанам (см. `neg_sign` в грамматике).
-    let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
-        let offset_pair = inner.next().expect("stmt: длительность после минуса");
-        if first.as_span().end() != offset_pair.as_span().start() {
-            return Err(pest::error::Error::new_from_span(
-                pest::error::ErrorVariant::CustomError {
-                    message: "minus in offset must be glued to duration ('-10m')".to_owned(),
-                },
-                span,
-            ));
-        }
-        (true, offset_pair)
-    } else {
-        (false, first)
-    };
-    let offset = build_duration(offset_pair);
+    debug_assert_eq!(first.as_rule(), Rule::moment_expr);
+    let moment = build_moment_expr(first)?;
     let body = inner.next().expect("stmt: тело");
     let (repeat, invocation) = build_row_body(body)?;
+    let launch_label = inner.next().map(build_launch_label);
     Ok(Stmt {
-        offset,
-        negative,
+        moment,
+        repeat,
+        condition,
+        invocation,
+        launch_label,
+    })
+}
+
+/// Строка routine: `[условие] (<момент> | <метка>): <тело>;`.
+fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine_stmt);
+    let mut inner = pair.into_inner();
+    let mut first = inner
+        .next()
+        .expect("routine_stmt: условие или момент/метка");
+    let mut condition = None;
+    if first.as_rule() == Rule::condition_block {
+        let cond = first.into_inner().next().expect("condition_block: условие");
+        condition = Some(build_cond(cond));
+        first = inner.next().expect("routine_stmt: момент или метка");
+    }
+    debug_assert_eq!(first.as_rule(), Rule::routine_moment);
+    let moment = build_routine_moment(first)?;
+    let body = inner.next().expect("routine_stmt: тело");
+    let (repeat, invocation) = build_row_body(body)?;
+    Ok(RoutineStmt {
+        offset: moment,
+        negative: false, // deprecated, kept for compat
         repeat,
         condition,
         invocation,
     })
 }
 
-/// Строка routine: `[условие] (<смещение> | <метка>): <тело>;`.
-/// Минус — только у длительности (`-10m` от конца таблицы).
-fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Error<Rule>> {
-    debug_assert_eq!(pair.as_rule(), Rule::routine_stmt);
+/// Разбор moment_expr (единая ось момента).
+fn build_moment_expr(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_expr);
+    let inner = pair.into_inner().next().expect("moment_expr: содержимое");
+    match inner.as_rule() {
+        Rule::moment_func => build_moment_func(inner),
+        Rule::moment_dep => build_moment_dep(inner),
+        Rule::moment_rel => build_moment_rel(inner),
+        Rule::moment_abs => build_moment_abs(inner),
+        r => unreachable!("moment_expr: неожиданное правило {r:?}"),
+    }
+}
+
+/// Разбор routine_moment: duration с границей слова, label (слот), или moment_expr.
+fn build_routine_moment(pair: Pair<Rule>) -> Result<RoutineOffset, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine_moment);
+    let span = pair.as_span();
+    let inner = pair
+        .clone()
+        .into_inner()
+        .next()
+        .expect("routine_moment: содержимое");
+    match inner.as_rule() {
+        Rule::moment_expr => Ok(RoutineOffset::Moment(build_moment_expr(inner)?)),
+        Rule::label => Ok(RoutineOffset::Label(inner.as_str().to_owned())),
+        Rule::neg_sign | Rule::duration => {
+            // Первый вариант: neg_sign? ~ duration ~ !word_tail
+            let items: Vec<_> = pair.into_inner().collect();
+            let (negative, dur_pair) = if items[0].as_rule() == Rule::neg_sign {
+                if items.len() < 2 {
+                    return Err(pest::error::Error::new_from_span(
+                        pest::error::ErrorVariant::CustomError {
+                            message: "minus in offset must be glued to duration ('-10m')"
+                                .to_owned(),
+                        },
+                        span,
+                    ));
+                }
+                let dur = &items[1];
+                if items[0].as_span().end() != dur.as_span().start() {
+                    return Err(pest::error::Error::new_from_span(
+                        pest::error::ErrorVariant::CustomError {
+                            message: "minus in offset must be glued to duration ('-10m')"
+                                .to_owned(),
+                        },
+                        span,
+                    ));
+                }
+                (true, dur)
+            } else {
+                (false, &items[0])
+            };
+            let duration = build_duration(dur_pair.clone());
+            Ok(RoutineOffset::Moment(MomentExpr::Absolute {
+                negative,
+                duration,
+            }))
+        }
+        r => unreachable!("routine_moment: неожиданное правило {r:?}"),
+    }
+}
+
+/// moment_func: start(W1), end(W1), max(8h, end(W1)), min(...)
+fn build_moment_func(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_func);
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .expect("moment_func: имя функции")
+        .as_str()
+        .to_owned();
+    let mut args = Vec::new();
+    for arg in inner {
+        debug_assert_eq!(arg.as_rule(), Rule::moment_arg);
+        let arg_inner = arg.into_inner().next().expect("moment_arg: содержимое");
+        match arg_inner.as_rule() {
+            Rule::moment_expr => {
+                args.push(MomentArg::Expr(Box::new(build_moment_expr(arg_inner)?)))
+            }
+            Rule::duration => args.push(MomentArg::Duration(build_duration(arg_inner))),
+            Rule::label => args.push(MomentArg::Label(arg_inner.as_str().to_owned())),
+            r => unreachable!("moment_arg: неожиданное правило {r:?}"),
+        }
+    }
+    Ok(MomentExpr::Func { name, args })
+}
+
+/// moment_dep: after W1, at W1, until W1
+fn build_moment_dep(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_dep);
+    let mut inner = pair.into_inner();
+    let kind = match inner.next().expect("moment_dep: kind").as_rule() {
+        Rule::kw_after => DepKind::After,
+        Rule::kw_at => DepKind::At,
+        Rule::kw_until => DepKind::Until,
+        r => unreachable!("moment_dep kind: неожиданное правило {r:?}"),
+    };
+    let label = inner.next().expect("moment_dep: label").as_str().to_owned();
+    Ok(MomentExpr::Dependency { kind, label })
+}
+
+/// moment_rel: +: или +10m: (`+` — безымянный литерал, пары не даёт).
+fn build_moment_rel(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_rel);
+    let mut inner = pair.into_inner();
+    let offset = inner.next().map(build_duration);
+    debug_assert!(inner.next().is_none(), "moment_rel: лишний хвост");
+    Ok(MomentExpr::Relative { offset })
+}
+
+/// moment_abs: 0h:, 8h30m:, -0m:
+fn build_moment_abs(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_abs);
     let span = pair.as_span();
     let mut inner = pair.into_inner();
-    let mut first = inner.next().expect("routine_stmt: условие или смещение");
-    let mut condition = None;
-    if first.as_rule() == Rule::condition_block {
-        let cond = first.into_inner().next().expect("condition_block: условие");
-        condition = Some(build_cond(cond));
-        first = inner.next().expect("routine_stmt: смещение или метка");
-    }
-    debug_assert_eq!(first.as_rule(), Rule::routine_offset);
-    let mut off = first.into_inner();
-    let head = off.next().expect("routine_offset: смещение или метка");
-    let (negative, offset) = if head.as_rule() == Rule::neg_sign {
-        let dur = off.next().expect("routine_stmt: длительность после минуса");
-        if head.as_span().end() != dur.as_span().start() {
+    let first = inner.next().expect("moment_abs: minus или duration");
+    let (negative, dur_pair) = if first.as_rule() == Rule::neg_sign {
+        let dur = inner.next().expect("moment_abs: duration after minus");
+        if first.as_span().end() != dur.as_span().start() {
             return Err(pest::error::Error::new_from_span(
                 pest::error::ErrorVariant::CustomError {
                     message: "minus in offset must be glued to duration ('-10m')".to_owned(),
@@ -530,22 +642,26 @@ fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Erro
                 span,
             ));
         }
-        (true, RoutineOffset::Duration(build_duration(dur)))
-    } else if head.as_rule() == Rule::duration {
-        (false, RoutineOffset::Duration(build_duration(head)))
+        (true, dur)
     } else {
-        debug_assert_eq!(head.as_rule(), Rule::label);
-        (false, RoutineOffset::Label(head.as_str().to_owned()))
+        (false, first)
     };
-    let body = inner.next().expect("routine_stmt: тело");
-    let (repeat, invocation) = build_row_body(body)?;
-    Ok(RoutineStmt {
-        offset,
-        negative,
-        repeat,
-        condition,
-        invocation,
-    })
+    let duration = build_duration(dur_pair);
+    Ok(MomentExpr::Absolute { negative, duration })
+}
+
+/// launch_label: as LABEL
+fn build_launch_label(pair: Pair<Rule>) -> LaunchLabel {
+    debug_assert_eq!(pair.as_rule(), Rule::launch_label);
+    let mut inner = pair.into_inner();
+    let kw = inner.next().expect("launch_label: as");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_as);
+    let label = inner
+        .next()
+        .expect("launch_label: label")
+        .as_str()
+        .to_owned();
+    LaunchLabel(label)
 }
 
 /// Общее для `stmt` и `routine_stmt`: опциональный модификатор повторов и вызов.
@@ -1224,8 +1340,10 @@ pub struct Routine {
     pub stmts: Vec<RoutineStmt>,
 }
 
-/// Одна строка routine: `[условие] (<смещение> | <метка>): [<повтор>] <вызов>;`.
-/// Метка разрешается в смещение таблицы в момент вызова.
+/// Одна строка routine: `[условие] (<смещение> | <метка> | <момент>): [<повтор>] <вызов>;`.
+/// Смещение может быть длительностью, меткой слота таблицы, или выражением момента
+/// (абсолютное/относительное). Зависимости (after/at/until) и функции (start/end/max/min)
+/// в routine не используются — только в циклах и root_cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutineStmt {
     pub offset: RoutineOffset,
@@ -1239,6 +1357,8 @@ pub struct RoutineStmt {
 pub enum RoutineOffset {
     Duration(Duration),
     Label(String),
+    /// Выражение момента (absolute/relative) — для единообразия с циклами.
+    Moment(MomentExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1249,14 +1369,14 @@ pub struct RootCycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// Одна строка цикла: `[условие] [минус] <смещение>: [<повтор>] <вызов>;`.
+/// Одна строка цикла/root_cycle: `[условие] момент: [<повтор>] <вызов> [as метка];`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
-    pub offset: Duration,
-    pub negative: bool,
+    pub moment: MomentExpr,
     pub repeat: Repeat,
     pub condition: Option<Cond>,
     pub invocation: Invocation,
+    pub launch_label: Option<LaunchLabel>,
 }
 
 /// Условие строки: логика над сравнениями и C-выражения (ненулевое — истина).
@@ -1366,12 +1486,39 @@ pub enum BitOp {
 }
 
 impl Stmt {
-    /// Сырой текст смещения для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds): с минусом (`'-2h'`) или без.
-    pub fn offset_raw(&self) -> String {
-        if self.negative {
-            format!("-{}", self.offset.raw)
-        } else {
-            self.offset.raw.clone()
+    /// Сырой текст момента для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds).
+    pub fn moment_raw(&self) -> String {
+        match &self.moment {
+            MomentExpr::Absolute { negative, duration } => {
+                if *negative {
+                    format!("-{}", duration.raw)
+                } else {
+                    duration.raw.clone()
+                }
+            }
+            MomentExpr::Relative { offset } => match offset {
+                Some(d) => format!("+{}", d.raw),
+                None => "+".to_string(),
+            },
+            MomentExpr::Dependency { kind, label } => {
+                let kw = match kind {
+                    DepKind::After => "after",
+                    DepKind::At => "at",
+                    DepKind::Until => "until",
+                };
+                format!("{} {}", kw, label)
+            }
+            MomentExpr::Func { name, args } => {
+                let args_str: Vec<String> = args
+                    .iter()
+                    .map(|a| match a {
+                        MomentArg::Expr(e) => format!("{:?}", e), // placeholder
+                        MomentArg::Duration(d) => d.raw.clone(),
+                        MomentArg::Label(l) => l.clone(),
+                    })
+                    .collect();
+                format!("{}({})", name, args_str.join(", "))
+            }
         }
     }
 }
@@ -1439,6 +1586,52 @@ pub enum Invocation {
         name: String,
         args: Vec<Expr>,
     },
+}
+
+/// Метка запуска (launch label): `as LABEL` — имя конкретного запуска цикла.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchLabel(pub String);
+
+/// Вид зависимости от метки (issue 45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepKind {
+    After,
+    At,
+    Until,
+}
+
+/// Аргумент функции момента: moment_expr, duration или голая метка
+/// (`start(W1)` — Label, `max(8h, end(W1))` — Absolute/Func).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MomentArg {
+    Expr(Box<MomentExpr>),
+    Duration(Duration),
+    Label(String),
+}
+
+/// Выражение момента (единая ось момента — issue 45).
+/// На строке допускается ровно один источник момента.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MomentExpr {
+    /// Абсолютный timestamp от старта родителя: `0h:`, `8h30m:`, `-0m:`
+    Absolute { negative: bool, duration: Duration },
+    /// Относительный момент от курсора: `+:` или `+10m:`
+    Relative { offset: Option<Duration> },
+    /// Зависимость от метки: `after W1:`, `at W1:`, `until W1:`
+    Dependency { kind: DepKind, label: String },
+    /// Функция момента: `start(W1)`, `end(W1)`, `max(8h, end(W1))`, `min(...)`
+    Func { name: String, args: Vec<MomentArg> },
+}
+
+impl MomentExpr {
+    /// Получить компоненты длительности для абсолютного момента.
+    /// Для не-абсолютных моментов возвращает пустой вектор.
+    pub fn absolute_duration_items(&self) -> Vec<DurationItem> {
+        match self {
+            MomentExpr::Absolute { duration, .. } => duration.items.clone(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Длительность сырым списком компонентов (`1h20m` → `[1h, 20m]`).
@@ -2194,6 +2387,12 @@ mod tests {
             include_str!("../../../../examples/invalid/bad_division-by-zero.cyclo"),
             include_str!("../../../../examples/invalid/bad_duplicate-attribute.cyclo"),
             include_str!("../../../../examples/invalid/bad_reserved-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-label.cyclo"),
+            include_str!("../../../../examples/invalid/bad_forward-label-reference.cyclo"),
+            include_str!("../../../../examples/invalid/bad_label-not-cycle-call.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-moment-function.cyclo"),
+            include_str!("../../../../examples/invalid/bad_gaps-dynamic-moment.cyclo"),
+            include_str!("../../../../examples/invalid/bad_reverse-dynamic-moment.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
@@ -2213,8 +2412,10 @@ mod tests {
                 .collect(),
         };
         let point_call = |offset: Duration, point: &str, action: &str| Stmt {
-            offset,
-            negative: false,
+            moment: MomentExpr::Absolute {
+                negative: false,
+                duration: offset,
+            },
             repeat: Repeat::Once,
             condition: None,
             invocation: Invocation::PointAction {
@@ -2222,6 +2423,7 @@ mod tests {
                 action: action.to_owned(),
                 block: None,
             },
+            launch_label: None,
         };
         Schedule {
             name: "Автобусный парк".to_owned(),
@@ -2264,8 +2466,10 @@ mod tests {
                             "depart",
                         ),
                         Stmt {
-                            offset: dur("0m", vec![("0", DurationUnit::Minute)]),
-                            negative: true,
+                            moment: MomentExpr::Absolute {
+                                negative: true,
+                                duration: dur("0m", vec![("0", DurationUnit::Minute)]),
+                            },
                             repeat: Repeat::Once,
                             condition: None,
                             invocation: Invocation::PointAction {
@@ -2273,6 +2477,7 @@ mod tests {
                                 action: "arrive".to_owned(),
                                 block: None,
                             },
+                            launch_label: None,
                         },
                     ],
                     reverse_from: None,
@@ -2301,18 +2506,23 @@ mod tests {
                 duration: dur("24h", vec![("24", DurationUnit::Hour)]),
                 stmts: vec![
                     Stmt {
-                        offset: dur("6h", vec![("6", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("6h", vec![("6", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: None,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("10h", vec![("10", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("10h", vec![("10", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Times("2".to_owned()),
                         condition: Some(Cond::And(vec![
                             Cond::Cmp {
@@ -2335,10 +2545,13 @@ mod tests {
                             name: "SHUTTLE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("14h", vec![("14", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("14h", vec![("14", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Fill {
                             until: Some(Until {
                                 negative: false,
@@ -2353,10 +2566,13 @@ mod tests {
                             name: "SHUTTLE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("18h", vec![("18", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("18h", vec![("18", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: Some(Cond::And(vec![
                             Cond::Pred {
@@ -2372,10 +2588,13 @@ mod tests {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("12h", vec![("12", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("12h", vec![("12", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: Some(Cond::Pred {
                             name: "weekend".to_owned(),
@@ -2385,6 +2604,7 @@ mod tests {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                 ],
             },
@@ -2401,13 +2621,25 @@ mod tests {
         let flags: Vec<bool> = s.schedule.cycles[0]
             .stmts
             .iter()
-            .map(|st| st.negative)
+            .map(|st| match &st.moment {
+                MomentExpr::Absolute { negative, .. } => *negative,
+                _ => panic!("expected Absolute moment"),
+            })
             .collect();
         assert_eq!(flags, vec![false, true, true, true]);
-        assert_eq!(s.schedule.cycles[0].stmts[1].offset.raw, "10m");
-        assert_eq!(s.schedule.cycles[0].stmts[1].offset_raw(), "-10m");
-        assert_eq!(s.schedule.cycles[0].stmts[0].offset_raw(), "0m");
-        assert!(s.schedule.root.stmts[0].negative);
+        assert_eq!(
+            match &s.schedule.cycles[0].stmts[1].moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            },
+            "10m"
+        );
+        assert_eq!(s.schedule.cycles[0].stmts[1].moment_raw(), "-10m");
+        assert_eq!(s.schedule.cycles[0].stmts[0].moment_raw(), "0m");
+        match &s.schedule.root.stmts[0].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(*negative),
+            _ => panic!("expected Absolute moment"),
+        }
     }
 
     #[test]
@@ -3084,7 +3316,10 @@ mod tests {
         assert_eq!(s.points.len(), 2);
         assert_eq!(s.cycles.len(), 2);
         assert_eq!(s.cycles[0].stmts.len(), 4);
-        assert!(s.cycles[0].stmts[3].negative);
+        match &s.cycles[0].stmts[3].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(*negative),
+            _ => panic!("expected Absolute moment"),
+        }
         assert_eq!(s.cycles[1].stmts.len(), 2);
         assert_eq!(s.root.stmts.len(), 5);
     }
@@ -3151,7 +3386,7 @@ mod tests {
         assert!(s.routines[0].stmts[0].condition.is_some());
         assert!(matches!(
             s.routines[0].stmts[1].offset,
-            RoutineOffset::Duration(ref d) if d.raw == "45m"
+            RoutineOffset::Moment(MomentExpr::Absolute { negative: false, duration: ref d }) if d.raw == "45m"
         ));
         assert!(s.routines[1].stmts.is_empty());
         assert!(matches!(
@@ -3169,7 +3404,97 @@ mod tests {
         let s = parse(src).expect("строка обязана разбираться").schedule;
         assert!(matches!(
             s.routines[0].stmts[0].offset,
-            RoutineOffset::Duration(ref d) if d.raw == "1ms"
+            RoutineOffset::Moment(MomentExpr::Absolute { negative: false, duration: ref d }) if d.raw == "1ms"
         ));
+    }
+
+    #[test]
+    fn parses_launch_labels_and_dependencies() {
+        // `as` — метка запуска; `after/at/until` — зависимости; `+` — курсор.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle W duration = 2h { 0m: A.x(); } \
+            cycle P duration = 8h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: W() as W1; after W1: P(); at W1: P(); +10m: P(); +: P(); } }";
+        let s = parse(src)
+            .expect("метки и зависимости обязаны разбираться")
+            .schedule;
+        assert_eq!(s.root.stmts.len(), 5);
+        assert_eq!(
+            s.root.stmts[0].launch_label,
+            Some(LaunchLabel("W1".to_owned()))
+        );
+        assert!(matches!(
+            s.root.stmts[1].moment,
+            MomentExpr::Dependency {
+                kind: DepKind::After,
+                ref label
+            } if label == "W1"
+        ));
+        assert!(matches!(
+            s.root.stmts[2].moment,
+            MomentExpr::Dependency {
+                kind: DepKind::At,
+                ref label
+            } if label == "W1"
+        ));
+        assert!(matches!(
+            s.root.stmts[3].moment,
+            MomentExpr::Relative { ref offset } if offset.as_ref().is_some_and(|d| d.raw == "10m")
+        ));
+        assert!(matches!(
+            s.root.stmts[4].moment,
+            MomentExpr::Relative { offset: None }
+        ));
+    }
+
+    #[test]
+    fn parses_moment_functions_with_bare_labels() {
+        // `start(W1)`/`end(W1)` — голая метка; `max(8h, end(W1))` — смесь.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: P() as W1; max(8h, end(W1)): P(); min(start(W1), 10h): P(); } }";
+        let s = parse(src)
+            .expect("функции момента обязаны разбираться")
+            .schedule;
+        assert_eq!(s.root.stmts.len(), 3);
+        match &s.root.stmts[1].moment {
+            MomentExpr::Func { name, args } => {
+                assert_eq!(name, "max");
+                assert_eq!(args.len(), 2);
+                assert!(
+                    matches!(&args[0], MomentArg::Expr(e) if matches!(**e, MomentExpr::Absolute { .. }))
+                );
+                match &args[1] {
+                    MomentArg::Expr(e) => match &**e {
+                        MomentExpr::Func { name, args } => {
+                            assert_eq!(name, "end");
+                            assert_eq!(args, &vec![MomentArg::Label("W1".to_owned())]);
+                        }
+                        m => panic!("ожидался end(W1), получено {m:?}"),
+                    },
+                    a => panic!("ожидался Expr, получено {a:?}"),
+                }
+            }
+            m => panic!("ожидался max(..), получено {m:?}"),
+        }
+        match &s.root.stmts[2].moment {
+            MomentExpr::Func { name, args } => {
+                assert_eq!(name, "min");
+                assert_eq!(args.len(), 2);
+                match &args[0] {
+                    MomentArg::Expr(e) => match &**e {
+                        MomentExpr::Func { name, args } => {
+                            assert_eq!(name, "start");
+                            assert_eq!(args, &vec![MomentArg::Label("W1".to_owned())]);
+                        }
+                        m => panic!("ожидался start(W1), получено {m:?}"),
+                    },
+                    a => panic!("ожидался Expr, получено {a:?}"),
+                }
+            }
+            m => panic!("ожидался min(..), получено {m:?}"),
+        }
     }
 }
