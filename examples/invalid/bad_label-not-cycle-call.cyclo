@@ -1,0 +1,12 @@
+schedule "label-not-cycle-call" {
+  point A {
+    actions = [x];
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    0m: A.x() as W1;
+  }
+}

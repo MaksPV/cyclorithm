@@ -2387,6 +2387,12 @@ mod tests {
             include_str!("../../../../examples/invalid/bad_division-by-zero.cyclo"),
             include_str!("../../../../examples/invalid/bad_duplicate-attribute.cyclo"),
             include_str!("../../../../examples/invalid/bad_reserved-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-label.cyclo"),
+            include_str!("../../../../examples/invalid/bad_forward-label-reference.cyclo"),
+            include_str!("../../../../examples/invalid/bad_label-not-cycle-call.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-moment-function.cyclo"),
+            include_str!("../../../../examples/invalid/bad_gaps-dynamic-moment.cyclo"),
+            include_str!("../../../../examples/invalid/bad_reverse-dynamic-moment.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
