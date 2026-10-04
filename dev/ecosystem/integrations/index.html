@@ -994,6 +994,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cyclo-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cyclo-agent
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1185,6 +1196,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cyclo-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cyclo-agent
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1211,6 +1233,20 @@
 в браузере, фасад — <code>run_schedule(src, start, end, libs)</code>, интерфейс —
 таймлайн и таблица. Ошибки валидации позиций не несут — визуально
 подсвечивается только синтаксис.</p>
+<h2 id="cyclo-agent">cyclo-agent<a class="headerlink" href="#cyclo-agent" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/MaksPV/cyclo-agent">Демон и панель управления</a>: исполняет
+команды из <code>.cyclo</code>-файла (проверки, бэкапы, скрипты), ведёт историю запусков
+в SQLite, показывает графики, редактирует расписание через веб-морду. Один
+статический бинарь без докера — для серверов, роутеров и одноплатников
+(есть сборки под <code>x86_64</code>/<code>aarch64</code>/<code>armv7</code> и Android/Termux, см. релизы).</p>
+<p>Связка с языком: исполняется один файл расписания, остальные <code>.cyclo</code> рядом —
+модули для <code>use</code>. Задача — это JSON в строке <code>fire</code>, он становится
+<code>action_attrs</code> события:</p>
+<div class="highlight"><pre><span></span><code><span class="m">0m</span><span class="p">:</span> <span class="n">JOB</span><span class="p">.</span><span class="nf">fire</span><span class="p">()</span> <span class="p">{</span><span class="s">"cmd"</span><span class="p">:</span> <span class="s">"/bin/echo"</span><span class="p">,</span> <span class="s">"args"</span><span class="p">:</span> <span class="p">[</span><span class="s">"backup"</span><span class="p">],</span> <span class="s">"tags"</span><span class="p">:</span> <span class="p">[</span><span class="s">"backup"</span><span class="p">],</span> <span class="s">"timeout_s"</span><span class="p">:</span> <span class="m">1800</span><span class="p">};</span>
+</code></pre></div>
+<p>Виды задач — циклами-обёртками по видам (<code>exec</code>: <code>cmd</code>/<code>args</code>, <code>http</code>:
+<code>check</code>/<code>url</code>/<code>expect</code>, <code>tcp</code>: <code>check</code>/<code>host</code>/<code>port</code>; общие поля — <code>tags</code>,
+<code>timeout_s</code>). Подробности — в README агента.</p>
 
 
 
