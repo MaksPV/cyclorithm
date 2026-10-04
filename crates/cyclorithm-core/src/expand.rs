@@ -13,7 +13,9 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{DepKind, Expr, Invocation, MomentArg, MomentExpr, Routine, Schedule};
+use crate::parser::{
+    Cond, CondRhs, DepKind, Expr, Invocation, MomentArg, MomentExpr, Routine, Schedule,
+};
 
 use crate::Error;
 use crate::cond::{
@@ -189,7 +191,10 @@ impl Candidate {
 }
 
 /// Словарь `here`: стек вызовов, все кандидаты и геттеры по флагу.
-/// Снимок «на данный момент» — строится заново на каждую строку;
+/// Снимок «на данный момент» — строится лениво, только если условие/блок
+/// ссылаются на `here` (см. `cond_uses_here`/`expr_uses_here`): построение —
+/// O(events) глубоких клонов, на каждое повторение без ссылки оно давало
+/// квадратику (repeat 2880 — секунды).
 /// в `action_attrs` замораживается копированием (вложенный `here` мёртв,
 /// живых ссылок нет). Отсутствующие `point`/`cycle`/`action`/`label` —
 /// без ключа (`Value` без null): доступ к ним — `unknown-field`.
@@ -214,6 +219,47 @@ fn here_value(stack: &[StackFrame], events: &[Candidate]) -> Value {
         ("enabled_events".to_owned(), Value::Array(enabled)),
         ("disabled_events".to_owned(), Value::Array(disabled)),
     ])
+}
+
+/// Есть ли отсылка к `here` в условии: предикат ленивого `here_value`.
+/// `here` зарезервировано (reserved-name) — объявить так ничего нельзя,
+/// любое вхождение имени и есть here-value. Имена предикатов/вызовов
+/// считаем консервативно (ложное срабатывание — лишь лишний снимок).
+fn cond_uses_here(c: &Cond) -> bool {
+    match c {
+        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(cond_uses_here),
+        Cond::Not(c) => cond_uses_here(c),
+        Cond::Pred { name, args } => name == "here" || args.iter().any(expr_uses_here),
+        Cond::Cmp { left, right, .. } => {
+            expr_uses_here(left)
+                || match right {
+                    CondRhs::One(e) => expr_uses_here(e),
+                    CondRhs::Alt(es) => es.iter().any(expr_uses_here),
+                }
+        }
+        Cond::Truthy(e) => expr_uses_here(e),
+    }
+}
+
+/// Есть ли отсылка к `here` в выражении блока/аргумента (см. `cond_uses_here`).
+/// Ключ `.поле` — не идентификатор (`x.here` — не ссылка), строки — литералы.
+fn expr_uses_here(e: &Expr) -> bool {
+    match e {
+        Expr::Name(n) | Expr::Call { name: n, .. } if n == "here" => true,
+        Expr::Name(_) | Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::At => {
+            false
+        }
+        Expr::Map(pairs) => pairs.iter().any(|(_, v)| expr_uses_here(v)),
+        Expr::Array(xs) | Expr::Concat(xs) => xs.iter().any(expr_uses_here),
+        Expr::Call { args, .. } => args.iter().any(expr_uses_here),
+        Expr::Field { base, .. } => expr_uses_here(base),
+        Expr::Index { base, index } => expr_uses_here(base) || expr_uses_here(index),
+        Expr::Neg(x) => expr_uses_here(x),
+        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
+            expr_uses_here(left) || expr_uses_here(right)
+        }
+        Expr::Truth(c) => cond_uses_here(c),
+    }
 }
 
 /// Дескриптор таблицы для `TC`: `{duration, labels}` (метки — в мс).
@@ -942,8 +988,11 @@ fn unfold_stmt(
     for &start in starts {
         let abs = i64::try_from(base + start as i128).unwrap_or(i64::MAX);
         let at = AtFrame::new(abs, zone_ms);
+        // Снимок `here` — O(events): строим только если условие на него ссылается.
         let mut cond_env = env.clone();
-        cond_env.insert("here".to_owned(), here_value(stack, events));
+        if stmt.condition.as_ref().is_some_and(cond_uses_here) {
+            cond_env.insert("here".to_owned(), here_value(stack, events));
+        }
         let enabled = match &stmt.condition {
             Some(cond) => eval_cond_with_env(cond, &at, ctx.defs, &cond_env)?,
             None => true,
@@ -1043,7 +1092,9 @@ fn unfold_stmt_dynamic(
         let abs = base + start_offset as i128;
         let at = AtFrame::new(clamp_i64(abs), zone_ms);
         let mut cond_env = env.clone();
-        cond_env.insert("here".to_owned(), here_value(stack, events));
+        if stmt.condition.as_ref().is_some_and(cond_uses_here) {
+            cond_env.insert("here".to_owned(), here_value(stack, events));
+        }
         let enabled = match &stmt.condition {
             Some(cond) => eval_cond_with_env(cond, &at, ctx.defs, &cond_env)?,
             None => true,
@@ -1221,8 +1272,11 @@ fn unfold(
             // Блок — либо литерал (значения-выражения), либо ссылка на
             // константу-мапу: оба вычислимы одним `eval_expr`. `here` в блоке —
             // заморозка момента (включая собственный кандидат): дальше не живой.
+            // Снимок — O(events): строим только если блок на `here` ссылается.
             let mut block_env = env.clone();
-            block_env.insert("here".to_owned(), here_value(stack, events));
+            if block.as_ref().is_some_and(expr_uses_here) {
+                block_env.insert("here".to_owned(), here_value(stack, events));
+            }
             let action_attrs = match block {
                 None => Vec::new(),
                 Some(b) => match eval_expr_with_env(b, &at, ctx.defs, &block_env)? {
