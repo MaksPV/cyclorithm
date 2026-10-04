@@ -30,7 +30,7 @@ $ cyclo run route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00
 | [CLI](reference/cli.md) | Команды `run` / `next` / `check`, коды 0/1/2 |
 | [Стандартная библиотека](reference/stdlib.md) | Календарь, `day_of_week`, `rand` |
 | [Рецепты](cookbook/index.md) | Готовые фрагменты на типовые задачи |
-| [Интеграции](ecosystem/integrations.md) | HTTP-сервер, ICS, WASM-плейграунд |
+| [Интеграции](ecosystem/integrations.md) | Демон cyclo-agent, HTTP-сервер, ICS, WASM-плейграунд |
 | [Python-биндинги](ecosystem/python.md) | `check`/`run` из Python, класс `Schedule` |
 | [C++-библиотека](ecosystem/cpp.md) | C ABI, класс `cyclo::Schedule` |
 | [Глоссарий](glossary.md) | Один термин — одно значение |
