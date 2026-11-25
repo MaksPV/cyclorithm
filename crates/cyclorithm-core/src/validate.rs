@@ -226,11 +226,12 @@ fn validate_moment_scope(stmts: &[Stmt]) -> Result<(), Error> {
         .filter_map(|st| st.launch_label.as_ref().map(|l| l.0.as_str()))
         .collect();
     let mut seen: HashSet<&str> = HashSet::new();
+    let mut seen_gap_fill = false;
     for st in stmts {
         // Метка: reserved, дубли, только на вызовах циклов.
         if let Some(label) = &st.launch_label {
             check_reserved(&label.0)?;
-            if !seen.insert(label.0.as_str()) {
+            if seen.contains(label.0.as_str()) {
                 return Err(Error::duplicate("label", &label.0));
             }
             if matches!(st.invocation, Invocation::PointAction { .. }) {
@@ -238,12 +239,14 @@ fn validate_moment_scope(stmts: &[Stmt]) -> Result<(), Error> {
             }
         }
         validate_moment_expr(&st.moment, &seen, &all)?;
-        // `fill gaps` с динамическим моментом — gaps-dynamic-moment
-        // (упаковка требует статических границ).
-        if matches!(st.repeat, Repeat::FillGaps { .. })
-            && !matches!(st.moment, MomentExpr::Absolute { .. })
-        {
-            return Err(Error::gaps_dynamic_moment(&st.moment_raw()));
+        let dynamic = !matches!(st.moment, MomentExpr::Absolute { .. });
+        if matches!(st.repeat, Repeat::FillGaps { .. }) {
+            if dynamic {
+                return Err(Error::gaps_dynamic_moment(&st.moment_raw()));
+            }
+            seen_gap_fill = true;
+        } else if dynamic && seen_gap_fill {
+            return Err(Error::dynamic_moment_after_gaps(&st.moment_raw()));
         }
         // Метка становится видимой только после своей строки (ссылки назад).
         if let Some(label) = &st.launch_label {
@@ -809,6 +812,31 @@ pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i6
     .0)
 }
 
+/// Литералы в динамическом моменте проверяются даже при пропуске запуска.
+fn validate_moment_durations(moment: &MomentExpr) -> Result<(), Error> {
+    match moment {
+        MomentExpr::Absolute { duration, .. }
+        | MomentExpr::Relative {
+            offset: Some(duration),
+        } => {
+            duration_ms(duration)?;
+        }
+        MomentExpr::Func { args, .. } => {
+            for arg in args {
+                match arg {
+                    MomentArg::Duration(duration) => {
+                        duration_ms(duration)?;
+                    }
+                    MomentArg::Expr(expr) => validate_moment_durations(expr)?,
+                    MomentArg::Label(_) => {}
+                }
+            }
+        }
+        MomentExpr::Relative { offset: None } | MomentExpr::Dependency { .. } => {}
+    }
+    Ok(())
+}
+
 /// Размещение экземпляров строки: старты относительно базы родителя
 /// и конец самого позднего экземпляра (`None` — строка ничего не заняла).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -854,6 +882,8 @@ fn stmts_end(
 /// 1. обычные строки — валидация (`chain`) и занятые интервалы;
 /// 2. `fill gaps` — упаковка в свободные отрезки окна `[offset, until|limit)`,
 ///    каждый filler видит занятость обычных строк и предыдущих filler-ов.
+///
+/// При динамических моментах упаковка откладывается до развёртки.
 pub fn plan_stmts(
     stmts: &[Stmt],
     limit: i64,
@@ -873,14 +903,51 @@ pub(crate) fn plan_stmts_with(
     tables: &NameTables<'_>,
     occupied: &mut Vec<(i64, i64)>,
 ) -> Result<Vec<Placement>, Error> {
+    let StmtPlan {
+        mut placements,
+        gap_fills,
+    } = plan_ordinary_stmts(stmts, limit, limit_raw, tables, occupied)?;
+    // При динамике точная занятость станет известна только при развёртке.
+    if stmts
+        .iter()
+        .all(|st| matches!(st.moment, MomentExpr::Absolute { .. }))
+    {
+        for (index, fill) in gap_fills {
+            placements[index] = fill.place(occupied);
+        }
+    }
+    Ok(placements)
+}
+
+pub(crate) struct StmtPlan {
+    pub placements: Vec<Placement>,
+    pub gap_fills: Vec<(usize, GapFill)>,
+}
+
+pub(crate) struct GapFill {
+    from: i64,
+    to: i64,
+    step: i64,
+    pack: Pack,
+}
+
+/// Статическая часть плана: абсолютные обычные строки и окна добивки.
+pub(crate) fn plan_ordinary_stmts(
+    stmts: &[Stmt],
+    limit: i64,
+    limit_raw: &str,
+    tables: &NameTables<'_>,
+    occupied: &mut Vec<(i64, i64)>,
+) -> Result<StmtPlan, Error> {
     let mut plans: Vec<Placement> = Vec::with_capacity(stmts.len());
-    // (индекс строки, начало окна, горизонт, шаг filler-а, упаковка) — второй проход.
-    let mut fillers: Vec<(usize, i64, i64, i64, Pack)> = Vec::new();
+    let mut gap_fills = Vec::new();
     for (i, st) in stmts.iter().enumerate() {
         // Динамические моменты (issue 45) статически не планируются:
         // их старты разрешаются в развёртке (курсор/метки), границы —
         // в рантайме. Здесь — пустое размещение, занятость не трогаем.
         if !matches!(st.moment, MomentExpr::Absolute { .. }) {
+            validate_moment_durations(&st.moment)?;
+            chain(st, 0, limit, limit_raw, tables)?;
             plans.push(Placement {
                 starts: Vec::new(),
                 end: None,
@@ -904,7 +971,15 @@ pub(crate) fn plan_stmts_with(
                     starts: Vec::new(),
                     end: None,
                 });
-                fillers.push((i, offset, horizon, step, *pack));
+                gap_fills.push((
+                    i,
+                    GapFill {
+                        from: offset,
+                        to: horizon,
+                        step,
+                        pack: *pack,
+                    },
+                ));
             }
             _ => {
                 let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
@@ -940,36 +1015,35 @@ pub(crate) fn plan_stmts_with(
             }
         }
     }
-    for (i, from, to, step, pack) in fillers {
+    Ok(StmtPlan {
+        placements: plans,
+        gap_fills,
+    })
+}
+
+impl GapFill {
+    pub(crate) fn place(&self, occupied: &mut Vec<(i64, i64)>) -> Placement {
         let mut starts = Vec::new();
-        for (a, b) in free_segments(occupied, from, to) {
+        let step = self.step;
+        for (a, b) in free_segments(occupied, self.from, self.to) {
             let n = (b - a) / step;
             if n <= 0 {
                 continue;
             }
-            // Старт блока в отрезке зависит от упаковки:
-            // left — встык слева, right — встык справа,
-            // center — по центру с округлением сдвига вниз.
-            let base = match pack {
+            let remainder = (b - a) - n * step;
+            let base = match self.pack {
                 Pack::Left => a,
-                Pack::Right => b - n * step,
-                Pack::Center => a + ((b - a) - n * step) / 2,
+                Pack::Right => a + remainder,
+                Pack::Center => a + remainder / 2,
             };
             for j in 0..n {
                 starts.push(base + j * step);
             }
             occupied.push((base, base + n * step));
         }
-        // Старты отрезков идут слева направо, но внутри `starts` порядок
-        // объявления отрезков уже соблюдён; для `right`/`center` внутри
-        // отрезка старты тоже возрастают — сортировка не нужна.
-        // Однако несколько отрезков могут дать неупорядоченность, если
-        // предыдущий filler занял кусок позже? Нет: `free_segments` возвращает
-        // отрезки слева направо, `starts` дописывается в том же порядке.
         let end = starts.last().map(|s| s + step);
-        plans[i] = Placement { starts, end };
+        Placement { starts, end }
     }
-    Ok(plans)
 }
 
 /// Шаг filler-а `fill gaps`: цикл (или рутина) ненулевой длительности.
@@ -1033,7 +1107,7 @@ fn fill_horizon(until: &Option<Until>, limit: i64, limit_raw: &str) -> Result<i6
 
 /// Параметры цепочки строки: число экземпляров и шаг стыковки.
 /// `Once` — `(1, длина вызова)`; дальше всё считается одинаково.
-fn chain(
+pub(crate) fn chain(
     st: &Stmt,
     offset: i64,
     limit: i64,
@@ -1071,7 +1145,7 @@ fn chain(
             };
             Ok((n, step))
         }
-        Repeat::FillGaps { .. } => unreachable!("fill gaps разбирается в plan_stmts"),
+        Repeat::FillGaps { .. } => Err(Error::gaps_dynamic_moment(&st.moment_raw())),
     }
 }
 
@@ -1119,7 +1193,7 @@ fn saturating_add_mul(offset: i64, n: u64, d: i64) -> i64 {
 
 /// Ошибка cycle-overruns с виной на вызове строки: цикл — `cycle 'X' overruns ...`,
 /// действие точки — симметричное `action 'a' overruns ...`.
-fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
+pub(crate) fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
     let excess = format_duration(end - limit);
     let end_s = format_duration(end);
     let limit_s = format_duration(limit);

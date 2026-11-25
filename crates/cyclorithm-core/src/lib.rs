@@ -394,11 +394,19 @@ impl Error {
     }
 
     /// `gaps-dynamic-moment`: `fill gaps` с динамическим моментом —
-    /// упаковка в пустоты требует статических границ, перенос в развёртку невозможен.
+    /// окно добивки начинается с абсолютного смещения.
     pub fn gaps_dynamic_moment(moment_raw: &str) -> Self {
         Self::coded(
             "gaps-dynamic-moment",
             format!("fill gaps with dynamic moment '{moment_raw}' is not supported"),
+        )
+    }
+
+    /// `dynamic-moment-after-gaps`: сначала разрешается занятость обычных строк.
+    pub(crate) fn dynamic_moment_after_gaps(moment_raw: &str) -> Self {
+        Self::coded(
+            "dynamic-moment-after-gaps",
+            format!("dynamic moment '{moment_raw}' must precede fill gaps in the same cycle"),
         )
     }
 }
