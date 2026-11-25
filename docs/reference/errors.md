@@ -1,30 +1,24 @@
 # Ошибки
 
-Формат: в stderr — строка `слаг: сообщение`, stdout остаётся пустым. Слаг
-маппится на строку таблицы ниже (сообщения в таблице — без префикса).
-Коды возврата:
-`0` — успех, `1` — ошибка ввода, парсинга или валидации,
-`2` — некорректные аргументы CLI (текст usage).
+При ошибке команда пишет в стандартный поток ошибок (stderr). Для ошибок
+с кодом используется формат `код: сообщение`. В таблицах ниже сообщения
+приведены без префикса. [Коды возврата CLI](cli.md#exit-codes).
 
-Каждая ошибка ниже названа по ситуации, а не по номеру: имя стабильно,
-новые ситуации вставляются без перенумерации. Тексты сообщений дословные.
+Если программа не разбирается по грамматике, команда возвращает код
+`1` и сообщает о синтаксической ошибке без кода ошибки. Для полей заголовков
+предусмотрены отдельные сообщения. Например, отсутствие обязательного
+поля даёт `missing-argument`, повтор поля — `duplicate-argument`.
 
-Ошибки синтаксиса (файл не разбирается по грамматике) возвращают код `1`
-без имени ситуации. Поля шапок со свободным порядком проверяет сборка:
-нет обязательного поля — `missing-argument` (включая отсутствие корневого
-цикла целиком), поле дважды — `duplicate-argument` (включая второй корень).
-Импорты
-(`cannot-read-import`, `schedule-in-import`) разрешаются раньше проверок
-решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
-побеждает: имена → рекурсия → моменты → таблицы → длительности и границы →
-условия → даты. Внутри фазы проверки идут в порядке объявления.
+После разбора движок разрешает импорты, затем проверяет имена, рекурсию,
+моменты, таблицы, длительности и границы, условия и даты. Команда
+сообщает о первой обнаруженной ошибке.
 
-## Шапки
+## Заголовки
 
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
-| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'`, `missing argument 'root_cycle'` | Добавить обязательное поле шапки (`start_time`/`duration` у `root_cycle`, `actions` у `point`, сам `root_cycle`) |
-| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'`, `duplicate argument 'root_cycle'` | Оставить поле шапки один раз |
+| `missing-argument` | `missing argument 'duration'`, `missing argument 'actions'`, `missing argument 'root_cycle'` | Добавить обязательное поле заголовка (`start_time`/`duration` у `root_cycle`, `actions` у `point`, сам `root_cycle`) |
+| `duplicate-argument` | `duplicate argument 'duration'`, `duplicate argument 'timezone'`, `duplicate argument 'root_cycle'` | Оставить поле заголовка один раз |
 
 ## Имена
 
@@ -34,7 +28,7 @@
 | `action-not-allowed` | `action 'arrive' not allowed for point 'DEPOT'` | Добавить действие в `actions` точки |
 | `unknown-cycle` | `unknown cycle 'NIGHT_ROUTE'` | Объявить цикл `cycle`; проверить форму вызова `A()` или `A.b()` |
 | `duplicate` | `duplicate point 'DEPOT'`, `duplicate routine 'M'`, `duplicate table 'T'`, `duplicate slot '1st'`, `duplicate param 'a'`, `duplicate label 'W1'` | Устранить повтор имени внутри файла |
-| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, `here` — контекст инстанции, объявлять так нельзя |
+| `reserved-name` | `reserved name 'at'` | Переименовать: `at` — момент строки, `here` — контекст экземпляра, объявлять так нельзя |
 | `wrong-kind` | `point 'X' is not a cycle`, `cycle 'X' is not a point`, `point 'X' is not a routine`, `routine 'X' is not a point`, `routine 'X' is not a cycle` | Переименовать: имя занято сущностью другого рода |
 
 ## Рекурсия
@@ -47,10 +41,10 @@
 
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
-| `unknown-label` | `unknown label 'NOPE'` | Объявить метку `as` выше по scope |
+| `unknown-label` | `unknown label 'NOPE'` | Объявить метку `as` выше в теле того же цикла |
 | `forward-label-reference` | `label 'W1' used before declaration` | Ссылаться только на метки, объявленные выше |
 | `label-not-cycle-call` | `label 'W1' is not a cycle call` | Ставить `as` только на вызовы циклов, не на действия точек |
-| `invalid-moment-function` | `invalid moment function: 'start' takes a bare label` | `start`/`end` — ровно 1 голая метка; `max`/`min` — ≥1 аргумента |
+| `invalid-moment-function` | `invalid moment function: 'start' takes a bare label` | `start`/`end` — по одной метке. `max` и `min` принимают один или несколько аргументов |
 | `invalid-routine-moment` | `routine moment 'after W1' must be absolute duration or slot label` | В рутинах — только длительности и метки слотов таблицы |
 | `gaps-dynamic-moment` | `fill gaps with dynamic moment 'after W1' is not supported` | У `fill gaps` — только абсолютное смещение |
 | `dynamic-moment-after-gaps` | `dynamic moment '+' must precede fill gaps in the same cycle` | Поставить строку с динамическим моментом перед первой добивкой в этом цикле |
@@ -103,7 +97,7 @@
 | `cannot-read-import` | `cannot read import '...'` | Путь от директории файла; исключить циклические импорты |
 | `import-cycle` | `import cycle '...'` | Разорвать цикл импортов |
 | `schedule-in-import` | `schedule not allowed in import '...'` | Оставить в библиотеке только объявления |
-| `broken-prelude` | `broken prelude '...'` | Битая сборка: пересобрать из чистого репозитория (пользовательский код ни при чём) |
+| `broken-prelude` | `broken prelude '...'` | Пересобрать программу из чистой копии репозитория |
 
 ## Атрибуты
 
@@ -116,8 +110,6 @@
 | Ситуация | Сообщение | Исправление |
 |----------|-----------|-------------|
 | `invalid-datetime` | `invalid datetime '...'` | В файле — строгая форма `YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]` |
-| `invalid-timezone` | `invalid timezone '...'` | `timezone` — только `Z`/±HH:MM`; имена (`MSK`, `Europe/...`) не поддерживаются, IANA с DST — в [todo](../todo.md) |
+| `invalid-timezone` | `invalid timezone '...'` | Использовать `Z` или смещение `±HH:MM`. Поддержка имён часовых поясов описана в [планах](../todo.md#iana-and-dst) |
 
-Негативные примеры: `examples/invalid/bad_*.cyclo` — не менее одного файла
-на ситуацию. Правило проекта: новая ситуация требует пример, строку
-в таблице и тест.
+Примеры программ с ошибками находятся в `examples/invalid/`.

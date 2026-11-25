@@ -1,14 +1,15 @@
-# Python-биндинги
+# Библиотека Python
 
-Нативные биндинги ядра (PyO3, крейт `crates/cyclorithm-python`): `check`
-и `run` без subprocess. В PyPI пакета нет — установка из wheel релиза,
-разработка из исходников.
+Пакет `cyclorithm` вызывает ядро через PyO3 в том же процессе Python.
+Пакет можно установить из файла `.whl` на странице релизов или собрать
+из исходников в `crates/cyclorithm-python`.
 
 ## Установка
 
-Скачать `cyclorithm-*-abi3-*.whl` под свою платформу из
-[релизов](https://github.com/MaksPV/cyclorithm/releases) и поставить
-в свой venv (Rust не нужен, abi3 работает на любом Python ≥3.10):
+Скачайте `cyclorithm-*-abi3-*.whl` для своей платформы со
+[страницы релизов](https://github.com/MaksPV/cyclorithm/releases) и
+установите пакет в виртуальное окружение. Готовая сборка подходит для
+CPython 3.10 и новее. Для установки Rust не требуется.
 
 ```sh
 python3 -m venv .venv
@@ -18,8 +19,8 @@ python3 -m venv .venv
 
 ## Сборка для разработки
 
-Чтобы править сам биндинг. Пререквизиты: стабильный Rust (`rustup`),
-Python ≥3.10. Команды — из корня репо:
+Для разработки нужны стабильная версия Rust (`rustup`) и Python 3.10
+или новее. Выполните команды из корня репозитория:
 
 ```sh
 python3 -m venv crates/cyclorithm-python/.venv
@@ -28,7 +29,7 @@ cd crates/cyclorithm-python
 .venv/bin/maturin develop --release
 ```
 
-Проверка (`maturin develop` ставит пакет в venv редактируемо):
+Чтобы проверить установленный в виртуальное окружение пакет, выполните:
 
 ```sh
 .venv/bin/python -c "import cyclorithm; print(cyclorithm.__version__)"
@@ -41,8 +42,8 @@ cd crates/cyclorithm-python
 ```python
 import cyclorithm as c
 
-c.check_file("route.cyclo")                    # молча OK или CycloError
-c.check_text(text, base_dir="examples/valid")  # use — от base_dir (по умолчанию cwd)
+c.check_file("route.cyclo")                    # при ошибке возбуждает CycloError
+c.check_text(text, base_dir="examples/valid")  # пути use отсчитываются от base_dir
 
 window = c.run_file("route.cyclo", "2026-09-07", "+1d")
 window = c.run_text(text, "2026-09-07T00:00:00", "2026-09-08T00:00:00")
@@ -52,22 +53,30 @@ from datetime import date, datetime, timedelta
 window = c.run_file("route.cyclo", datetime(2026, 9, 7), timedelta(days=1))
 ```
 
-- Границы окна — `str` (короткие формы CLI: `2026-09-07`, `+1d`),
-  `datetime` (наивное — как есть, aware — стена + офсет `Z`/±HH:MM`;
-  зона `start` задаёт кадр наивных дат файла — см. [семантику](../reference/semantics.md)),
-  `date` (полночь) или `timedelta` (дельта:
-  для `start` — от now, для `end` — от `start`, как `+DURATION` в CLI).
-  Якорь now — в системной зоне ОС (как дефолтный `--from` в CLI).
-  Микросекунды усекаются до миллисекунд (точность движка); чужие типы
-  и отрицательный `timedelta` — `TypeError` до вызова ядра.
-- Возврат `run_*` — dict, побайтово равный JSON-объекту `cyclo run` (см. главу вывода).
-- Ошибки — `CycloError` с полями `code` (слаг главы ошибок; ошибка парсера — `syntax`)
-  и `message`; `str` — `слаг: сообщение`, как stderr CLI. Отсутствие файла — штатный `OSError`.
+Границы окна можно передать в виде строки, `datetime`, `date` или `timedelta`:
+
+- Строка использует те же форматы, что и [CLI](../reference/cli.md), например
+  `"2026-09-07"` или `"+1d"`.
+- `datetime` сохраняет местное время и, если есть, смещение от UTC.
+  Микросекунды отбрасываются после миллисекунд.
+- `date` означает полночь указанного дня.
+- `timedelta` задаёт длительность. Для `start` она отсчитывается от текущего
+  момента с системным смещением от UTC, для `end` — от `start`.
+
+Отрицательный `timedelta` и неподдерживаемые типы вызывают `TypeError`.
+Правила расчёта времени описаны в [семантике](../reference/semantics.md#time-zones).
+
+Функции `run_*` возвращают словарь с теми же данными, что и
+[JSON-вывод `cyclo run`](../reference/output.md). При ошибке программы
+библиотека возбуждает `CycloError` с полями `code` и `message`.
+Для ошибки разбора `code` равен `syntax`. Преобразование исключения в
+строку даёт `код: сообщение`. Если файл недоступен, возникает `OSError`.
 
 ## Класс Schedule
 
-ООП-обёртка поверх функций (тот же выход и те же ошибки); текст программы
-читается один раз, конструктор лёгкий и не валидирует:
+`Schedule` хранит текст программы и позволяет проверять или рассчитывать
+её несколько раз. Конструктор читает текст один раз. Для проверки
+вызовите `check()`:
 
 ```python
 sched = c.Schedule("route.cyclo")
@@ -76,4 +85,4 @@ sched.check()
 window = sched.run(datetime(2026, 9, 7), timedelta(days=1))
 ```
 
-Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.
+Класс возвращает те же данные и исключения, что функции модуля.

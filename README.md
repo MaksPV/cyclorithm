@@ -9,11 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/rust-stable-orange.svg)
 
-**DSL для циклических расписаний: процессы описываются циклами так, чтобы их читал человек, а проверял движок. На выходе — плоский список событий.**
+**Cyclorithm — язык для описания циклических расписаний. Движок проверяет расписание и возвращает список событий за выбранный период.**
 
 </div>
 
-Документация — вики: [makspv.github.io/cyclorithm](https://makspv.github.io/cyclorithm/).
+Документация доступна на [сайте проекта](https://makspv.github.io/cyclorithm/).
 
 ## Быстрый старт
 
@@ -23,9 +23,9 @@
 $ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo --start 2026-01-09T00:00:00 --end 2026-01-10T00:00:00
 ```
 
-Вывод — объект со списком событий (пятница 09.01, 18 событий). Формат,
-команды `next`/`check`, примеры и язык — в [вики](https://makspv.github.io/cyclorithm/).
-Готовые бинарники (Linux/Windows, x86-64/ARM64) — в [релизах](https://github.com/MaksPV/cyclorithm/releases).
+Команда выводит JSON-объект с 18 событиями за пятницу, 9 января 2026 года.
+Синтаксис языка, примеры и команды `next` и `check` описаны в [документации](https://makspv.github.io/cyclorithm/).
+Готовые сборки для Linux и Windows (x86-64 и ARM64) доступны на [странице релизов](https://github.com/MaksPV/cyclorithm/releases).
 
 ## Разработка
 

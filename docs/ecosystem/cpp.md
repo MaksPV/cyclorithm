@@ -1,14 +1,13 @@
 # C++-библиотека
 
-Нативный C ABI поверх ядра (крейт `crates/cyclorithm-cpp`): shared-библиотека
-`libcyclorithm` + заголовки `include/cyclorithm.h` (C API) и
-`include/cyclorithm.hpp` (класс `cyclo::Schedule`, header-only).
-В релизах — архив `cyclo-cpp-<версия>-<триплет>.tar.gz` рядом с бинарниками
-и Python-колёсами.
+Ядро доступно из C и C++ через динамическую библиотеку `libcyclorithm`.
+Интерфейс C описан в `include/cyclorithm.h`, а класс C++ `cyclo::Schedule`
+целиком определён в `include/cyclorithm.hpp`. Библиотека и заголовки
+поставляются в архиве релиза `cyclo-cpp-<версия>-<триплет>.tar.gz`.
 
 ## Сборка из исходников
 
-Нужен только стабильный Rust (`rustup`). Команды — из корня репо:
+Для сборки библиотеки нужна стабильная версия Rust (`rustup`). Выполните команду из корня репозитория:
 
 ```sh
 cargo build --release -p cyclorithm-cpp
@@ -16,18 +15,18 @@ cargo build --release -p cyclorithm-cpp
 # заголовки: crates/cyclorithm-cpp/include/
 ```
 
-Проверка:
+Чтобы собрать и запустить проверочный пример, понадобится компилятор C++:
 
 ```sh
 cd crates/cyclorithm-cpp
-g++ -std=c++17 -I include tests/smoke.cpp ../../target/debug/libcyclorithm.a -ldl -lpthread -lm -o /tmp/smoke
+g++ -std=c++17 -I include tests/smoke.cpp ../../target/release/libcyclorithm.a -ldl -lpthread -lm -o /tmp/smoke
 /tmp/smoke
 ```
 
-Линковка своей программы с shared-библиотекой:
+Чтобы связать свою программу с динамической библиотекой, выполните:
 
 ```sh
-g++ -std=c++17 -I <путь к include> prog.cpp -L <путь к lib> -lcyclorithm -o prog
+g++ -std=c++17 -I path/to/include prog.cpp -L path/to/lib -lcyclorithm -o prog
 ```
 
 ## API
@@ -41,19 +40,20 @@ std::string json =
     sched.run("2026-09-07", "+1d");     // JSON-объект как в `cyclo run`
 ```
 
-- C API (`cyclorithm.h`): `cyclo_check` / `cyclo_run` возвращают
-  `cyclo_result_t` — успех (`json != NULL`) или слаг ошибки (`code`)
-  с текстом (`message`, парсер — `syntax`); всё не-NULL освобождается
-  одним `cyclo_result_free`. Даты — короткие формы CLI (см. главу CLI).
-- Ошибки C++: `cyclo::Error : std::runtime_error` с полем `code`
-  (слаг главы ошибок); `what()` — `слаг: сообщение`, как stderr CLI.
-  Отсутствие файла — `std::runtime_error`.
-- Возврат `run` — строка JSON-объекта `cyclo run` (см. главу вывода).
+- Функции C `cyclo_check` и `cyclo_run` возвращают `cyclo_result_t`.
+  При успехе заполнено поле `json`, при ошибке — `code` и `message`.
+  Один вызов `cyclo_result_free` освобождает все заполненные поля результата.
+  Для дат используются [форматы CLI](../reference/cli.md).
+- В C++ ошибки программы вызывают исключение `cyclo::Error`, унаследованное
+  от `std::runtime_error`. Поле `code` содержит код ошибки, а `what()`
+  возвращает строку `код: сообщение`. Для ошибки разбора код равен
+  `syntax`. Если файл недоступен, возникает `std::runtime_error`.
+- Метод `run` возвращает строку с [JSON-объектом `cyclo run`](../reference/output.md).
 
 ## Разбор JSON
 
-Свой парсер библиотека не везёт: окно — обычная JSON-строка, разбирайте
-чем удобно (ниже — системный `nlohmann/json`, проверено сборкой):
+Для разбора строки с результатом используйте любую библиотеку JSON.
+В примере используется `nlohmann/json`:
 
 ```cpp
 #include <iostream>
@@ -74,7 +74,5 @@ int main() {
 ```
 
 ```sh
-g++ -std=c++17 -I <путь к include> prog.cpp -L <путь к lib> -lcyclorithm -o prog
+g++ -std=c++17 -I path/to/include prog.cpp -L path/to/lib -lcyclorithm -o prog
 ```
-
-Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.
