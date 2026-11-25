@@ -890,30 +890,18 @@ pub fn plan_stmts(
     limit_raw: &str,
     tables: &NameTables<'_>,
 ) -> Result<Vec<Placement>, Error> {
-    let mut occupied: Vec<(i64, i64)> = Vec::new();
-    plan_stmts_with(stmts, limit, limit_raw, tables, &mut occupied)
-}
-
-/// Как [`plan_stmts`], но занятость может прийти извне и продолжиться:
-/// тело и вызовы слотов рутины делят один таймлайн (как в `check_tables`).
-pub(crate) fn plan_stmts_with(
-    stmts: &[Stmt],
-    limit: i64,
-    limit_raw: &str,
-    tables: &NameTables<'_>,
-    occupied: &mut Vec<(i64, i64)>,
-) -> Result<Vec<Placement>, Error> {
+    let mut occupied = Vec::new();
     let StmtPlan {
         mut placements,
         gap_fills,
-    } = plan_ordinary_stmts(stmts, limit, limit_raw, tables, occupied)?;
+    } = plan_ordinary_stmts(stmts, limit, limit_raw, tables, &mut occupied)?;
     // При динамике точная занятость станет известна только при развёртке.
     if stmts
         .iter()
         .all(|st| matches!(st.moment, MomentExpr::Absolute { .. }))
     {
         for (index, fill) in gap_fills {
-            placements[index] = fill.place(occupied);
+            placements[index] = fill.place(&mut occupied);
         }
     }
     Ok(placements)

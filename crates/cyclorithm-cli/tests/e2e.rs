@@ -497,6 +497,65 @@ fn gap_fills_respect_dynamic_occupancy() {
 }
 
 #[test]
+fn gap_fills_reserve_routine_slot_calls() {
+    let src = r#"
+    time_const T duration = 5h {
+      reserved: 2h -> WORK();
+    }
+
+    schedule "Добивка в рутине" {
+      point P { actions = [big, small, work]; }
+      cycle BIG duration = 2h { 0h: P.big(); }
+      cycle SMALL duration = 30m { 0h: P.small(); }
+      cycle WORK duration = 1h { 0h: P.work(); }
+
+      routine DAY(TC) {
+        0h: fill gaps BIG();
+        0h: fill gaps SMALL();
+      }
+
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 5h {
+        0h: DAY(T);
+      }
+    }
+    "#;
+    let run = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", "+5h"], src);
+    let next = run_stdin(
+        &[
+            "next",
+            "-",
+            "--from",
+            "2026-01-01",
+            "--within",
+            "5h",
+            "-n",
+            "6",
+        ],
+        src,
+    );
+    let window = stdout_json(&run);
+    let events = window["events"].as_array().unwrap();
+    let got: Vec<_> = events
+        .iter()
+        .map(|event| {
+            (
+                event["time"].as_str().unwrap(),
+                event["action"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("2026-01-01T00:00:00", "big"),
+            ("2026-01-01T02:00:00", "work"),
+            ("2026-01-01T03:00:00", "big"),
+        ]
+    );
+    assert_eq!(stdout_json(&next)["events"], window["events"]);
+}
+
+#[test]
 fn check_rejects_statically_invalid_dynamic_rows() {
     for (row, diagnostic) in [
         ("after L: C() as L;", "forward-label-reference"),

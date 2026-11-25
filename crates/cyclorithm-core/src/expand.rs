@@ -24,7 +24,7 @@ use crate::cond::{
 use crate::datetime::{parse_in_frame, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
 use crate::validate::{
-    NameTables, blame, chain, instantiate, plan_ordinary_stmts, plan_stmts_with, root_actual_ms,
+    NameTables, blame, chain, instantiate, plan_ordinary_stmts, plan_stmts, root_actual_ms,
 };
 
 /// Зона кадра в мс (`file.or(query)`, минуты → мс): стена = абсолют + зона.
@@ -1273,27 +1273,18 @@ fn unfold_routine(
         }))
         .collect();
     let inst = instantiate(routine, &table_name, ctx.tables)?;
-    // Тело и вызовы слотов делят один таймлайн: занятость течёт из тела в вызовы слотов
-    // (как в `check_tables`, где списки склеиваются). Контекст `here` — свой
-    // на инстанцию: тело пишет, вызовы слотов читают итог.
-    let mut occupied: Vec<(i64, i64)> = Vec::new();
+    // План общий: добивки тела должны учитывать интервалы вызовов слотов.
+    // Выполнение остаётся раздельным, чтобы слоты видели снимок here после тела.
+    let mut stmts = inst.body;
+    let body_len = stmts.len();
+    stmts.extend(inst.slot_calls);
+    let placements = plan_stmts(&stmts, limit, &table.duration.raw, ctx.tables)?;
+    let (body, slot_calls) = stmts.split_at(body_len);
+    let (body_placements, slot_placements) = placements.split_at(body_len);
+
     let mut routine_events = Vec::new();
-    // Тела рутин — только абсолютные моменты (проверяет `validate_moments`):
-    // курсор scope здесь не нужен, меток `as` в рутинах нет по грамматике.
     let mut routine_scope = MomentScope::default();
-    let body = plan_stmts_with(
-        &inst.body,
-        limit,
-        &table.duration.raw,
-        ctx.tables,
-        &mut occupied,
-    )?;
-    for ((st, pl), lab) in inst
-        .body
-        .iter()
-        .zip(body.iter())
-        .zip(inst.body_labels.iter())
-    {
+    for ((st, pl), lab) in body.iter().zip(body_placements).zip(&inst.body_labels) {
         unfold_stmt(
             st,
             pl.starts.iter().copied(),
@@ -1310,18 +1301,10 @@ fn unfold_routine(
         )?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
-    let slot_calls = plan_stmts_with(
-        &inst.slot_calls,
-        limit,
-        &table.duration.raw,
-        ctx.tables,
-        &mut occupied,
-    )?;
-    for ((st, pl), lab) in inst
-        .slot_calls
+    for ((st, pl), lab) in slot_calls
         .iter()
-        .zip(slot_calls.iter())
-        .zip(inst.slot_labels.iter())
+        .zip(slot_placements)
+        .zip(&inst.slot_labels)
     {
         unfold_stmt(
             st,
