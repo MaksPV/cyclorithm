@@ -394,14 +394,13 @@ fn resolve_moment_func(
     match name {
         "start" | "end" => {
             let label = match args {
-                [MomentArg::Label(l)] => l,
-                _ => {
-                    return Err(Error::invalid_moment_function(&format!(
-                        "'{name}' takes a bare label"
-                    )));
-                }
-            };
-            match scope.labels.get(label.as_str()) {
+                [arg] => arg.label_name(),
+                _ => None,
+            }
+            .ok_or_else(|| {
+                Error::invalid_moment_function(&format!("'{name}' takes a bare label"))
+            })?;
+            match scope.labels.get(label) {
                 Some(lr) => Ok(Some(if name == "start" {
                     lr.start_ms
                 } else {
@@ -496,8 +495,8 @@ pub struct Event {
 }
 
 /// Развернуть один экземпляр корня (`base = T0 + k·P`): строки корня
-/// в свои события. Общий кусок `expand` и `next_events`: порядок обхода
-/// (`seq` сквозной) и ошибки строк совпадают 1:1.
+/// в свои события. При поиске ближайших событий ошибки строк учитываются
+/// по времени и порядку объявления вместе с событиями.
 #[allow(clippy::too_many_arguments)]
 fn unfold_root_instance(
     schedule: &Schedule,
@@ -510,6 +509,7 @@ fn unfold_root_instance(
     zone_ms: i64,
     out: &mut Vec<RawEvent>,
     seq: &mut usize,
+    errors: Option<&mut NextErrors>,
 ) -> Result<(), Error> {
     let root_span = Span {
         cycle: "root_cycle".to_owned(),
@@ -524,6 +524,7 @@ fn unfold_root_instance(
         point_attrs,
         out,
         seq,
+        errors,
     };
     let stack = [StackFrame {
         name: "root_cycle".to_owned(),
@@ -651,7 +652,7 @@ impl Ord for Top {
 /// ровно один раз; стоп — когда `base` превзошёл худшее удерживаемое
 /// (позже стартующие события только позже) или кап. Связки одного момента
 /// не склеиваются: `n` считает события. Порядок — как у `expand`.
-/// Пусто (нет событий, `within < 0`, `n == 0`) — пустой вектор без ошибки.
+/// Пусто (нет событий, `within <= 0`, `n == 0`) — пустой вектор без ошибки.
 /// Ленивость: ошибки строк за пределами ответа не срабатывают.
 /// `query_zone` — зона окна (`from`): кадр наивных дат файла, когда в файле
 /// нет `timezone` (см. docs/reference/semantics.md).
@@ -664,7 +665,7 @@ pub fn next_events(
     n: usize,
     query_zone: Option<i16>,
 ) -> Result<Vec<Event>, Error> {
-    if n == 0 {
+    if n == 0 || within_ms <= 0 {
         return Ok(Vec::new());
     }
     let file_zone = match &schedule.timezone {
@@ -680,14 +681,23 @@ pub fn next_events(
     let zone_ms = frame_zone_ms(file_zone, query_zone);
 
     let from = from_ms as i128;
-    let cap = from + within_ms as i128;
+    let cap = from + i128::from(within_ms);
+    let mut errors = NextErrors {
+        window: from..cap,
+        earliest: None,
+    };
     let mut k = 0.max(ceil_div(from - horizon - t0, period));
     let mut seq: usize = 0;
     let mut heap: std::collections::BinaryHeap<Top> = std::collections::BinaryHeap::new();
     let mut buf: Vec<RawEvent> = Vec::new();
     loop {
         let base = t0 + k * period;
-        if base >= cap {
+        if base >= cap
+            || errors
+                .earliest
+                .as_ref()
+                .is_some_and(|((time, _, _), _)| base > *time)
+        {
             break;
         }
         if heap.len() >= n {
@@ -708,6 +718,7 @@ pub fn next_events(
             zone_ms,
             &mut buf,
             &mut seq,
+            Some(&mut errors),
         )?;
         for ev in buf.drain(..) {
             if ev.time < from || ev.time >= cap {
@@ -729,6 +740,14 @@ pub fn next_events(
             }
         }
         k += 1;
+    }
+    if let Some((key, error)) = errors.earliest
+        && (heap.len() < n
+            || heap
+                .peek()
+                .is_some_and(|worst| key < (worst.time, worst.k, worst.seq)))
+    {
+        return Err(error);
     }
     Ok(heap
         .into_sorted_vec()
@@ -753,6 +772,9 @@ pub fn expand(
         None => None,
     };
     let t0 = parse_in_frame(&schedule.root.start_time, file_zone, query_zone)?;
+    if end_ms <= start_ms {
+        return Ok(Vec::new());
+    }
     let period = root_period_ms(&schedule.root)?;
     let horizon = root_actual_ms(schedule, tables)?;
     // Атрибуты точек — после всех проверок главы ошибок, до первой строки.
@@ -786,6 +808,7 @@ pub fn expand(
             zone_ms,
             &mut raw,
             &mut seq,
+            None,
         )?;
         k += 1;
     }
@@ -818,6 +841,11 @@ struct RawEvent {
     span: Span,
 }
 
+struct NextErrors {
+    window: std::ops::Range<i128>,
+    earliest: Option<((i128, i128, usize), Error)>,
+}
+
 /// Общее состояние обхода: таблицы, определения, атрибуты точек и аккумуляторы.
 struct Ctx<'a, 'n, 'o, 'm> {
     tables: &'a NameTables<'n>,
@@ -825,7 +853,29 @@ struct Ctx<'a, 'n, 'o, 'm> {
     point_attrs: &'m HashMap<String, Vec<(String, Value)>>,
     out: &'o mut Vec<RawEvent>,
     seq: &'o mut usize,
+    errors: Option<&'o mut NextErrors>,
 }
+
+impl Ctx<'_, '_, '_, '_> {
+    fn row_error(&mut self, time: i128, k: i128, error: Error) -> Result<(), Error> {
+        let Some(errors) = &mut self.errors else {
+            return Err(error);
+        };
+        if errors.window.contains(&time) {
+            let key = (time, k, *self.seq);
+            if errors
+                .earliest
+                .as_ref()
+                .is_none_or(|(first, _)| key < *first)
+            {
+                errors.earliest = Some((key, error));
+            }
+            *self.seq += 1;
+        }
+        Ok(())
+    }
+}
+
 /// Развёртка строки: старты экземпляров уже посчитаны `plan_stmts`
 /// (валидация прошла, счёт конечен). Порядок обхода задаёт `seq` для сортировки.
 /// `env` — динамическое окружение параметров цепочки вызовов,
@@ -851,15 +901,21 @@ fn unfold_stmt(
     scope: &mut MomentScope,
 ) -> Result<(), Error> {
     for start in starts {
-        let abs = i64::try_from(base + start as i128).unwrap_or(i64::MAX);
-        let at = AtFrame::new(abs, zone_ms);
+        let time = base + i128::from(start);
+        let at = AtFrame::new(clamp_i64(time), zone_ms);
         // Снимок `here` — O(events): строим только если условие на него ссылается.
         let mut cond_env = env.clone();
         if stmt.condition.as_ref().is_some_and(cond_uses_here) {
             cond_env.insert("here".to_owned(), here_value(stack, events));
         }
         let enabled = match &stmt.condition {
-            Some(cond) => eval_cond_with_env(cond, &at, ctx.defs, &cond_env)?,
+            Some(cond) => match eval_cond_with_env(cond, &at, ctx.defs, &cond_env) {
+                Ok(enabled) => enabled,
+                Err(error) => {
+                    ctx.row_error(time, k, error)?;
+                    false
+                }
+            },
             None => true,
         };
         if !enabled {
@@ -872,11 +928,12 @@ fn unfold_stmt(
             )?);
             continue;
         }
-        unfold(
+        let previous_events = events.len();
+        if let Err(error) = unfold(
             &stmt.invocation,
             row_label,
             start,
-            base + start as i128,
+            time,
             k,
             parent,
             ctx,
@@ -884,7 +941,18 @@ fn unfold_stmt(
             stack,
             events,
             zone_ms,
-        )?;
+        ) {
+            ctx.row_error(time, k, error)?;
+            events.truncate(previous_events);
+            events.push(disabled_candidate(
+                &stmt.invocation,
+                row_label,
+                start,
+                at,
+                ctx,
+            )?);
+            continue;
+        }
         let span = invocation_span(&stmt.invocation, ctx.tables)?;
         scope.cursor_ms = scope.cursor_ms.max(start.saturating_add(span));
         if let Some(label) = &stmt.launch_label {
@@ -932,18 +1000,22 @@ fn unfold_stmt_dynamic(
         }
     };
     if first < base || first > base + scope_limit as i128 {
-        return Err(Error::offset_out_of_bounds(&raw, limit_raw));
+        return ctx.row_error(first, k, Error::offset_out_of_bounds(&raw, limit_raw));
     }
     let first_offset = (first - base) as i64;
     let (count, step) = chain(stmt, first_offset, scope_limit, limit_raw, ctx.tables)?;
     let end = i128::from(first_offset) + i128::from(count) * i128::from(step);
     if end > i128::from(scope_limit) {
-        return Err(blame(
-            stmt,
-            &parent.cycle,
-            i64::try_from(end).unwrap_or(i64::MAX),
-            scope_limit,
-        ));
+        return ctx.row_error(
+            first,
+            k,
+            blame(
+                stmt,
+                &parent.cycle,
+                i64::try_from(end).unwrap_or(i64::MAX),
+                scope_limit,
+            ),
+        );
     }
 
     if count > 0

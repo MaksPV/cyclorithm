@@ -78,11 +78,10 @@ fn split_offset(s: &str) -> Result<(&str, Option<i16>), Error> {
         }
         return Ok((wall, Some(0)));
     }
-    if s.len() >= 6 {
-        let tail = &s[s.len() - 6..];
-        let tb = tail.as_bytes();
+    if let Some(tail_start) = s.len().checked_sub(6) {
+        let tb = &s.as_bytes()[tail_start..];
         if (tb[0] == b'+' || tb[0] == b'-') && tb[3] == b':' {
-            let wall = &s[..s.len() - 6];
+            let wall = &s[..tail_start];
             if wall.len() != 19 && wall.len() != 23 {
                 return Err(Error::invalid_datetime(s));
             }

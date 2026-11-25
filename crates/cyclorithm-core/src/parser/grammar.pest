@@ -266,10 +266,8 @@ moment_abs  = { neg_sign? ~ duration }
 // Единое выражение момента — ровно один источник на строку
 moment_expr = { moment_func | moment_dep | moment_rel | moment_abs }
 
-// Аргумент функции момента: moment_expr, duration или голая метка
-// (`start(W1)`, `max(8h, end(W1))`). Порядок: сначала moment_expr
-// (`8h` — Absolute), затем duration, затем label (`W1`).
-moment_arg  = { moment_expr | duration | label }
+// После выражения нужен разделитель, чтобы префикс длительности не отнял метку `1msX`.
+moment_arg  = { moment_expr ~ &("," | ")") | label }
 
 // Метка запуска (launch label): `as LABEL`
 launch_label = { kw_as ~ label }

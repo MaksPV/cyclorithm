@@ -663,6 +663,178 @@ fn imports_matches_expected_json() {
 }
 
 #[test]
+fn empty_windows_do_not_evaluate_rows() {
+    let src = r#"
+    schedule "Пустое окно" {
+      point P { actions = [x]; }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+        [1 / hour(at)] 0h: P.x();
+        23h: P.x();
+      }
+    }
+    "#;
+    for end in ["2026-01-01T12:00", "2026-01-01T11:00"] {
+        let out = run_stdin(
+            &["run", "-", "--start", "2026-01-01T12:00", "--end", end],
+            src,
+        );
+        assert_eq!(stdout_json(&out)["events"], serde_json::json!([]));
+    }
+    let out = run_stdin(
+        &["next", "-", "--from", "2026-01-01T12:00", "--within", "0"],
+        src,
+    );
+    assert_eq!(stdout_json(&out)["events"], serde_json::json!([]));
+}
+
+#[test]
+fn next_reports_only_errors_within_the_requested_prefix() {
+    let src = r#"
+    schedule "Ближайшее событие" {
+      point P { actions = [ok, bad]; }
+      cycle CHILD duration = 2h {
+        [1 / (hour(at) - 23)] 1h: P.bad();
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+        22h: CHILD();
+        0h: P.ok();
+        23h30m: P.ok();
+      }
+    }
+    "#;
+    for within in ["1h", "24h"] {
+        let out = run_stdin(
+            &[
+                "next",
+                "-",
+                "--from",
+                "2026-01-01",
+                "--within",
+                within,
+                "-n",
+                "1",
+            ],
+            src,
+        );
+        let json = stdout_json(&out);
+        let events = json["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["time"], "2026-01-01T00:00:00");
+    }
+
+    let out = run_stdin(
+        &[
+            "next",
+            "-",
+            "--from",
+            "2026-01-01",
+            "--within",
+            "24h",
+            "-n",
+            "2",
+        ],
+        src,
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("division-by-zero: "));
+
+    let out = run_stdin(
+        &[
+            "next",
+            "-",
+            "--from",
+            "2026-01-01T23:15",
+            "--within",
+            "1h",
+            "-n",
+            "1",
+        ],
+        src,
+    );
+    assert_eq!(
+        stdout_json(&out)["events"][0]["time"],
+        "2026-01-01T23:30:00"
+    );
+}
+
+#[test]
+fn rejects_invalid_dates_including_unicode_without_panicking() {
+    let src = r#"
+    schedule "Дата" {
+      point P { actions = [x]; }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h { 0h: P.x(); }
+    }
+    "#;
+    for invalid in ["2026-02-30T00:00:00", "январь."] {
+        let bad_src = src.replace("2026-01-01T00:00:00", invalid);
+        let out = run_stdin(&["check", "-"], &bad_src);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).starts_with("invalid-datetime: "));
+    }
+    let out = run_stdin(&["run", "-", "--start", "январь.", "--end", "+1h"], src);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("invalid-datetime: "));
+}
+
+#[test]
+fn invalid_negative_moment_is_checked_before_resolving_labels() {
+    for moment in ["min(end(L), -25h)", "min(-25h, end(L))"] {
+        let src = format!(
+            r#"
+        schedule "Границы момента" {{
+          point P {{ actions = [x]; }}
+          cycle C duration = 1h {{ 0h: P.x(); }}
+          root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {{
+            [false] 0h: C() as L;
+            {moment}: P.x();
+          }}
+        }}
+        "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr).trim(),
+            "offset-out-of-bounds: offset '-25h' out of bounds (duration 24h)"
+        );
+    }
+}
+
+#[test]
+fn duration_shaped_launch_labels_work_in_moment_functions() {
+    let src = r#"
+    schedule "Числовая метка" {
+      point P { actions = [x]; }
+      cycle C duration = 1h {}
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+        2h: C() as 1ms;
+        4h: C() as 1msX;
+        start(1ms): P.x();
+        end(1ms): P.x();
+        end(1msX): P.x();
+        min(1ms, end(1ms)): P.x();
+      }
+    }
+    "#;
+    let out = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", "+1d"], src);
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let times: Vec<_> = events
+        .iter()
+        .map(|event| event["time"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        times,
+        [
+            "2026-01-01T00:00:00.001",
+            "2026-01-01T02:00:00",
+            "2026-01-01T03:00:00",
+            "2026-01-01T05:00:00",
+        ]
+    );
+}
+
+#[test]
 fn empty_window_gives_empty_events() {
     let out = run(&[
         "run",

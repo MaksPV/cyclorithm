@@ -595,7 +595,6 @@ fn build_moment_func(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<
             Rule::moment_expr => {
                 args.push(MomentArg::Expr(Box::new(build_moment_expr(arg_inner)?)))
             }
-            Rule::duration => args.push(MomentArg::Duration(build_duration(arg_inner))),
             Rule::label => args.push(MomentArg::Label(arg_inner.as_str().to_owned())),
             r => unreachable!("moment_arg: неожиданное правило {r:?}"),
         }
@@ -1488,38 +1487,66 @@ pub enum BitOp {
 impl Stmt {
     /// Сырой текст момента для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds).
     pub fn moment_raw(&self) -> String {
-        match &self.moment {
-            MomentExpr::Absolute { negative, duration } => {
-                if *negative {
-                    format!("-{}", duration.raw)
-                } else {
-                    duration.raw.clone()
-                }
+        self.moment.to_string()
+    }
+}
+
+impl std::fmt::Display for MomentExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Absolute { negative, duration } => {
+                let sign = if *negative { "-" } else { "" };
+                write!(f, "{sign}{}", duration.raw)
             }
-            MomentExpr::Relative { offset } => match offset {
-                Some(d) => format!("+{}", d.raw),
-                None => "+".to_string(),
-            },
-            MomentExpr::Dependency { kind, label } => {
-                let kw = match kind {
+            Self::Relative { offset } => {
+                let raw = offset.as_ref().map_or("", |d| d.raw.as_str());
+                write!(f, "+{raw}")
+            }
+            Self::Dependency { kind, label } => {
+                let keyword = match kind {
                     DepKind::After => "after",
                     DepKind::At => "at",
                     DepKind::Until => "until",
                 };
-                format!("{} {}", kw, label)
+                write!(f, "{keyword} {label}")
             }
-            MomentExpr::Func { name, args } => {
-                let args_str: Vec<String> = args
-                    .iter()
-                    .map(|a| match a {
-                        MomentArg::Expr(e) => format!("{:?}", e), // placeholder
-                        MomentArg::Duration(d) => d.raw.clone(),
-                        MomentArg::Label(l) => l.clone(),
-                    })
-                    .collect();
-                format!("{}({})", name, args_str.join(", "))
+            Self::Func { name, args } => {
+                write!(f, "{name}(")?;
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    match arg {
+                        MomentArg::Expr(expr) => write!(f, "{expr}")?,
+                        MomentArg::Duration(duration) => f.write_str(&duration.raw)?,
+                        MomentArg::Label(label) => f.write_str(label)?,
+                    }
+                }
+                f.write_str(")")
             }
         }
+    }
+}
+
+impl MomentArg {
+    // В start/end длительность из одного слова также может быть именем метки.
+    pub(crate) fn label_name(&self) -> Option<&str> {
+        let duration = match self {
+            Self::Label(label) => return Some(label),
+            Self::Duration(duration) => duration,
+            Self::Expr(expr) => match expr.as_ref() {
+                MomentExpr::Absolute {
+                    negative: false,
+                    duration,
+                } => duration,
+                _ => return None,
+            },
+        };
+        duration
+            .raw
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            .then_some(&duration.raw)
     }
 }
 

@@ -329,9 +329,13 @@ fn validate_moment_func(
                     "'{name}' takes exactly 1 argument"
                 )));
             }
-            match &args[0] {
-                MomentArg::Label(l) => check_label_ref(l, seen, all),
-                _ => Err(Error::invalid_moment_function(&format!(
+            let arg = &args[0];
+            let label = arg
+                .label_name()
+                .filter(|label| matches!(arg, MomentArg::Label(_)) || all.contains(label));
+            match label {
+                Some(label) => check_label_ref(label, seen, all),
+                None => Err(Error::invalid_moment_function(&format!(
                     "'{name}' takes a bare label"
                 ))),
             }
@@ -813,26 +817,36 @@ pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i6
 }
 
 /// Литералы в динамическом моменте проверяются даже при пропуске запуска.
-fn validate_moment_durations(moment: &MomentExpr) -> Result<(), Error> {
+fn validate_moment_durations(
+    moment: &MomentExpr,
+    limit: i64,
+    limit_raw: &str,
+) -> Result<(), Error> {
     match moment {
-        MomentExpr::Absolute { duration, .. }
-        | MomentExpr::Relative {
+        MomentExpr::Absolute { negative, duration } => {
+            if duration_ms(duration)? > limit && *negative {
+                return Err(Error::offset_out_of_bounds(&moment.to_string(), limit_raw));
+            }
+        }
+        MomentExpr::Relative {
             offset: Some(duration),
         } => {
             duration_ms(duration)?;
         }
-        MomentExpr::Func { args, .. } => {
+        MomentExpr::Func { name, args } if matches!(name.as_str(), "min" | "max") => {
             for arg in args {
                 match arg {
                     MomentArg::Duration(duration) => {
                         duration_ms(duration)?;
                     }
-                    MomentArg::Expr(expr) => validate_moment_durations(expr)?,
+                    MomentArg::Expr(expr) => validate_moment_durations(expr, limit, limit_raw)?,
                     MomentArg::Label(_) => {}
                 }
             }
         }
-        MomentExpr::Relative { offset: None } | MomentExpr::Dependency { .. } => {}
+        MomentExpr::Relative { offset: None }
+        | MomentExpr::Dependency { .. }
+        | MomentExpr::Func { .. } => {}
     }
     Ok(())
 }
@@ -934,7 +948,7 @@ pub(crate) fn plan_ordinary_stmts(
         // их старты разрешаются в развёртке (курсор/метки), границы —
         // в рантайме. Здесь — пустое размещение, занятость не трогаем.
         if !matches!(st.moment, MomentExpr::Absolute { .. }) {
-            validate_moment_durations(&st.moment)?;
+            validate_moment_durations(&st.moment, limit, limit_raw)?;
             chain(st, 0, limit, limit_raw, tables)?;
             plans.push(Placement {
                 starts: Vec::new(),

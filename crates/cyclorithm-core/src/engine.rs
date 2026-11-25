@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::Error;
 use crate::cond::{Defs, check_conditions, resolve_units};
-use crate::datetime::parse_timezone;
+use crate::datetime::{parse_datetime, parse_timezone};
 use crate::imports::{ImportError, collect_units};
 use crate::parser::{self, Schedule, SourceFile};
 use crate::validate::{
@@ -60,6 +60,7 @@ where
         .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
+        .and_then(|t| parse_datetime(&ast.root.start_time).map(|_| t))
         .map_err(EngineError::Core)?;
     f(ast, &tables, &defs, file_zone).map_err(EngineError::Core)
 }
@@ -86,6 +87,7 @@ where
         .and_then(|t| check_tables(ast, &t).map(|()| t))
         .and_then(|t| check_bounds(ast, &t).map(|()| t))
         .and_then(|t| check_conditions(ast, &defs, &t).map(|()| t))
+        .and_then(|t| parse_datetime(&ast.root.start_time).map(|_| t))
         .map_err(EngineError::Core)?;
     f(ast, &tables, &defs, file_zone).map_err(EngineError::Core)
 }
