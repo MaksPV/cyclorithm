@@ -1,0 +1,18 @@
+schedule "TZ Offsets" {
+  point A { actions = [x, y]; }
+
+  cycle HOP
+    duration = 1h
+  {
+    0m: A.x();
+    60m: A.y();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: HOP();
+    18h: HOP();
+  }
+}

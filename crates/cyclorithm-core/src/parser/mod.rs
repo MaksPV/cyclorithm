@@ -1,18 +1,41 @@
 //! Grammar and AST for the Cyclorithm DSL.
 
-use pest::iterators::Pair;
 use pest::Parser as _;
+use pest::iterators::Pair;
 use pest_derive::Parser;
+
+use crate::Error;
+
+/// Ошибка разбора: синтаксис (без слага, как раньше) или готовый слаг
+/// главы ошибок (`missing-argument` / `duplicate-argument` — сборка шапок
+/// со свободным порядком полей, см. `docs/reference/syntax.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseError {
+    Syntax(pest::error::Error<Rule>),
+    Coded(Error),
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Syntax(e) => write!(f, "{e}"),
+            Self::Coded(e) => write!(f, "{}: {}", e.code, e.message),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 /// Парсер грамматики (см. `grammar.pest` и `docs/reference/syntax.md`).
 #[derive(Parser)]
-#[grammar = "grammar.pest"]
+#[grammar = "parser/grammar.pest"]
 pub struct CycloParser;
 
-/// Ошибка — синтаксическая, без слага
-/// (слаги главы ошибок — только валидация уже разобранного AST в ядре).
-pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
-    let file = CycloParser::parse(Rule::file, src)?
+/// Ошибка — синтаксическая без слага, либо слаг сборки шапок
+/// (`missing-argument` / `duplicate-argument` — порядок полей свободный).
+pub fn parse(src: &str) -> Result<SourceFile, ParseError> {
+    let file = CycloParser::parse(Rule::file, src)
+        .map_err(ParseError::Syntax)?
         .next()
         .expect("file непуст");
     debug_assert_eq!(file.as_rule(), Rule::file);
@@ -22,7 +45,7 @@ pub fn parse(src: &str) -> Result<SourceFile, pest::error::Error<Rule>> {
     for p in file.into_inner() {
         match p.as_rule() {
             Rule::use_decl => uses.push(build_use(p)),
-            Rule::decl => decls.push(build_decl(p)?),
+            Rule::decl => decls.push(build_decl(p).map_err(ParseError::Syntax)?),
             Rule::schedule => schedule = Some(build_schedule(p)?),
             Rule::EOI => {}
             r => unreachable!("file: неожиданное правило {r:?}"),
@@ -189,11 +212,11 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
     debug_assert_eq!(first.as_rule(), Rule::label);
     let label = first.as_str().to_owned();
     let offset = build_duration(inner.next().expect("slot_row: смещение"));
-    let firing = inner.next().map(|p| {
-        debug_assert_eq!(p.as_rule(), Rule::slot_fire);
+    let slot_call = inner.next().map(|p| {
+        debug_assert_eq!(p.as_rule(), Rule::slot_call);
         p.into_inner()
             .next()
-            .expect("slot_fire: invocation")
+            .expect("slot_call: invocation")
             .into_inner()
             .next()
             .map(build_invocation)
@@ -203,11 +226,11 @@ fn build_slot_row(pair: Pair<Rule>) -> Result<SlotRow, pest::error::Error<Rule>>
         condition,
         label,
         offset,
-        firing,
+        slot_call,
     })
 }
 
-fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>> {
+fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, ParseError> {
     debug_assert_eq!(pair.as_rule(), Rule::schedule);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("schedule: ключевое слово");
@@ -217,69 +240,109 @@ fn build_schedule(pair: Pair<Rule>) -> Result<Schedule, pest::error::Error<Rule>
     let mut routines = Vec::new();
     let mut cycles = Vec::new();
     let mut root = None;
+    let mut timezone = None;
     for p in inner {
         match p.as_rule() {
-            Rule::point => points.push(build_point(p)),
-            Rule::routine => routines.push(build_routine(p)?),
-            Rule::cycle => cycles.push(build_cycle(p)?),
-            Rule::root_cycle => root = Some(build_root_cycle(p)?),
+            Rule::schedule_member => {
+                let m = p.into_inner().next().expect("schedule: член");
+                match m.as_rule() {
+                    Rule::timezone_decl => {
+                        let mut tz_inner = m.into_inner();
+                        let _kw = tz_inner.next().expect("timezone: ключевое слово");
+                        let raw = unquote(tz_inner.next().expect("timezone: строка"));
+                        if timezone.replace(raw).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("timezone")));
+                        }
+                    }
+                    Rule::point => points.push(build_point(m)?),
+                    Rule::routine => routines.push(build_routine(m).map_err(ParseError::Syntax)?),
+                    Rule::cycle => cycles.push(build_cycle(m)?),
+                    Rule::root_cycle => {
+                        if root.is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("root_cycle")));
+                        }
+                        root = Some(build_root_cycle(m)?);
+                    }
+                    r => unreachable!("schedule_member: неожиданное правило {r:?}"),
+                }
+            }
             r => unreachable!("schedule: неожиданное правило {r:?}"),
         }
     }
     Ok(Schedule {
         name,
+        timezone,
         points,
         routines,
         cycles,
-        root: root.expect("schedule: root_cycle обязателен"),
+        root: root.ok_or_else(|| ParseError::Coded(Error::missing_argument("root_cycle")))?,
     })
 }
 
-fn build_point(pair: Pair<Rule>) -> Point {
+fn build_point(pair: Pair<Rule>) -> Result<Point, ParseError> {
+    debug_assert_eq!(pair.as_rule(), Rule::point);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("point: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_point);
     let name = inner.next().expect("point: имя").as_str().to_owned();
-    let kw_actions = inner.next().expect("point: actions");
-    debug_assert_eq!(kw_actions.as_rule(), Rule::kw_actions);
-    let actions = inner
-        .next()
-        .expect("point: actions")
-        .into_inner()
-        .map(|a| a.as_str().to_owned())
-        .collect();
-    let attrs = inner.next().map(|p| {
-        debug_assert_eq!(p.as_rule(), Rule::point_attrs);
-        let mut attr_inner = p.into_inner();
-        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
-        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
-        let src = attr_inner
-            .next()
-            .expect("point_attrs: источник")
-            .into_inner()
-            .next()
-            .expect("attrs_src: содержимое");
-        match src.as_rule() {
-            Rule::map_lit => build_map_lit(src),
-            Rule::IDENT => Expr::Name(src.as_str().to_owned()),
-            r => unreachable!("attrs_src: неожиданное правило {r:?}"),
+    let mut actions = None;
+    let mut attrs = None;
+    for p in inner {
+        match p.as_rule() {
+            Rule::point_field => {
+                let f = p.into_inner().next().expect("point: поле");
+                match f.as_rule() {
+                    Rule::actions_field => {
+                        let mut af = f.into_inner();
+                        let _kw = af.next().expect("actions: ключевое слово");
+                        let list: Vec<String> = af
+                            .next()
+                            .expect("actions: список")
+                            .into_inner()
+                            .map(|a| a.as_str().to_owned())
+                            .collect();
+                        if actions.replace(list).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("actions")));
+                        }
+                    }
+                    Rule::point_attrs => {
+                        let mut attr_inner = f.into_inner();
+                        let kw = attr_inner.next().expect("point_attrs: ключевое слово");
+                        debug_assert_eq!(kw.as_rule(), Rule::kw_attrs);
+                        let src = attr_inner
+                            .next()
+                            .expect("point_attrs: источник")
+                            .into_inner()
+                            .next()
+                            .expect("attrs_src: содержимое");
+                        let expr = match src.as_rule() {
+                            Rule::map_lit => build_map_lit(src),
+                            Rule::IDENT => Expr::Name(src.as_str().to_owned()),
+                            r => unreachable!("attrs_src: неожиданное правило {r:?}"),
+                        };
+                        if attrs.replace(expr).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("attrs")));
+                        }
+                    }
+                    r => unreachable!("point_field: неожиданное правило {r:?}"),
+                }
+            }
+            r => unreachable!("point: неожиданное правило {r:?}"),
         }
-    });
-    Point {
-        name,
-        actions,
-        attrs,
     }
+    Ok(Point {
+        name,
+        actions: actions.ok_or_else(|| ParseError::Coded(Error::missing_argument("actions")))?,
+        attrs,
+    })
 }
 
-fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
+fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, ParseError> {
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("cycle: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_cycle);
     let name = inner.next().expect("cycle: имя").as_str().to_owned();
-    let mut next = inner
-        .next()
-        .expect("cycle: параметры, duration или reverse");
+    let next = inner.next().expect("cycle: поля, тело или reverse");
     if next.as_rule() == Rule::kw_reverse {
         let source = inner
             .next()
@@ -297,40 +360,83 @@ fn build_cycle(pair: Pair<Rule>) -> Result<Cycle, pest::error::Error<Rule>> {
             reverse_from: Some(source),
         });
     }
-    let params = if next.as_rule() == Rule::cycle_params {
-        let ps = next.into_inner().map(|p| p.as_str().to_owned()).collect();
-        next = inner.next().expect("cycle: duration");
-        ps
-    } else {
-        Vec::new()
-    };
-    let kw_duration = next;
-    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
-    let duration = build_duration(inner.next().expect("cycle: duration"));
-    let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
+    let mut params = None;
+    let mut duration = None;
+    let mut stmts = Vec::new();
+    for p in std::iter::once(next).chain(inner) {
+        match p.as_rule() {
+            Rule::cycle_field => {
+                let f = p.into_inner().next().expect("cycle: поле");
+                match f.as_rule() {
+                    Rule::cycle_params => {
+                        let ps = f.into_inner().map(|p| p.as_str().to_owned()).collect();
+                        if params.replace(ps).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("params")));
+                        }
+                    }
+                    Rule::duration_field => {
+                        let mut df = f.into_inner();
+                        let _kw = df.next().expect("duration: ключевое слово");
+                        let d = build_duration(df.next().expect("duration: значение"));
+                        if duration.replace(d).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("duration")));
+                        }
+                    }
+                    r => unreachable!("cycle_field: неожиданное правило {r:?}"),
+                }
+            }
+            Rule::stmt => stmts.push(build_stmt(p).map_err(ParseError::Syntax)?),
+            r => unreachable!("cycle: неожиданное правило {r:?}"),
+        }
+    }
     Ok(Cycle {
         name,
-        params,
-        duration,
+        params: params.unwrap_or_default(),
+        duration: duration.ok_or_else(|| ParseError::Coded(Error::missing_argument("duration")))?,
         stmts,
         reverse_from: None,
     })
 }
 
-fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, pest::error::Error<Rule>> {
+fn build_root_cycle(pair: Pair<Rule>) -> Result<RootCycle, ParseError> {
+    debug_assert_eq!(pair.as_rule(), Rule::root_cycle);
     let mut inner = pair.into_inner();
     let kw = inner.next().expect("root_cycle: ключевое слово");
     debug_assert_eq!(kw.as_rule(), Rule::kw_root_cycle);
-    let kw_start = inner.next().expect("root_cycle: start_time");
-    debug_assert_eq!(kw_start.as_rule(), Rule::kw_start_time);
-    let start_time = unquote(inner.next().expect("root_cycle: start_time"));
-    let kw_duration = inner.next().expect("root_cycle: duration");
-    debug_assert_eq!(kw_duration.as_rule(), Rule::kw_duration);
-    let duration = build_duration(inner.next().expect("root_cycle: duration"));
-    let stmts = inner.map(build_stmt).collect::<Result<_, _>>()?;
+    let mut start_time = None;
+    let mut duration = None;
+    let mut stmts = Vec::new();
+    for p in inner {
+        match p.as_rule() {
+            Rule::root_field => {
+                let f = p.into_inner().next().expect("root_cycle: поле");
+                match f.as_rule() {
+                    Rule::start_field => {
+                        let mut sf = f.into_inner();
+                        let _kw = sf.next().expect("start_time: ключевое слово");
+                        let raw = unquote(sf.next().expect("start_time: строка"));
+                        if start_time.replace(raw).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("start_time")));
+                        }
+                    }
+                    Rule::duration_field => {
+                        let mut df = f.into_inner();
+                        let _kw = df.next().expect("duration: ключевое слово");
+                        let d = build_duration(df.next().expect("duration: значение"));
+                        if duration.replace(d).is_some() {
+                            return Err(ParseError::Coded(Error::duplicate_argument("duration")));
+                        }
+                    }
+                    r => unreachable!("root_field: неожиданное правило {r:?}"),
+                }
+            }
+            _ => stmts.push(build_stmt(p).map_err(ParseError::Syntax)?),
+        }
+    }
     Ok(RootCycle {
-        start_time,
-        duration,
+        start_time: start_time
+            .ok_or_else(|| ParseError::Coded(Error::missing_argument("start_time")))?,
+        duration: duration.ok_or_else(|| ParseError::Coded(Error::missing_argument("duration")))?,
         stmts,
     })
 }
@@ -362,61 +468,173 @@ fn build_routine(pair: Pair<Rule>) -> Result<Routine, pest::error::Error<Rule>> 
 
 fn build_stmt(pair: Pair<Rule>) -> Result<Stmt, pest::error::Error<Rule>> {
     debug_assert_eq!(pair.as_rule(), Rule::stmt);
-    let span = pair.as_span();
     let mut inner = pair.into_inner();
-    let mut first = inner.next().expect("stmt: условие, минус или смещение");
+    let mut first = inner.next().expect("stmt: условие или момент");
     let mut condition = None;
     if first.as_rule() == Rule::condition_block {
         let cond = first.into_inner().next().expect("condition_block: условие");
         condition = Some(build_cond(cond));
-        first = inner.next().expect("stmt: смещение или минус");
+        first = inner.next().expect("stmt: момент");
     }
-    // Слитность минуса — по спанам (см. `neg_sign` в грамматике).
-    let (negative, offset_pair) = if first.as_rule() == Rule::neg_sign {
-        let offset_pair = inner.next().expect("stmt: длительность после минуса");
-        if first.as_span().end() != offset_pair.as_span().start() {
-            return Err(pest::error::Error::new_from_span(
-                pest::error::ErrorVariant::CustomError {
-                    message: "minus in offset must be glued to duration ('-10m')".to_owned(),
-                },
-                span,
-            ));
-        }
-        (true, offset_pair)
-    } else {
-        (false, first)
-    };
-    let offset = build_duration(offset_pair);
+    debug_assert_eq!(first.as_rule(), Rule::moment_expr);
+    let moment = build_moment_expr(first)?;
     let body = inner.next().expect("stmt: тело");
     let (repeat, invocation) = build_row_body(body)?;
+    let launch_label = inner.next().map(build_launch_label);
     Ok(Stmt {
-        offset,
-        negative,
+        moment,
+        repeat,
+        condition,
+        invocation,
+        launch_label,
+    })
+}
+
+/// Строка routine: `[условие] (<момент> | <метка>): <тело>;`.
+fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine_stmt);
+    let mut inner = pair.into_inner();
+    let mut first = inner
+        .next()
+        .expect("routine_stmt: условие или момент/метка");
+    let mut condition = None;
+    if first.as_rule() == Rule::condition_block {
+        let cond = first.into_inner().next().expect("condition_block: условие");
+        condition = Some(build_cond(cond));
+        first = inner.next().expect("routine_stmt: момент или метка");
+    }
+    debug_assert_eq!(first.as_rule(), Rule::routine_moment);
+    let moment = build_routine_moment(first)?;
+    let body = inner.next().expect("routine_stmt: тело");
+    let (repeat, invocation) = build_row_body(body)?;
+    Ok(RoutineStmt {
+        offset: moment,
+        negative: false, // deprecated, kept for compat
         repeat,
         condition,
         invocation,
     })
 }
 
-/// Строка routine: `[условие] (<смещение> | <метка>): <тело>;`.
-/// Минус — только у длительности (`-10m` от конца таблицы).
-fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Error<Rule>> {
-    debug_assert_eq!(pair.as_rule(), Rule::routine_stmt);
+/// Разбор moment_expr (единая ось момента).
+fn build_moment_expr(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_expr);
+    let inner = pair.into_inner().next().expect("moment_expr: содержимое");
+    match inner.as_rule() {
+        Rule::moment_func => build_moment_func(inner),
+        Rule::moment_dep => build_moment_dep(inner),
+        Rule::moment_rel => build_moment_rel(inner),
+        Rule::moment_abs => build_moment_abs(inner),
+        r => unreachable!("moment_expr: неожиданное правило {r:?}"),
+    }
+}
+
+/// Разбор routine_moment: duration с границей слова, label (слот), или moment_expr.
+fn build_routine_moment(pair: Pair<Rule>) -> Result<RoutineOffset, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::routine_moment);
+    let span = pair.as_span();
+    let inner = pair
+        .clone()
+        .into_inner()
+        .next()
+        .expect("routine_moment: содержимое");
+    match inner.as_rule() {
+        Rule::moment_expr => Ok(RoutineOffset::Moment(build_moment_expr(inner)?)),
+        Rule::label => Ok(RoutineOffset::Label(inner.as_str().to_owned())),
+        Rule::neg_sign | Rule::duration => {
+            // Первый вариант: neg_sign? ~ duration ~ !word_tail
+            let items: Vec<_> = pair.into_inner().collect();
+            let (negative, dur_pair) = if items[0].as_rule() == Rule::neg_sign {
+                if items.len() < 2 {
+                    return Err(pest::error::Error::new_from_span(
+                        pest::error::ErrorVariant::CustomError {
+                            message: "minus in offset must be glued to duration ('-10m')"
+                                .to_owned(),
+                        },
+                        span,
+                    ));
+                }
+                let dur = &items[1];
+                if items[0].as_span().end() != dur.as_span().start() {
+                    return Err(pest::error::Error::new_from_span(
+                        pest::error::ErrorVariant::CustomError {
+                            message: "minus in offset must be glued to duration ('-10m')"
+                                .to_owned(),
+                        },
+                        span,
+                    ));
+                }
+                (true, dur)
+            } else {
+                (false, &items[0])
+            };
+            let duration = build_duration(dur_pair.clone());
+            Ok(RoutineOffset::Moment(MomentExpr::Absolute {
+                negative,
+                duration,
+            }))
+        }
+        r => unreachable!("routine_moment: неожиданное правило {r:?}"),
+    }
+}
+
+/// moment_func: start(W1), end(W1), max(8h, end(W1)), min(...)
+fn build_moment_func(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_func);
+    let mut inner = pair.into_inner();
+    let name = inner
+        .next()
+        .expect("moment_func: имя функции")
+        .as_str()
+        .to_owned();
+    let mut args = Vec::new();
+    for arg in inner {
+        debug_assert_eq!(arg.as_rule(), Rule::moment_arg);
+        let arg_inner = arg.into_inner().next().expect("moment_arg: содержимое");
+        match arg_inner.as_rule() {
+            Rule::moment_expr => {
+                args.push(MomentArg::Expr(Box::new(build_moment_expr(arg_inner)?)))
+            }
+            Rule::duration => args.push(MomentArg::Duration(build_duration(arg_inner))),
+            Rule::label => args.push(MomentArg::Label(arg_inner.as_str().to_owned())),
+            r => unreachable!("moment_arg: неожиданное правило {r:?}"),
+        }
+    }
+    Ok(MomentExpr::Func { name, args })
+}
+
+/// moment_dep: after W1, at W1, until W1
+fn build_moment_dep(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_dep);
+    let mut inner = pair.into_inner();
+    let kind = match inner.next().expect("moment_dep: kind").as_rule() {
+        Rule::kw_after => DepKind::After,
+        Rule::kw_at => DepKind::At,
+        Rule::kw_until => DepKind::Until,
+        r => unreachable!("moment_dep kind: неожиданное правило {r:?}"),
+    };
+    let label = inner.next().expect("moment_dep: label").as_str().to_owned();
+    Ok(MomentExpr::Dependency { kind, label })
+}
+
+/// moment_rel: +: или +10m: (`+` — безымянный литерал, пары не даёт).
+fn build_moment_rel(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_rel);
+    let mut inner = pair.into_inner();
+    let offset = inner.next().map(build_duration);
+    debug_assert!(inner.next().is_none(), "moment_rel: лишний хвост");
+    Ok(MomentExpr::Relative { offset })
+}
+
+/// moment_abs: 0h:, 8h30m:, -0m:
+fn build_moment_abs(pair: Pair<Rule>) -> Result<MomentExpr, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::moment_abs);
     let span = pair.as_span();
     let mut inner = pair.into_inner();
-    let mut first = inner.next().expect("routine_stmt: условие или смещение");
-    let mut condition = None;
-    if first.as_rule() == Rule::condition_block {
-        let cond = first.into_inner().next().expect("condition_block: условие");
-        condition = Some(build_cond(cond));
-        first = inner.next().expect("routine_stmt: смещение или метка");
-    }
-    debug_assert_eq!(first.as_rule(), Rule::routine_offset);
-    let mut off = first.into_inner();
-    let head = off.next().expect("routine_offset: смещение или метка");
-    let (negative, offset) = if head.as_rule() == Rule::neg_sign {
-        let dur = off.next().expect("routine_stmt: длительность после минуса");
-        if head.as_span().end() != dur.as_span().start() {
+    let first = inner.next().expect("moment_abs: minus или duration");
+    let (negative, dur_pair) = if first.as_rule() == Rule::neg_sign {
+        let dur = inner.next().expect("moment_abs: duration after minus");
+        if first.as_span().end() != dur.as_span().start() {
             return Err(pest::error::Error::new_from_span(
                 pest::error::ErrorVariant::CustomError {
                     message: "minus in offset must be glued to duration ('-10m')".to_owned(),
@@ -424,22 +642,26 @@ fn build_routine_stmt(pair: Pair<Rule>) -> Result<RoutineStmt, pest::error::Erro
                 span,
             ));
         }
-        (true, RoutineOffset::Duration(build_duration(dur)))
-    } else if head.as_rule() == Rule::duration {
-        (false, RoutineOffset::Duration(build_duration(head)))
+        (true, dur)
     } else {
-        debug_assert_eq!(head.as_rule(), Rule::label);
-        (false, RoutineOffset::Label(head.as_str().to_owned()))
+        (false, first)
     };
-    let body = inner.next().expect("routine_stmt: тело");
-    let (repeat, invocation) = build_row_body(body)?;
-    Ok(RoutineStmt {
-        offset,
-        negative,
-        repeat,
-        condition,
-        invocation,
-    })
+    let duration = build_duration(dur_pair);
+    Ok(MomentExpr::Absolute { negative, duration })
+}
+
+/// launch_label: as LABEL
+fn build_launch_label(pair: Pair<Rule>) -> LaunchLabel {
+    debug_assert_eq!(pair.as_rule(), Rule::launch_label);
+    let mut inner = pair.into_inner();
+    let kw = inner.next().expect("launch_label: as");
+    debug_assert_eq!(kw.as_rule(), Rule::kw_as);
+    let label = inner
+        .next()
+        .expect("launch_label: label")
+        .as_str()
+        .to_owned();
+    LaunchLabel(label)
 }
 
 /// Общее для `stmt` и `routine_stmt`: опциональный модификатор повторов и вызов.
@@ -917,10 +1139,19 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
                     let mut ginner = p.into_inner();
                     let kw = ginner.next().expect("gaps_mod: ключевое слово");
                     debug_assert_eq!(kw.as_rule(), Rule::kw_gaps);
-                    match ginner.next() {
-                        None => Ok(Repeat::FillGaps { until: None }),
+                    let mut pack = Pack::Left;
+                    let mut next = ginner.next();
+                    if let Some(ref q) = next
+                        && q.as_rule() == Rule::pack_dir
+                    {
+                        pack = build_pack(q.clone())?;
+                        next = ginner.next();
+                    }
+                    match next {
+                        None => Ok(Repeat::FillGaps { until: None, pack }),
                         Some(f) => Ok(Repeat::FillGaps {
                             until: Some(build_until_from(f, &mut ginner, span)?),
+                            pack,
                         }),
                     }
                 }
@@ -930,6 +1161,21 @@ fn build_repeat(pair: Pair<Rule>) -> Result<Repeat, pest::error::Error<Rule>> {
             }
         }
         r => unreachable!("repeat_mod: неожиданное правило {r:?}"),
+    }
+}
+
+/// Направление `pack` в `fill gaps pack DIR`: значение `pack_val`.
+fn build_pack(pair: Pair<Rule>) -> Result<Pack, pest::error::Error<Rule>> {
+    debug_assert_eq!(pair.as_rule(), Rule::pack_dir);
+    let val = pair
+        .into_inner()
+        .find(|p| p.as_rule() == Rule::pack_val)
+        .expect("pack_dir: значение");
+    match val.as_str() {
+        "left" => Ok(Pack::Left),
+        "right" => Ok(Pack::Right),
+        "center" => Ok(Pack::Center),
+        v => unreachable!("pack: неожиданное значение {v:?}"),
     }
 }
 
@@ -1041,18 +1287,19 @@ pub enum Decl {
 }
 
 /// Одна строка таблицы: `[условие] <метка>: <смещение> [-> <вызов>];`.
-/// `firing` — собственный вызов слота (пожар при каждом инстанцировании).
+/// `slot_call` — привязанный к слоту вызов (срабатывает при каждом инстанцировании с таблицей).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotRow {
     pub condition: Option<Cond>,
     pub label: String,
     pub offset: Duration,
-    pub firing: Option<Invocation>,
+    pub slot_call: Option<Invocation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub name: String,
+    pub timezone: Option<String>,
     pub points: Vec<Point>,
     pub routines: Vec<Routine>,
     pub cycles: Vec<Cycle>,
@@ -1093,8 +1340,10 @@ pub struct Routine {
     pub stmts: Vec<RoutineStmt>,
 }
 
-/// Одна строка routine: `[условие] (<смещение> | <метка>): [<повтор>] <вызов>;`.
-/// Метка разрешается в смещение таблицы в момент вызова.
+/// Одна строка routine: `[условие] (<смещение> | <метка> | <момент>): [<повтор>] <вызов>;`.
+/// Смещение может быть длительностью, меткой слота таблицы, или выражением момента
+/// (абсолютное/относительное). Зависимости (after/at/until) и функции (start/end/max/min)
+/// в routine не используются — только в циклах и root_cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoutineStmt {
     pub offset: RoutineOffset,
@@ -1108,6 +1357,8 @@ pub struct RoutineStmt {
 pub enum RoutineOffset {
     Duration(Duration),
     Label(String),
+    /// Выражение момента (absolute/relative) — для единообразия с циклами.
+    Moment(MomentExpr),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1118,14 +1369,14 @@ pub struct RootCycle {
     pub stmts: Vec<Stmt>,
 }
 
-/// Одна строка цикла: `[условие] [минус] <смещение>: [<повтор>] <вызов>;`.
+/// Одна строка цикла/root_cycle: `[условие] момент: [<повтор>] <вызов> [as метка];`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stmt {
-    pub offset: Duration,
-    pub negative: bool,
+    pub moment: MomentExpr,
     pub repeat: Repeat,
     pub condition: Option<Cond>,
     pub invocation: Invocation,
+    pub launch_label: Option<LaunchLabel>,
 }
 
 /// Условие строки: логика над сравнениями и C-выражения (ненулевое — истина).
@@ -1235,12 +1486,39 @@ pub enum BitOp {
 }
 
 impl Stmt {
-    /// Сырой текст смещения для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds): с минусом (`'-2h'`) или без.
-    pub fn offset_raw(&self) -> String {
-        if self.negative {
-            format!("-{}", self.offset.raw)
-        } else {
-            self.offset.raw.clone()
+    /// Сырой текст момента для сообщений границ (cycle-overruns/offset-out-of-bounds/until-out-of-bounds).
+    pub fn moment_raw(&self) -> String {
+        match &self.moment {
+            MomentExpr::Absolute { negative, duration } => {
+                if *negative {
+                    format!("-{}", duration.raw)
+                } else {
+                    duration.raw.clone()
+                }
+            }
+            MomentExpr::Relative { offset } => match offset {
+                Some(d) => format!("+{}", d.raw),
+                None => "+".to_string(),
+            },
+            MomentExpr::Dependency { kind, label } => {
+                let kw = match kind {
+                    DepKind::After => "after",
+                    DepKind::At => "at",
+                    DepKind::Until => "until",
+                };
+                format!("{} {}", kw, label)
+            }
+            MomentExpr::Func { name, args } => {
+                let args_str: Vec<String> = args
+                    .iter()
+                    .map(|a| match a {
+                        MomentArg::Expr(e) => format!("{:?}", e), // placeholder
+                        MomentArg::Duration(d) => d.raw.clone(),
+                        MomentArg::Label(l) => l.clone(),
+                    })
+                    .collect();
+                format!("{}({})", name, args_str.join(", "))
+            }
         }
     }
 }
@@ -1255,10 +1533,23 @@ pub enum Repeat {
     Fill {
         until: Option<Until>,
     },
-    /// `fill gaps [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
+    /// `fill gaps [pack DIR] [until [−]T]`: добивка пустот в окне `[offset, until|D)`.
     FillGaps {
         until: Option<Until>,
+        pack: Pack,
     },
+}
+
+/// Направление упаковки `fill gaps` в свободных отрезках.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pack {
+    /// Встык слева (поведение по умолчанию, как без `pack`).
+    #[default]
+    Left,
+    /// Встык справа.
+    Right,
+    /// По центру отрезка; нечётный остаток делится с округлением вниз.
+    Center,
 }
 
 /// Горизонт `fill until`: смещение от старта родителя, минус — как у строк.
@@ -1297,6 +1588,52 @@ pub enum Invocation {
     },
 }
 
+/// Метка запуска (launch label): `as LABEL` — имя конкретного запуска цикла.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchLabel(pub String);
+
+/// Вид зависимости от метки (issue 45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepKind {
+    After,
+    At,
+    Until,
+}
+
+/// Аргумент функции момента: moment_expr, duration или голая метка
+/// (`start(W1)` — Label, `max(8h, end(W1))` — Absolute/Func).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MomentArg {
+    Expr(Box<MomentExpr>),
+    Duration(Duration),
+    Label(String),
+}
+
+/// Выражение момента (единая ось момента — issue 45).
+/// На строке допускается ровно один источник момента.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MomentExpr {
+    /// Абсолютный timestamp от старта родителя: `0h:`, `8h30m:`, `-0m:`
+    Absolute { negative: bool, duration: Duration },
+    /// Относительный момент от курсора: `+:` или `+10m:`
+    Relative { offset: Option<Duration> },
+    /// Зависимость от метки: `after W1:`, `at W1:`, `until W1:`
+    Dependency { kind: DepKind, label: String },
+    /// Функция момента: `start(W1)`, `end(W1)`, `max(8h, end(W1))`, `min(...)`
+    Func { name: String, args: Vec<MomentArg> },
+}
+
+impl MomentExpr {
+    /// Получить компоненты длительности для абсолютного момента.
+    /// Для не-абсолютных моментов возвращает пустой вектор.
+    pub fn absolute_duration_items(&self) -> Vec<DurationItem> {
+        match self {
+            MomentExpr::Absolute { duration, .. } => duration.items.clone(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// Длительность сырым списком компонентов (`1h20m` → `[1h, 20m]`).
 /// `raw` — точный срез исходника для сообщений `invalid duration '...'` (invalid-duration).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1329,7 +1666,7 @@ mod tests {
 
     #[test]
     fn parse_route_matches_fixture() {
-        let src = include_str!("../../../examples/valid/route.cyclo");
+        let src = include_str!("../../../../examples/valid/route.cyclo");
         let got = parse(src).expect("route.cyclo обязан разбираться");
         assert_eq!(got.schedule, route_ast());
     }
@@ -1894,9 +2231,15 @@ mod tests {
 
     #[test]
     fn parse_rejects_missing_root_cycle() {
-        // bad_syntax.cyclo: нет root_cycle → ошибка парсера без слага.
-        let src = include_str!("../../../examples/invalid/bad_syntax.cyclo");
-        assert!(parse(src).is_err());
+        // bad_syntax.cyclo: нет root_cycle — missing-argument, а не молчаливый синтаксис.
+        let src = include_str!("../../../../examples/invalid/bad_syntax.cyclo");
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'root_cycle'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
     }
 
     #[test]
@@ -1909,30 +2252,147 @@ mod tests {
     }
 
     #[test]
+    fn root_cycle_fields_free_order() {
+        // Обратный порядок полей шапки — валиден, значения те же.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle duration = 24h, start_time = \"2026-01-01T00:00:00\" { 6h: A.x(); } }";
+        let file = parse(src).expect("обратный порядок валиден");
+        assert_eq!(file.schedule.root.start_time, "2026-01-01T00:00:00");
+    }
+
+    #[test]
+    fn root_cycle_missing_field_reports_slug() {
+        // Нет обязательного поля — missing-argument, а не молчаливый синтаксис.
+        let src = include_str!("../../../../examples/invalid/bad_missing-argument.cyclo");
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'duration'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn root_cycle_duplicate_field_reports_slug() {
+        // Поле дважды — duplicate-argument.
+        let src = include_str!("../../../../examples/invalid/bad_duplicate-argument.cyclo");
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'duration'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn timezone_trailing_comma_rejected() {
+        // Висячая запятая после timezone запрещена, как везде в языке.
+        let src = "schedule \"T\" { timezone = \"+03:00\", point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        assert!(matches!(parse(src), Err(ParseError::Syntax(_))));
+    }
+
+    #[test]
+    fn point_fields_free_order() {
+        // attrs первым — валидно, действия те же.
+        let src = "schedule \"T\" { point A { attrs = {\"k\": 1}; actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(src).expect("attrs первым валидно");
+        assert_eq!(file.schedule.points[0].actions, vec!["x".to_owned()]);
+    }
+
+    #[test]
+    fn point_missing_actions_reports_slug() {
+        // Точка без actions — missing-argument.
+        let src = "schedule \"T\" { point A { attrs = {\"k\": 1}; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'actions'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn cycle_duration_first_with_params_after() {
+        // duration первым, параметры после — валидно, значения те же.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C duration = 1h (TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(src).expect("duration первым валидно");
+        assert_eq!(file.schedule.cycles[0].params, vec!["TC".to_owned()]);
+    }
+
+    #[test]
+    fn cycle_missing_duration_reports_slug() {
+        // Цикл без duration — missing-argument.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle C (TC) { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("missing-argument", "missing argument 'duration'")
+            ),
+            r => panic!("ожидался missing-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn timezone_anywhere_and_duplicate_reports_slug() {
+        // timezone в середине — валидно.
+        let ok = "schedule \"T\" { point A { actions = [x]; } timezone = \"Z\" \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        let file = parse(ok).expect("timezone в середине валидна");
+        assert_eq!(file.schedule.timezone.as_deref(), Some("Z"));
+        // timezone дважды — duplicate-argument.
+        let dup = "schedule \"T\" { timezone = \"Z\" point A { actions = [x]; } \
+            timezone = \"+03:00\" \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(dup) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'timezone'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
     fn parse_accepts_validation_fixtures() {
         // Граница парсер/ядро: негативные файлы синтаксически корректны,
         // их ошибки — валидация (слаги главы ошибок), а не синтаксис.
         for src in [
-            include_str!("../../../examples/invalid/bad_unknown-point.cyclo"),
-            include_str!("../../../examples/invalid/bad_action-not-allowed.cyclo"),
-            include_str!("../../../examples/invalid/bad_unknown-cycle.cyclo"),
-            include_str!("../../../examples/invalid/bad_duplicate.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-duration.cyclo"),
-            include_str!("../../../examples/invalid/bad_recursive.cyclo"),
-            include_str!("../../../examples/invalid/bad_cycle-overruns.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-datetime.cyclo"),
-            include_str!("../../../examples/invalid/bad_wrong-kind.cyclo"),
-            include_str!("../../../examples/invalid/bad_offset-out-of-bounds.cyclo"),
-            include_str!("../../../examples/invalid/bad_invalid-repeat-count.cyclo"),
-            include_str!("../../../examples/invalid/bad_fill-zero-duration.cyclo"),
-            include_str!("../../../examples/invalid/bad_repeat-point-action.cyclo"),
-            include_str!("../../../examples/invalid/bad_cycle-overruns-chain.cyclo"),
-            include_str!("../../../examples/invalid/bad_until-out-of-bounds.cyclo"),
-            include_str!("../../../examples/invalid/bad_unknown-name.cyclo"),
-            include_str!("../../../examples/invalid/bad_type-mismatch.cyclo"),
-            include_str!("../../../examples/invalid/bad_division-by-zero.cyclo"),
-            include_str!("../../../examples/invalid/bad_duplicate-attribute.cyclo"),
-            include_str!("../../../examples/invalid/bad_reserved-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-point.cyclo"),
+            include_str!("../../../../examples/invalid/bad_action-not-allowed.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-cycle.cyclo"),
+            include_str!("../../../../examples/invalid/bad_duplicate.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-duration.cyclo"),
+            include_str!("../../../../examples/invalid/bad_recursive.cyclo"),
+            include_str!("../../../../examples/invalid/bad_cycle-overruns.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-datetime.cyclo"),
+            include_str!("../../../../examples/invalid/bad_wrong-kind.cyclo"),
+            include_str!("../../../../examples/invalid/bad_offset-out-of-bounds.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-repeat-count.cyclo"),
+            include_str!("../../../../examples/invalid/bad_fill-zero-duration.cyclo"),
+            include_str!("../../../../examples/invalid/bad_repeat-point-action.cyclo"),
+            include_str!("../../../../examples/invalid/bad_cycle-overruns-chain.cyclo"),
+            include_str!("../../../../examples/invalid/bad_until-out-of-bounds.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_type-mismatch.cyclo"),
+            include_str!("../../../../examples/invalid/bad_division-by-zero.cyclo"),
+            include_str!("../../../../examples/invalid/bad_duplicate-attribute.cyclo"),
+            include_str!("../../../../examples/invalid/bad_reserved-name.cyclo"),
+            include_str!("../../../../examples/invalid/bad_unknown-label.cyclo"),
+            include_str!("../../../../examples/invalid/bad_forward-label-reference.cyclo"),
+            include_str!("../../../../examples/invalid/bad_label-not-cycle-call.cyclo"),
+            include_str!("../../../../examples/invalid/bad_invalid-moment-function.cyclo"),
+            include_str!("../../../../examples/invalid/bad_gaps-dynamic-moment.cyclo"),
+            include_str!("../../../../examples/invalid/bad_reverse-dynamic-moment.cyclo"),
         ] {
             parse(src).expect("bad_*.cyclo обязан разбираться грамматикой");
         }
@@ -1952,8 +2412,10 @@ mod tests {
                 .collect(),
         };
         let point_call = |offset: Duration, point: &str, action: &str| Stmt {
-            offset,
-            negative: false,
+            moment: MomentExpr::Absolute {
+                negative: false,
+                duration: offset,
+            },
             repeat: Repeat::Once,
             condition: None,
             invocation: Invocation::PointAction {
@@ -1961,9 +2423,11 @@ mod tests {
                 action: action.to_owned(),
                 block: None,
             },
+            launch_label: None,
         };
         Schedule {
             name: "Автобусный парк".to_owned(),
+            timezone: None,
             points: vec![
                 Point {
                     name: "DEPOT".to_owned(),
@@ -2002,8 +2466,10 @@ mod tests {
                             "depart",
                         ),
                         Stmt {
-                            offset: dur("0m", vec![("0", DurationUnit::Minute)]),
-                            negative: true,
+                            moment: MomentExpr::Absolute {
+                                negative: true,
+                                duration: dur("0m", vec![("0", DurationUnit::Minute)]),
+                            },
                             repeat: Repeat::Once,
                             condition: None,
                             invocation: Invocation::PointAction {
@@ -2011,6 +2477,7 @@ mod tests {
                                 action: "arrive".to_owned(),
                                 block: None,
                             },
+                            launch_label: None,
                         },
                     ],
                     reverse_from: None,
@@ -2039,18 +2506,23 @@ mod tests {
                 duration: dur("24h", vec![("24", DurationUnit::Hour)]),
                 stmts: vec![
                     Stmt {
-                        offset: dur("6h", vec![("6", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("6h", vec![("6", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: None,
                         invocation: Invocation::CycleCall {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("10h", vec![("10", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("10h", vec![("10", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Times("2".to_owned()),
                         condition: Some(Cond::And(vec![
                             Cond::Cmp {
@@ -2073,10 +2545,13 @@ mod tests {
                             name: "SHUTTLE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("14h", vec![("14", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("14h", vec![("14", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Fill {
                             until: Some(Until {
                                 negative: false,
@@ -2091,10 +2566,13 @@ mod tests {
                             name: "SHUTTLE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("18h", vec![("18", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("18h", vec![("18", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: Some(Cond::And(vec![
                             Cond::Pred {
@@ -2110,10 +2588,13 @@ mod tests {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                     Stmt {
-                        offset: dur("12h", vec![("12", DurationUnit::Hour)]),
-                        negative: false,
+                        moment: MomentExpr::Absolute {
+                            negative: false,
+                            duration: dur("12h", vec![("12", DurationUnit::Hour)]),
+                        },
                         repeat: Repeat::Once,
                         condition: Some(Cond::Pred {
                             name: "weekend".to_owned(),
@@ -2123,6 +2604,7 @@ mod tests {
                             name: "CITY_ROUTE".to_owned(),
                             args: Vec::new(),
                         },
+                        launch_label: None,
                     },
                 ],
             },
@@ -2139,13 +2621,25 @@ mod tests {
         let flags: Vec<bool> = s.schedule.cycles[0]
             .stmts
             .iter()
-            .map(|st| st.negative)
+            .map(|st| match &st.moment {
+                MomentExpr::Absolute { negative, .. } => *negative,
+                _ => panic!("expected Absolute moment"),
+            })
             .collect();
         assert_eq!(flags, vec![false, true, true, true]);
-        assert_eq!(s.schedule.cycles[0].stmts[1].offset.raw, "10m");
-        assert_eq!(s.schedule.cycles[0].stmts[1].offset_raw(), "-10m");
-        assert_eq!(s.schedule.cycles[0].stmts[0].offset_raw(), "0m");
-        assert!(s.schedule.root.stmts[0].negative);
+        assert_eq!(
+            match &s.schedule.cycles[0].stmts[1].moment {
+                MomentExpr::Absolute { duration, .. } => duration.raw.as_str(),
+                _ => panic!("expected Absolute moment"),
+            },
+            "10m"
+        );
+        assert_eq!(s.schedule.cycles[0].stmts[1].moment_raw(), "-10m");
+        assert_eq!(s.schedule.cycles[0].stmts[0].moment_raw(), "0m");
+        match &s.schedule.root.stmts[0].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(*negative),
+            _ => panic!("expected Absolute moment"),
+        }
     }
 
     #[test]
@@ -2239,22 +2733,76 @@ mod tests {
         let s = parse(src).expect("fill gaps обязан разбираться");
         assert_eq!(
             s.schedule.root.stmts[0].repeat,
-            Repeat::FillGaps { until: None }
+            Repeat::FillGaps {
+                until: None,
+                pack: Pack::Left
+            }
         );
         match &s.schedule.root.stmts[1].repeat {
-            Repeat::FillGaps { until: Some(u) } => {
+            Repeat::FillGaps {
+                until: Some(u),
+                pack,
+            } => {
                 assert!(!u.negative);
                 assert_eq!(u.raw(), "12h");
+                assert_eq!(*pack, Pack::Left);
             }
             r => panic!("ожидался fill gaps until, получено {r:?}"),
         }
         match &s.schedule.root.stmts[2].repeat {
-            Repeat::FillGaps { until: Some(u) } => {
+            Repeat::FillGaps {
+                until: Some(u),
+                pack,
+            } => {
                 assert!(u.negative);
                 assert_eq!(u.raw(), "-2h");
+                assert_eq!(*pack, Pack::Left);
             }
             r => panic!("ожидался fill gaps until -2h, получено {r:?}"),
         }
+    }
+
+    #[test]
+    fn parses_fill_gaps_pack() {
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: fill gaps pack left R(); \
+            1h: fill gaps pack right R(); \
+            2h: fill gaps pack center R(); \
+            3h: fill gaps pack right until 15h R(); } }";
+        let s = parse(src).expect("fill gaps pack обязан разбираться");
+        match &s.schedule.root.stmts[0].repeat {
+            Repeat::FillGaps { pack, until } => {
+                assert_eq!(*pack, Pack::Left);
+                assert!(until.is_none());
+            }
+            r => panic!("ожидался pack left, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[1].repeat {
+            Repeat::FillGaps { pack, .. } => assert_eq!(*pack, Pack::Right),
+            r => panic!("ожидался pack right, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[2].repeat {
+            Repeat::FillGaps { pack, .. } => assert_eq!(*pack, Pack::Center),
+            r => panic!("ожидался pack center, получено {r:?}"),
+        }
+        match &s.schedule.root.stmts[3].repeat {
+            Repeat::FillGaps { pack, until } => {
+                assert_eq!(*pack, Pack::Right);
+                assert_eq!(until.as_ref().expect("until").raw(), "15h");
+            }
+            r => panic!("ожидался pack right until, получено {r:?}"),
+        }
+        // `pack` без значения и неизвестное направление — синтаксические ошибки.
+        let head = "schedule \"T\" { point A { actions = [x]; } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { ";
+        let tail = " } }";
+        assert!(parse(&format!("{head} 0h: fill gaps pack R(); {tail}")).is_err());
+        assert!(parse(&format!("{head} 0h: fill gaps pack up R(); {tail}")).is_err());
+        // Границы слова: `packleft` и `leftovers` — имена, а не модификатор.
+        assert!(parse(&format!("{head} 0h: fill gaps packleft R(); {tail}")).is_err());
     }
 
     #[test]
@@ -2443,14 +2991,18 @@ mod tests {
         ))
         .expect("цикл с именем duration обязан разбираться");
         assert_eq!(s.schedule.cycles[1].name, "duration");
-        assert!(parse(&format!(
-            "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
-        ))
-        .is_err());
-        assert!(parse(&format!(
-            "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
-        ))
-        .is_err());
+        assert!(
+            parse(&format!(
+                "{head} cycle duration = 1h {{ 0m: A.x(); }} {tail}"
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(&format!(
+                "{head} cycle C durationx = 1h {{ 0m: A.x(); }} {tail}"
+            ))
+            .is_err()
+        );
         assert!(
             parse_decls("time_const T durationx = 1h { a: 1m; };").is_err(),
             "склейка поля duration обязана быть ошибкой"
@@ -2485,7 +3037,7 @@ mod tests {
             let src_gaps = format!("{head} 6h: fill gaps until {dur} R(); {tail}");
             let g = parse(&src_gaps).expect("gaps-горизонт обязан разбираться: {dur}");
             match &g.schedule.root.stmts[0].repeat {
-                Repeat::FillGaps { until: Some(u) } => assert_eq!(u.raw(), dur),
+                Repeat::FillGaps { until: Some(u), .. } => assert_eq!(u.raw(), dur),
                 r => panic!("ожидался fill gaps until, получено {r:?}"),
             }
         }
@@ -2679,12 +3231,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_use_between_decls_and_schedule() {
+    fn schedule_members_free_order() {
+        // Корень первым, цикл перед точкой — валидно, состав тот же.
+        let src = "schedule \"T\" { \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } \
+            cycle R duration = 1h { 0m: A.x(); } \
+            point A { actions = [x]; } }";
+        let file = parse(src).expect("перемешанные члены валидны");
+        assert_eq!(file.schedule.root.stmts.len(), 1);
+        assert_eq!(file.schedule.cycles[0].name, "R");
+        assert_eq!(file.schedule.points[0].name, "A");
+    }
+
+    #[test]
+    fn duplicate_root_cycle_reports_slug() {
+        // Второй корень — duplicate-argument.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: A.x(); } \
+            root_cycle start_time = \"2026-01-02T00:00:00\", duration = 24h { 6h: A.x(); } }";
+        match parse(src) {
+            Err(ParseError::Coded(e)) => assert_eq!(
+                (e.code, e.message.as_str()),
+                ("duplicate-argument", "duplicate argument 'root_cycle'")
+            ),
+            r => panic!("ожидался duplicate-argument, получено {r:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_use_between_decls() {
+        // use вперемешку с объявлениями (до расписания) — валидно.
         let src = "const K = 1; use \"a.cyclo\"; schedule \"T\" { \
             point A { actions = [x]; } \
             cycle R duration = 1h { 0m: A.x(); } \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: R(); } }";
-        assert!(parse(src).is_err());
+        let s = parse(src).expect("use между объявлениями валиден");
+        assert_eq!(s.uses, vec!["a.cyclo".to_owned()]);
     }
 
     #[test]
@@ -2718,7 +3300,7 @@ mod tests {
 
     #[test]
     fn parses_system_prelude() {
-        let src = include_str!("../../cyclorithm-core/src/std.cyclo");
+        let src = include_str!("../std.cyclo");
         let decls = parse_decls(src).expect("прелюдия обязана разбираться");
         assert!(decls.len() >= 20, "в прелюдии десятки объявлений");
         assert!(decls.iter().any(|d| matches!(
@@ -2734,14 +3316,17 @@ mod tests {
         assert_eq!(s.points.len(), 2);
         assert_eq!(s.cycles.len(), 2);
         assert_eq!(s.cycles[0].stmts.len(), 4);
-        assert!(s.cycles[0].stmts[3].negative);
+        match &s.cycles[0].stmts[3].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(*negative),
+            _ => panic!("expected Absolute moment"),
+        }
         assert_eq!(s.cycles[1].stmts.len(), 2);
         assert_eq!(s.root.stmts.len(), 5);
     }
 
     #[test]
-    fn parses_time_const_with_firing() {
-        // Слоты с метками; `->` — слот и вызов в одном лице, условие опционально.
+    fn parses_time_const_with_slot_call() {
+        // Слоты с метками; `->` — слот и привязанный вызов в одном лице, условие опционально.
         let src = "time_const DAY duration = 21h35m { \
             1st: 9h; \
             [workday(at)] lunch: 12h20m -> LUNCH(); \
@@ -2750,11 +3335,13 @@ mod tests {
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 0m: A.x(); } }";
         let f = parse(src).expect("таблица обязана разбираться");
         let (name, duration, rows) = match &f.decls[..] {
-            [Decl::TimeConst {
-                name,
-                duration,
-                rows,
-            }] => (name, duration, rows),
+            [
+                Decl::TimeConst {
+                    name,
+                    duration,
+                    rows,
+                },
+            ] => (name, duration, rows),
             d => panic!("ожидалась одна time_const, получено {d:?}"),
         };
         assert_eq!(name, "DAY");
@@ -2763,16 +3350,16 @@ mod tests {
         assert_eq!(rows[0].label, "1st");
         assert_eq!(rows[0].offset.raw, "9h");
         assert!(rows[0].condition.is_none());
-        assert!(rows[0].firing.is_none());
+        assert!(rows[0].slot_call.is_none());
         assert_eq!(rows[1].label, "lunch");
         assert!(rows[1].condition.is_some());
         assert!(matches!(
-            rows[1].firing,
+            rows[1].slot_call,
             Some(Invocation::CycleCall { ref name, ref args })
                 if name == "LUNCH" && args.is_empty()
         ));
         assert!(matches!(
-            rows[2].firing,
+            rows[2].slot_call,
             Some(Invocation::PointAction { ref point, ref action, .. })
                 if point == "BELL" && action == "ring"
         ));
@@ -2799,7 +3386,7 @@ mod tests {
         assert!(s.routines[0].stmts[0].condition.is_some());
         assert!(matches!(
             s.routines[0].stmts[1].offset,
-            RoutineOffset::Duration(ref d) if d.raw == "45m"
+            RoutineOffset::Moment(MomentExpr::Absolute { negative: false, duration: ref d }) if d.raw == "45m"
         ));
         assert!(s.routines[1].stmts.is_empty());
         assert!(matches!(
@@ -2817,7 +3404,97 @@ mod tests {
         let s = parse(src).expect("строка обязана разбираться").schedule;
         assert!(matches!(
             s.routines[0].stmts[0].offset,
-            RoutineOffset::Duration(ref d) if d.raw == "1ms"
+            RoutineOffset::Moment(MomentExpr::Absolute { negative: false, duration: ref d }) if d.raw == "1ms"
         ));
+    }
+
+    #[test]
+    fn parses_launch_labels_and_dependencies() {
+        // `as` — метка запуска; `after/at/until` — зависимости; `+` — курсор.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle W duration = 2h { 0m: A.x(); } \
+            cycle P duration = 8h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: W() as W1; after W1: P(); at W1: P(); +10m: P(); +: P(); } }";
+        let s = parse(src)
+            .expect("метки и зависимости обязаны разбираться")
+            .schedule;
+        assert_eq!(s.root.stmts.len(), 5);
+        assert_eq!(
+            s.root.stmts[0].launch_label,
+            Some(LaunchLabel("W1".to_owned()))
+        );
+        assert!(matches!(
+            s.root.stmts[1].moment,
+            MomentExpr::Dependency {
+                kind: DepKind::After,
+                ref label
+            } if label == "W1"
+        ));
+        assert!(matches!(
+            s.root.stmts[2].moment,
+            MomentExpr::Dependency {
+                kind: DepKind::At,
+                ref label
+            } if label == "W1"
+        ));
+        assert!(matches!(
+            s.root.stmts[3].moment,
+            MomentExpr::Relative { ref offset } if offset.as_ref().is_some_and(|d| d.raw == "10m")
+        ));
+        assert!(matches!(
+            s.root.stmts[4].moment,
+            MomentExpr::Relative { offset: None }
+        ));
+    }
+
+    #[test]
+    fn parses_moment_functions_with_bare_labels() {
+        // `start(W1)`/`end(W1)` — голая метка; `max(8h, end(W1))` — смесь.
+        let src = "schedule \"T\" { point A { actions = [x]; } \
+            cycle P duration = 1h { 0m: A.x(); } \
+            root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { \
+            0h: P() as W1; max(8h, end(W1)): P(); min(start(W1), 10h): P(); } }";
+        let s = parse(src)
+            .expect("функции момента обязаны разбираться")
+            .schedule;
+        assert_eq!(s.root.stmts.len(), 3);
+        match &s.root.stmts[1].moment {
+            MomentExpr::Func { name, args } => {
+                assert_eq!(name, "max");
+                assert_eq!(args.len(), 2);
+                assert!(
+                    matches!(&args[0], MomentArg::Expr(e) if matches!(**e, MomentExpr::Absolute { .. }))
+                );
+                match &args[1] {
+                    MomentArg::Expr(e) => match &**e {
+                        MomentExpr::Func { name, args } => {
+                            assert_eq!(name, "end");
+                            assert_eq!(args, &vec![MomentArg::Label("W1".to_owned())]);
+                        }
+                        m => panic!("ожидался end(W1), получено {m:?}"),
+                    },
+                    a => panic!("ожидался Expr, получено {a:?}"),
+                }
+            }
+            m => panic!("ожидался max(..), получено {m:?}"),
+        }
+        match &s.root.stmts[2].moment {
+            MomentExpr::Func { name, args } => {
+                assert_eq!(name, "min");
+                assert_eq!(args.len(), 2);
+                match &args[0] {
+                    MomentArg::Expr(e) => match &**e {
+                        MomentExpr::Func { name, args } => {
+                            assert_eq!(name, "start");
+                            assert_eq!(args, &vec![MomentArg::Label("W1".to_owned())]);
+                        }
+                        m => panic!("ожидался start(W1), получено {m:?}"),
+                    },
+                    a => panic!("ожидался Expr, получено {a:?}"),
+                }
+            }
+            m => panic!("ожидался min(..), получено {m:?}"),
+        }
     }
 }

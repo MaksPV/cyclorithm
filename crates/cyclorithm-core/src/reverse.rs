@@ -6,10 +6,10 @@
 //! Дальше узел — обычный цикл: все проверки идут общим порядком
 //! (см. docs/reference/semantics.md).
 
-use cyclorithm_parser::{Cycle, Schedule, Stmt};
+use crate::parser::{Cycle, MomentExpr, Schedule, Stmt};
 
-use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
 use crate::Error;
+use crate::duration::{duration_from_ms, duration_ms, effective_offset_ms};
 
 /// Заменить все `reverse`-узлы расписания обычными циклами.
 /// Вызывать после разбора, до `validate_names`: дальше проверки
@@ -85,12 +85,19 @@ fn mirror_rows(src: &Cycle, limit: i64) -> Result<Vec<Stmt>, Error> {
             // переворачиваем знак, валидация результата добьёт общим порядком.
             (true, eff - limit)
         };
+        let mut dur = duration_from_ms(magnitude);
+        if negative {
+            dur.raw = format!("-{}", dur.raw);
+        }
         stmts.push(Stmt {
-            offset: duration_from_ms(magnitude),
-            negative,
+            moment: MomentExpr::Absolute {
+                negative,
+                duration: dur,
+            },
             repeat: row.repeat.clone(),
             condition: row.condition.clone(),
             invocation: row.invocation.clone(),
+            launch_label: None,
         });
     }
     Ok(stmts)
@@ -100,25 +107,25 @@ fn mirror_rows(src: &Cycle, limit: i64) -> Result<Vec<Stmt>, Error> {
 mod tests {
     use super::*;
 
-    fn mirror_of(body: &str) -> cyclorithm_parser::Schedule {
+    fn mirror_of(body: &str) -> crate::parser::Schedule {
         let src = format!(
             "schedule \"T\" {{ point A {{ actions = [x]; }} \
             cycle R duration = 1h {{ {body} }} \
             cycle BACK reverse R; \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h {{ 6h: BACK(); }} }}"
         );
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         materialize_reverse(&mut schedule).expect("десугар обязан срабатывать");
         schedule
     }
 
-    fn offsets(schedule: &cyclorithm_parser::Schedule) -> Vec<String> {
+    fn offsets(schedule: &crate::parser::Schedule) -> Vec<String> {
         schedule.cycles[1]
             .stmts
             .iter()
-            .map(|s| s.offset_raw())
+            .map(|s| s.moment_raw())
             .collect()
     }
 
@@ -138,7 +145,10 @@ mod tests {
         // `-10m` при 1h — это 50m, зеркало — 10m обычной длительностью.
         let s = mirror_of("-10m: A.x();");
         assert_eq!(offsets(&s), vec!["10m"]);
-        assert!(!s.cycles[1].stmts[0].negative);
+        match &s.cycles[1].stmts[0].moment {
+            MomentExpr::Absolute { negative, .. } => assert!(!negative),
+            _ => panic!("expected Absolute moment"),
+        }
     }
 
     #[test]
@@ -146,7 +156,7 @@ mod tests {
         let src = "schedule \"T\" { point A { actions = [x]; } \
             cycle BACK reverse NOPE; \
             root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: BACK(); } }";
-        let mut schedule = cyclorithm_parser::parse(src)
+        let mut schedule = crate::parser::parse(src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("источника нет");
@@ -163,7 +173,7 @@ mod tests {
         let tail =
             " root_cycle start_time = \"2026-01-01T00:00:00\", duration = 24h { 6h: BACK(); } }";
         let src = format!("{head} cycle BACK reverse M; {tail}");
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("рутина не цикл");
@@ -176,7 +186,7 @@ mod tests {
             "{head} cycle MID reverse R; cycle BACK reverse MID; \
             cycle R duration = 1h {{ 0m: A.x(); }} {tail}"
         );
-        let mut schedule = cyclorithm_parser::parse(&src)
+        let mut schedule = crate::parser::parse(&src)
             .expect("фикстура обязана разбираться")
             .schedule;
         let err = materialize_reverse(&mut schedule).expect_err("цепочка запрещена");

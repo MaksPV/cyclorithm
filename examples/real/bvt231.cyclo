@@ -2,7 +2,7 @@
 // Неделя семестра от 2026-09-01: semester_day 0..6 — 1-я (нечётная).
 // Учёба — только в семестре (2026-09-01 — 2026-12-22 включительно),
 // госпраздники — выходные.
-fun semester_day(at) = floordiv(at - mkdate(2026, 9, 1, 0, 0, 0, 0), DAY);
+fun semester_day(at) = floordiv(at.wall - mkdate(2026, 9, 1, 0, 0, 0, 0).wall, DAY);
 fun my_week_number(at) = floordiv(semester_day(at), 7) + 1;
 pred odd_week(at) = my_week_number(at) % 2 == 1;
 pred even_week(at) = my_week_number(at) % 2 == 0;
@@ -18,7 +18,7 @@ pred study_day(at) = semester(at) and not holiday(at);
 time_const UNIVERSITY_DAY duration = 21h35m {
   1st: 9h;
   2nd: 10h45m;
-  [workday(at)] lunch_start: 12h20m -> LUNCH();
+  [workday(at) and len(here.enabled_events) > 0] lunch_start: 12h20m -> LUNCH();
   3rd: 13h;
   4th: 14h45m;
   5th: 16h30m;

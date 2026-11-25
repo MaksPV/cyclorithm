@@ -1,0 +1,20 @@
+schedule "reverse-dynamic-moment" {
+  point A {
+    actions = [x];
+  }
+
+  cycle F
+    duration = 1h
+  {
+    +: A.x();
+  }
+
+  cycle B reverse F;
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    6h: B();
+  }
+}

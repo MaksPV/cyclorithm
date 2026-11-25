@@ -13,6 +13,17 @@ fn run(args: &[&str]) -> Output {
         .expect("бинарь cyclo обязан запускаться")
 }
 
+/// Прогон с переменными окружения (пин `TZ` для дефолтного окна:
+/// иначе CI в UTC и dev в Москве разъедутся).
+fn run_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut cmd = cyclo();
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.output().expect("бинарь cyclo обязан запускаться")
+}
+
 /// Прогон со stdin вместо файла (`-`): вход подаётся в поток.
 fn run_stdin(args: &[&str], input: &str) -> Output {
     use std::io::Write as _;
@@ -53,6 +64,25 @@ fn route_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/route.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn free_headers_matches_expected_json() {
+    // Обратный порядок полей шапки + timezone без висячей запятой:
+    // то же событие, что при прямом порядке.
+    let out = run(&[
+        "run",
+        "../../examples/valid/free_headers.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/free_headers.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -121,6 +151,42 @@ fn rand_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/rand.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn julian_matches_expected_json() {
+    // Юлианское Рождество (25.12 → 07.01) и roundtrip 30.03 → 12.04.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-05-11T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn julian_1900_matches_expected_json() {
+    // 29.02.1900 существует по-юлиански (13.03 н.ст.), mkdate его отверг бы.
+    let out = run(&[
+        "run",
+        "../../examples/valid/julian_1900.cyclo",
+        "--start",
+        "1900-03-01T00:00:00",
+        "--end",
+        "1900-03-31T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/julian_1900.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -281,6 +347,201 @@ fn gaps_matches_expected_json() {
     ]);
     let got = stdout_json(&out);
     let expected = include_str!("../../../examples/valid/gaps.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn dependencies_matches_expected_json() {
+    // Issue 45: метки as, зависимости after/at, курсор +/+:, функции
+    // max/min/start/end, repeat с динамическим стартом, каскадный skip.
+    let out = run(&[
+        "run",
+        "../../examples/valid/dependencies.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/dependencies.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    assert!(out.stderr.is_empty(), "при успехе stderr пуст");
+}
+
+#[test]
+fn launch_labels_belong_to_each_cycle_instance() {
+    let src = r#"
+    schedule "Метки экземпляра" {
+      point P { actions = [start, after]; }
+      cycle WORK duration = 1h { 0h: P.start(); }
+      cycle DAY(enabled) duration = 2h {
+        [enabled] 0h: WORK() as L;
+        after L: P.after();
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {
+        0h: DAY(true);
+        0h: DAY(false);
+        2h: DAY(false);
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T04:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let actions: Vec<_> = events
+        .iter()
+        .map(|event| event["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["start", "after"]);
+    assert_eq!(events[1]["time"], "2026-01-01T01:00:00");
+}
+
+#[test]
+fn dynamic_fill_keeps_only_complete_instances() {
+    let src = r#"
+    schedule "Полные запуски" {
+      point P { actions = [work, mark]; }
+      cycle C duration = 1h { 0h: P.work(); }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {
+        +30m: fill until 1h30m C();
+        +: fill until 2h C();
+        +: P.mark();
+        +2h: fill C();
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T04:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["time"], "2026-01-01T00:30:00");
+    assert_eq!(events[1]["action"], "mark");
+    assert_eq!(events[1]["time"], "2026-01-01T01:30:00");
+}
+
+#[test]
+fn gap_fills_respect_dynamic_occupancy() {
+    let src = r#"
+    schedule "Занятость" {
+      point P { actions = [work, breaktime]; }
+      cycle C duration = 1h { 0h: P.work(); }
+      cycle F duration = 1h { 0h: P.breaktime(); }
+      cycle DAY duration = 5h {
+        [false] 3h: C() as L;
+        after L: C();
+        +1h: C();
+        [false] +: C();
+        0h: fill gaps F();
+        0h: fill gaps F();
+        3h: C();
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 5h {
+        0h: DAY();
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T05:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let got: Vec<_> = events
+        .iter()
+        .map(|event| {
+            (
+                event["time"].as_str().unwrap(),
+                event["action"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("2026-01-01T00:00:00", "breaktime"),
+            ("2026-01-01T01:00:00", "work"),
+            ("2026-01-01T03:00:00", "work"),
+            ("2026-01-01T04:00:00", "breaktime"),
+        ]
+    );
+}
+
+#[test]
+fn check_rejects_statically_invalid_dynamic_rows() {
+    for (row, diagnostic) in [
+        ("after L: C() as L;", "forward-label-reference"),
+        ("+: repeat 0 C();", "invalid-repeat-count"),
+        ("after OFF: repeat 0 C();", "invalid-repeat-count"),
+        ("+: repeat 2 P.work();", "repeat-point-action"),
+        ("+1h2h: C();", "invalid-duration"),
+        ("max(end(OFF), +1h2h): C();", "invalid-duration"),
+        ("after OFF: fill until 5h C();", "until-out-of-bounds"),
+    ] {
+        let src = format!(
+            r#"
+            schedule "Проверка" {{
+              point P {{ actions = [work]; }}
+              cycle C duration = 1h {{ 0h: P.work(); }}
+              root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {{
+                [false] 0h: C() as OFF;
+                {row}
+              }}
+            }}
+            "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{row}: {stderr}");
+        assert!(
+            stderr.starts_with(&format!("{diagnostic}: ")),
+            "{row}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn gaps_pack_matches_expected_json() {
+    // fill gaps pack: left — встык слева, right — справа, center — по центру.
+    let out = run(&[
+        "run",
+        "../../examples/valid/gaps_pack.cyclo",
+        "--start",
+        "2026-01-01T00:00:00",
+        "--end",
+        "2026-01-02T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/gaps_pack.expected.json");
     let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
     assert_eq!(got, expected);
     assert!(out.stderr.is_empty(), "при успехе stderr пуст");
@@ -537,6 +798,52 @@ fn validation_errors_go_to_stderr() {
             "integer-out-of-range",
             "integer out of range '9223372036854775807-1-1T0:0:0.0'",
         ),
+        (
+            "bad_invalid-timezone",
+            "invalid-timezone",
+            "invalid timezone 'MSK'",
+        ),
+        (
+            "bad_missing-argument",
+            "missing-argument",
+            "missing argument 'duration'",
+        ),
+        (
+            "bad_duplicate-argument",
+            "duplicate-argument",
+            "duplicate argument 'duration'",
+        ),
+        ("bad_unknown-label", "unknown-label", "unknown label 'NOPE'"),
+        (
+            "bad_forward-label-reference",
+            "forward-label-reference",
+            "label 'W1' used before declaration",
+        ),
+        (
+            "bad_label-not-cycle-call",
+            "label-not-cycle-call",
+            "label 'W1' is not a cycle call",
+        ),
+        (
+            "bad_invalid-moment-function",
+            "invalid-moment-function",
+            "invalid moment function: 'start' takes a bare label",
+        ),
+        (
+            "bad_gaps-dynamic-moment",
+            "gaps-dynamic-moment",
+            "fill gaps with dynamic moment 'after W1' is not supported",
+        ),
+        (
+            "bad_dynamic-moment-after-gaps",
+            "dynamic-moment-after-gaps",
+            "dynamic moment '+' must precede fill gaps in the same cycle",
+        ),
+        (
+            "bad_reverse-dynamic-moment",
+            "reverse-dynamic-moment",
+            "cannot reverse dynamic moment '+'",
+        ),
     ] {
         let path = format!("../../examples/invalid/{file}.cyclo");
         let out = run(&[
@@ -688,6 +995,95 @@ fn stdin_source_matches_file() {
     let got: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("stdout — один JSON-объект");
     assert_eq!(got["events"].as_array().expect("массив").len(), 2);
+}
+
+#[test]
+fn tz_offsets_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_offsets.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // aware-окно на наивном файле — наследование кадра: стены стоят
+    // (06:00 остаётся 06:00 в зоне окна), см. docs/reference/semantics.md
+    let out_z = run(&[
+        "run",
+        "../../examples/valid/tz_offsets.cyclo",
+        "--start",
+        "2026-01-09T00:00:00+03:00",
+        "--end",
+        "2026-01-10T00:00:00+03:00",
+    ]);
+    let got_z = stdout_json(&out_z);
+    assert_eq!(got_z["events"][0]["time"], "2026-01-09T06:00:00+03:00");
+}
+
+#[test]
+fn tz_file_matches_expected_json() {
+    let out = run(&[
+        "run",
+        "../../examples/valid/tz_file.cyclo",
+        "--start",
+        "2026-01-09T00:00:00",
+        "--end",
+        "2026-01-10T00:00:00",
+    ]);
+    let got = stdout_json(&out);
+    let expected = include_str!("../../../examples/valid/tz_file.expected.json");
+    let expected: serde_json::Value = serde_json::from_str(expected).unwrap();
+    assert_eq!(got, expected);
+    // naive-окно с файлом +03:00 → fallback к зоне файла
+    assert_eq!(got["events"][0]["time"], "2026-01-09T06:00:00+03:00");
+}
+
+#[test]
+fn next_defaults_to_system_zone() {
+    // Голый `next` (без `--from`): now с подписью системной зоны —
+    // суффиксы `from` и событий из `TZ` (см. docs/reference/cli.md).
+    // MSK круглый год +03:00 (без DST с 2014-го), tzdata есть и в CI.
+    let out = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "Europe/Moscow")],
+    );
+    let got = stdout_json(&out);
+    assert!(
+        got["from"].as_str().expect("строка").ends_with("+03:00"),
+        "from в зоне TZ: {}",
+        got["from"]
+    );
+    assert!(
+        got["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("+03:00"),
+        "событие в зоне TZ: {}",
+        got["events"][0]["time"]
+    );
+    let out_utc = run_env(
+        &["next", "../../examples/valid/tz_offsets.cyclo", "-n", "1"],
+        &[("TZ", "UTC")],
+    );
+    let got_utc = stdout_json(&out_utc);
+    assert!(
+        got_utc["from"].as_str().expect("строка").ends_with("Z"),
+        "from в UTC: {}",
+        got_utc["from"]
+    );
+    assert!(
+        got_utc["events"][0]["time"]
+            .as_str()
+            .expect("строка")
+            .ends_with("Z"),
+        "событие в UTC: {}",
+        got_utc["events"][0]["time"]
+    );
 }
 
 #[test]

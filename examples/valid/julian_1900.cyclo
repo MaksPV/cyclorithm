@@ -1,0 +1,16 @@
+use "../real/libs/julian.cyclo";
+
+schedule "Юлианский високосный 1900" {
+  point P {
+    actions = [leap];
+  }
+
+  cycle DAY duration = 1d {
+    [julian_to_wall({"y": 1900, "mo": 2, "d": 29}) == at.wall] 0m: P.leap();
+    [j_datestr(at) == "1900-02-29"] 0m: P.leap();
+  }
+
+  root_cycle start_time = "1900-03-01T00:00:00", duration = 30d {
+    0m: fill DAY();
+  }
+}

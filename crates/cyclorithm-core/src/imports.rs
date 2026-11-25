@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
-use cyclorithm_parser::Decl;
+use crate::parser::Decl;
 
 use crate::Error;
 
@@ -63,7 +63,7 @@ fn visit(
         return Ok(());
     }
     let src = read(&full).map_err(|_| ImportError::Coded(Error::cannot_read_import(use_str)))?;
-    let unit = cyclorithm_parser::parse_unit(&src)
+    let unit = crate::parser::parse_unit(&src)
         .map_err(|e| ImportError::Syntax(format!("{}: {e}", full.display())))?;
     if unit.has_schedule {
         return Err(ImportError::Coded(Error::schedule_in_import(use_str)));

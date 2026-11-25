@@ -1,0 +1,18 @@
+schedule "unknown-label" {
+  point A {
+    actions = [x];
+  }
+
+  cycle P
+    duration = 1h
+  {
+    0m: A.x();
+  }
+
+  root_cycle
+    start_time = "2026-01-01T00:00:00",
+    duration = 24h
+  {
+    after NOPE: P();
+  }
+}

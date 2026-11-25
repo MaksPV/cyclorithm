@@ -1,0 +1,16 @@
+use "../real/libs/julian.cyclo";
+
+schedule "Юлианский календарь" {
+  point P {
+    actions = [christmas, spring_day];
+  }
+
+  cycle DAY duration = 1d {
+    [j_month(at) == 12 and j_day(at) == 25] 0m: P.christmas();
+    [julian_to_wall({"y": 2026, "mo": 3, "d": 30}) == at.wall] 0m: P.spring_day();
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 130d {
+    0m: fill DAY();
+  }
+}

@@ -4,8 +4,8 @@ schedule "mkdate" {
   }
 
   cycle DAY duration = 1d {
-    [month(at) == 9 and dow(at) == thu and month(at + 604800000) == 10] 0m: P.rule();
-    [at == mkdate(2026, 9, 24, 0, 0, 0, 0)] 0m: P.built();
+    [month(at) == 9 and dow(at) == thu and at.wall + 604800000 >= mkdate(2026, 10, 1, 0, 0, 0, 0).wall] 0m: P.rule();
+    [at.wall == mkdate(2026, 9, 24, 0, 0, 0, 0).wall] 0m: P.built();
   }
 
   root_cycle start_time = "2026-09-01T00:00:00", duration = 30d {

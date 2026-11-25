@@ -1,0 +1,17 @@
+schedule "Свободные шапки" {
+  root_cycle
+    duration = 24h,
+    start_time = "2026-01-09T00:00:00"
+  {
+    6h: R();
+  }
+
+  cycle R
+    duration = 1h
+  {
+    0m: A.x();
+  }
+
+  timezone = "Z"
+  point A { attrs = {"k": 1}; actions = [x]; }
+}

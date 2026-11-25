@@ -3,13 +3,16 @@
 
 use std::fmt;
 
+pub mod api;
 pub mod cond;
 pub mod datetime;
 pub mod duration;
+pub mod engine;
 pub mod expand;
 pub mod imports;
+pub mod parser;
+pub mod pipeline;
 pub mod reverse;
-pub mod schedule;
 pub mod validate;
 
 // ---------------------------------------------------------------------------
@@ -65,8 +68,21 @@ impl Error {
         Self::coded("duplicate", format!("duplicate {kind} '{name}'"))
     }
 
-    /// `reserved-name`: `at` зарезервировано (момент строки) — объявлять так
-    /// ничего нельзя, иначе момент молча затенит объявление.
+    /// `missing-argument`: `missing argument 'duration'` — в шапке нет
+    /// обязательного поля (порядок полей свободный, см. syntax.md).
+    pub fn missing_argument(name: &str) -> Self {
+        Self::coded("missing-argument", format!("missing argument '{name}'"))
+    }
+
+    /// `duplicate-argument`: `duplicate argument 'attrs'` — поле шапки
+    /// указано дважды (порядок полей свободный, см. syntax.md).
+    pub fn duplicate_argument(name: &str) -> Self {
+        Self::coded("duplicate-argument", format!("duplicate argument '{name}'"))
+    }
+
+    /// `reserved-name`: `at` (момент строки) и `here` (контекст инстанции)
+    /// зарезервированы — объявлять так ничего нельзя, иначе синтетика
+    /// развёртки молча затенит объявление.
     pub fn reserved_name(name: &str) -> Self {
         Self::coded("reserved-name", format!("reserved name '{name}'"))
     }
@@ -107,7 +123,7 @@ impl Error {
     }
 
     /// `recursive`: рекурсия через таблицу — `recursive table 'T'`
-    /// (пожар `->` инстанцирует рутину с той же таблицей).
+    /// (вызов слота `->` инстанцирует рутину с той же таблицей).
     pub fn recursive_table(name: &str) -> Self {
         Self::coded("recursive", format!("recursive table '{name}'"))
     }
@@ -314,11 +330,83 @@ impl Error {
         Self::coded("unknown-slot", format!("unknown slot '{label}'"))
     }
 
+    /// `invalid-timezone`: `invalid timezone 'MSK'` (только `Z`/±HH:MM`;
+    /// имена зон, включая аббревиатуры и IANA, не поддерживаются).
+    pub fn invalid_timezone(raw: &str) -> Self {
+        Self::coded("invalid-timezone", format!("invalid timezone '{raw}'"))
+    }
+
     /// `invalid-table-argument`: первый аргумент вызова рутины — не имя таблицы.
     pub fn invalid_table_argument(name: &str) -> Self {
         Self::coded(
             "invalid-table-argument",
             format!("invalid table argument for '{name}'"),
+        )
+    }
+
+    /// `invalid-routine-moment`: момент в рутине должен быть абсолютной длительностью или меткой слота.
+    pub fn invalid_routine_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "invalid-routine-moment",
+            format!("routine moment '{moment_raw}' must be absolute duration or slot label"),
+        )
+    }
+
+    /// `unknown-label`: `unknown label 'W1'` — ссылки на несуществующую метку запуска.
+    pub fn unknown_label(label: &str) -> Self {
+        Self::coded("unknown-label", format!("unknown label '{label}'"))
+    }
+
+    /// `forward-label-reference`: `label 'W1' used before declaration` —
+    /// ссылка на метку, объявленную ниже по scope (разрешены только ссылки назад).
+    pub fn forward_label_reference(label: &str) -> Self {
+        Self::coded(
+            "forward-label-reference",
+            format!("label '{label}' used before declaration"),
+        )
+    }
+
+    /// `label-not-cycle-call`: `label 'W1' is not a cycle call` —
+    /// метка `as` на действии точки (метки — только на запусках циклов).
+    pub fn label_not_cycle_call(label: &str) -> Self {
+        Self::coded(
+            "label-not-cycle-call",
+            format!("label '{label}' is not a cycle call"),
+        )
+    }
+
+    /// `invalid-moment-function`: неверные аргументы функции момента
+    /// (`start`/`end` — ровно 1 голая метка, `max`/`min` — ≥1 аргумента).
+    pub fn invalid_moment_function(details: &str) -> Self {
+        Self::coded(
+            "invalid-moment-function",
+            format!("invalid moment function: {details}"),
+        )
+    }
+
+    /// `reverse-dynamic-moment`: `reverse` цикла с динамическим моментом
+    /// (`+`, `after/at/until`, функции) — зеркало определено только для абсолютных смещений.
+    pub fn reverse_dynamic_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "reverse-dynamic-moment",
+            format!("cannot reverse dynamic moment '{moment_raw}'"),
+        )
+    }
+
+    /// `gaps-dynamic-moment`: `fill gaps` с динамическим моментом —
+    /// окно добивки начинается с абсолютного смещения.
+    pub fn gaps_dynamic_moment(moment_raw: &str) -> Self {
+        Self::coded(
+            "gaps-dynamic-moment",
+            format!("fill gaps with dynamic moment '{moment_raw}' is not supported"),
+        )
+    }
+
+    /// `dynamic-moment-after-gaps`: сначала разрешается занятость обычных строк.
+    pub(crate) fn dynamic_moment_after_gaps(moment_raw: &str) -> Self {
+        Self::coded(
+            "dynamic-moment-after-gaps",
+            format!("dynamic moment '{moment_raw}' must precede fill gaps in the same cycle"),
         )
     }
 }
