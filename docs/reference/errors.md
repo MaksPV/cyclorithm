@@ -53,6 +53,7 @@
 | `invalid-moment-function` | `invalid moment function: 'start' takes a bare label` | `start`/`end` — ровно 1 голая метка; `max`/`min` — ≥1 аргумента |
 | `invalid-routine-moment` | `routine moment 'after W1' must be absolute duration or slot label` | В рутинах — только длительности и метки слотов таблицы |
 | `gaps-dynamic-moment` | `fill gaps with dynamic moment 'after W1' is not supported` | У `fill gaps` — только абсолютное смещение |
+| `dynamic-moment-after-gaps` | `dynamic moment '+' must precede fill gaps in the same cycle` | Поставить строку с динамическим моментом перед первой добивкой в этом цикле |
 | `reverse-dynamic-moment` | `cannot reverse dynamic moment '+'` | У `reverse`-цикла в источнике — только абсолютные смещения |
 
 ## Таблицы

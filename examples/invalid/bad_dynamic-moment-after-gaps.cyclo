@@ -1,0 +1,14 @@
+schedule "Динамический момент после добивки" {
+  point P {
+    actions = [ring];
+  }
+
+  cycle C duration = 1h {
+    0h: P.ring();
+  }
+
+  root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {
+    0h: fill gaps C();
+    +: C();
+  }
+}

@@ -372,6 +372,164 @@ fn dependencies_matches_expected_json() {
 }
 
 #[test]
+fn launch_labels_belong_to_each_cycle_instance() {
+    let src = r#"
+    schedule "Метки экземпляра" {
+      point P { actions = [start, after]; }
+      cycle WORK duration = 1h { 0h: P.start(); }
+      cycle DAY(enabled) duration = 2h {
+        [enabled] 0h: WORK() as L;
+        after L: P.after();
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {
+        0h: DAY(true);
+        0h: DAY(false);
+        2h: DAY(false);
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T04:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let actions: Vec<_> = events
+        .iter()
+        .map(|event| event["action"].as_str().unwrap())
+        .collect();
+    assert_eq!(actions, ["start", "after"]);
+    assert_eq!(events[1]["time"], "2026-01-01T01:00:00");
+}
+
+#[test]
+fn dynamic_fill_keeps_only_complete_instances() {
+    let src = r#"
+    schedule "Полные запуски" {
+      point P { actions = [work, mark]; }
+      cycle C duration = 1h { 0h: P.work(); }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {
+        +30m: fill until 1h30m C();
+        +: fill until 2h C();
+        +: P.mark();
+        +2h: fill C();
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T04:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["time"], "2026-01-01T00:30:00");
+    assert_eq!(events[1]["action"], "mark");
+    assert_eq!(events[1]["time"], "2026-01-01T01:30:00");
+}
+
+#[test]
+fn gap_fills_respect_dynamic_occupancy() {
+    let src = r#"
+    schedule "Занятость" {
+      point P { actions = [work, breaktime]; }
+      cycle C duration = 1h { 0h: P.work(); }
+      cycle F duration = 1h { 0h: P.breaktime(); }
+      cycle DAY duration = 5h {
+        [false] 3h: C() as L;
+        after L: C();
+        +1h: C();
+        [false] +: C();
+        0h: fill gaps F();
+        0h: fill gaps F();
+        3h: C();
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 5h {
+        0h: DAY();
+      }
+    }
+    "#;
+    let out = run_stdin(
+        &[
+            "run",
+            "-",
+            "--start",
+            "2026-01-01",
+            "--end",
+            "2026-01-01T05:00",
+        ],
+        src,
+    );
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let got: Vec<_> = events
+        .iter()
+        .map(|event| {
+            (
+                event["time"].as_str().unwrap(),
+                event["action"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("2026-01-01T00:00:00", "breaktime"),
+            ("2026-01-01T01:00:00", "work"),
+            ("2026-01-01T03:00:00", "work"),
+            ("2026-01-01T04:00:00", "breaktime"),
+        ]
+    );
+}
+
+#[test]
+fn check_rejects_statically_invalid_dynamic_rows() {
+    for (row, diagnostic) in [
+        ("after L: C() as L;", "forward-label-reference"),
+        ("+: repeat 0 C();", "invalid-repeat-count"),
+        ("after OFF: repeat 0 C();", "invalid-repeat-count"),
+        ("+: repeat 2 P.work();", "repeat-point-action"),
+        ("+1h2h: C();", "invalid-duration"),
+        ("max(end(OFF), +1h2h): C();", "invalid-duration"),
+        ("after OFF: fill until 5h C();", "until-out-of-bounds"),
+    ] {
+        let src = format!(
+            r#"
+            schedule "Проверка" {{
+              point P {{ actions = [work]; }}
+              cycle C duration = 1h {{ 0h: P.work(); }}
+              root_cycle start_time = "2026-01-01T00:00:00", duration = 4h {{
+                [false] 0h: C() as OFF;
+                {row}
+              }}
+            }}
+            "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{row}: {stderr}");
+        assert!(
+            stderr.starts_with(&format!("{diagnostic}: ")),
+            "{row}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn gaps_pack_matches_expected_json() {
     // fill gaps pack: left — встык слева, right — справа, center — по центру.
     let out = run(&[
@@ -675,6 +833,11 @@ fn validation_errors_go_to_stderr() {
             "bad_gaps-dynamic-moment",
             "gaps-dynamic-moment",
             "fill gaps with dynamic moment 'after W1' is not supported",
+        ),
+        (
+            "bad_dynamic-moment-after-gaps",
+            "dynamic-moment-after-gaps",
+            "dynamic moment '+' must precede fill gaps in the same cycle",
         ),
         (
             "bad_reverse-dynamic-moment",
