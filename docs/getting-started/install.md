@@ -1,9 +1,10 @@
 # Установка
 
-## Быстрый путь: готовый бинарь
+## Готовая сборка
 
-Собранный `cyclo` (Linux/Windows, x86-64/ARM64) — в
-[релизах](https://github.com/MaksPV/cyclorithm/releases). Проверка:
+Скачайте `cyclo` для Linux или Windows (x86-64 или ARM64) со
+[страницы релизов](https://github.com/MaksPV/cyclorithm/releases).
+После распаковки проверьте версию:
 
 ```console
 $ cyclo --version
@@ -12,7 +13,7 @@ cyclo 0.3.2
 
 ## Из исходников
 
-Требуется стабильный Rust (`rustup`). Команды — из корня репо:
+Требуется стабильная версия Rust (`rustup`). Выполните команду из корня репозитория:
 
 ```console
 $ cargo run -p cyclorithm-cli -- run examples/valid/route.cyclo \
@@ -27,6 +28,6 @@ $ cargo fmt --all -- --check
 $ cargo clippy --workspace --all-targets
 ```
 
-Те же проверки выполняет CI на push и PR в `main`/`dev`.
+Те же проверки выполняются в CI при отправке изменений и открытии pull request в `main` или `dev`.
 
-Дальше — [туториал с нуля](tutorial.md).
+Далее можно составить [первое расписание](tutorial.md).

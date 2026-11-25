@@ -1,5 +1,5 @@
 # cyclorithm (Python)
 
-Нативные биндинги движка расписаний Cyclorithm (PyO3).
+Библиотека для проверки и расчёта расписаний Cyclorithm из Python.
 
-Канон — вики: `docs/ecosystem/python.md` (сборка, API).
+[Установка, сборка и API](../../docs/ecosystem/python.md).
