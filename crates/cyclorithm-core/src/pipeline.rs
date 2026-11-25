@@ -9,6 +9,7 @@ use std::path::Path;
 
 use crate::Error;
 use crate::cond::Value;
+use crate::cond::resolve_point_attrs;
 use crate::datetime::format_datetime_tz;
 use crate::engine::{EngineError, with_validated_fs};
 use crate::expand::{Event, expand, next_events};
@@ -67,8 +68,10 @@ fn engine_to_pipeline(e: EngineError) -> PipelineError {
 
 /// Валидация программы (`base` — директория для `use`).
 pub fn check_source(text: &str, base: &Path) -> Result<(), PipelineError> {
-    with_validated_fs(text, base, |_ast, _tables, _defs, _file_zone| Ok(()))
-        .map_err(engine_to_pipeline)
+    with_validated_fs(text, base, |ast, _tables, defs, _file_zone| {
+        resolve_point_attrs(ast, defs).map(|_| ())
+    })
+    .map_err(engine_to_pipeline)
 }
 
 /// Окно развёртки: имя расписания (для конверта CLI) и события.

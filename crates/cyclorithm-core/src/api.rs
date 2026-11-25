@@ -412,6 +412,50 @@ mod tests {
     }
 
     #[test]
+    fn imported_private_names_are_local_to_their_own_file() {
+        let left = r#"
+            const __VALUE = 1;
+            fun __add(x) = __VALUE + x;
+            fun left(x) = __add(x);
+            const META = {"left": __VALUE};
+            time_const DAY duration = 2h {
+                morning: 1h -> RECORD(__add(0));
+            }
+        "#;
+        let right = r#"
+            const __VALUE = 2;
+            fun __add(x) = __VALUE + left(x);
+            fun right(x) = __add(x);
+        "#;
+        let src = r#"
+            use "left.cyclo";
+            use "right.cyclo";
+            schedule "Приватные имена" {
+                point P { actions = [x]; attrs = META; }
+                cycle RECORD(n) duration = 1h {
+                    0h: P.x() {"slot": n, "right": right(0)};
+                }
+                routine R(TC) {}
+                root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+                    0h: R(DAY);
+                }
+            }
+        "#;
+        let output = run_schedule(
+            src,
+            "2026-01-01T00:00:00",
+            "2026-01-02T00:00:00",
+            &[("left.cyclo", left), ("right.cyclo", right)],
+        )
+        .unwrap();
+        assert!(output.contains(r#""point_attrs":{"left":1}"#), "{output}");
+        assert!(
+            output.contains(r#""action_attrs":{"slot":1,"right":3}"#),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn facade_resolves_use_from_memory() {
         let src =
             "use \"lib.cyclo\";\n".to_owned() + &MINI.replace("[not weekend(at)]", "[early(at)]");

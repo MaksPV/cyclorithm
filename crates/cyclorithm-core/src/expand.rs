@@ -13,13 +13,11 @@
 
 use std::collections::HashMap;
 
-use crate::parser::{
-    Cond, CondRhs, DepKind, Expr, Invocation, MomentArg, MomentExpr, Routine, Schedule, Stmt,
-};
+use crate::parser::{DepKind, Expr, Invocation, MomentArg, MomentExpr, Routine, Schedule, Stmt};
 
 use crate::Error;
 use crate::cond::{
-    AtFrame, Defs, TimeTable, Value, eval_cond_with_env, eval_expr_with_env, resolve_point_attrs,
+    AtFrame, Defs, TimeTable, Value, eval_cond_in_unit, eval_expr_in_unit, resolve_point_attrs,
 };
 use crate::datetime::{parse_in_frame, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
@@ -177,7 +175,7 @@ impl Candidate {
 
 /// Словарь `here`: стек вызовов, все кандидаты и геттеры по флагу.
 /// Снимок «на данный момент» — строится лениво, только если условие/блок
-/// ссылаются на `here` (см. `cond_uses_here`/`expr_uses_here`): построение —
+/// ссылаются на `here` (см. `Defs::condition_uses_here`): построение —
 /// O(events) глубоких клонов, на каждое повторение без ссылки оно давало
 /// квадратику (repeat 2880 — секунды).
 /// в `action_attrs` замораживается копированием (вложенный `here` мёртв,
@@ -206,47 +204,6 @@ fn here_value(stack: &[StackFrame], events: &[Candidate]) -> Value {
     ])
 }
 
-/// Есть ли отсылка к `here` в условии: предикат ленивого `here_value`.
-/// `here` зарезервировано (reserved-name) — объявить так ничего нельзя,
-/// любое вхождение имени и есть here-value. Имена предикатов/вызовов
-/// считаем консервативно (ложное срабатывание — лишь лишний снимок).
-fn cond_uses_here(c: &Cond) -> bool {
-    match c {
-        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(cond_uses_here),
-        Cond::Not(c) => cond_uses_here(c),
-        Cond::Pred { name, args } => name == "here" || args.iter().any(expr_uses_here),
-        Cond::Cmp { left, right, .. } => {
-            expr_uses_here(left)
-                || match right {
-                    CondRhs::One(e) => expr_uses_here(e),
-                    CondRhs::Alt(es) => es.iter().any(expr_uses_here),
-                }
-        }
-        Cond::Truthy(e) => expr_uses_here(e),
-    }
-}
-
-/// Есть ли отсылка к `here` в выражении блока/аргумента (см. `cond_uses_here`).
-/// Ключ `.поле` — не идентификатор (`x.here` — не ссылка), строки — литералы.
-fn expr_uses_here(e: &Expr) -> bool {
-    match e {
-        Expr::Name(n) | Expr::Call { name: n, .. } if n == "here" => true,
-        Expr::Name(_) | Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::At => {
-            false
-        }
-        Expr::Map(pairs) => pairs.iter().any(|(_, v)| expr_uses_here(v)),
-        Expr::Array(xs) | Expr::Concat(xs) => xs.iter().any(expr_uses_here),
-        Expr::Call { args, .. } => args.iter().any(expr_uses_here),
-        Expr::Field { base, .. } => expr_uses_here(base),
-        Expr::Index { base, index } => expr_uses_here(base) || expr_uses_here(index),
-        Expr::Neg(x) => expr_uses_here(x),
-        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
-            expr_uses_here(left) || expr_uses_here(right)
-        }
-        Expr::Truth(c) => cond_uses_here(c),
-    }
-}
-
 /// Дескриптор таблицы для `TC`: `{duration, labels}` (метки — в мс).
 fn table_value(table: &TimeTable) -> Result<Value, Error> {
     let duration = duration_ms(&table.duration)?;
@@ -271,14 +228,37 @@ fn call_table_name(args: &[Expr], name: &str) -> Result<String, Error> {
 /// Параметры кадра `here` + дочернее окружение вызова рутины.
 type RoutineFrame = (Vec<(String, Value)>, HashMap<String, Value>);
 
+/// Аргументы видят состояние вызывающего экземпляра до входа в дочерний.
+#[allow(clippy::too_many_arguments)]
+fn eval_invocation_args(
+    args: &[Expr],
+    at: &AtFrame,
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+    stack: &[StackFrame],
+    events: &[Candidate],
+    unit: usize,
+) -> Result<Vec<Value>, Error> {
+    let mut with_here;
+    let args_env = if args.iter().any(|arg| defs.expression_uses_here(arg)) {
+        with_here = env.clone();
+        with_here.insert("here".to_owned(), here_value(stack, events));
+        &with_here
+    } else {
+        env
+    };
+    args.iter()
+        .map(|arg| eval_expr_in_unit(arg, at, defs, args_env, unit))
+        .collect()
+}
+
 /// Данные вызова рутины: дескриптор `TC` + разрешённые аргументы.
 /// Табличный параметр из окружения затирается (в условиях он невидим).
 /// Возвращает параметры кадра `here` и дочернее окружение.
 fn routine_call_values(
     routine: &Routine,
     table_name: &str,
-    args: &[Expr],
-    at: &AtFrame,
+    values: Vec<Value>,
     ctx: &Ctx<'_, '_, '_, '_>,
     env: &HashMap<String, Value>,
 ) -> Result<RoutineFrame, Error> {
@@ -292,8 +272,7 @@ fn routine_call_values(
     let mut params = vec![(table_param.clone(), tc)];
     let mut child = env.clone();
     child.remove(table_param);
-    for (param, arg) in routine.params.iter().skip(1).zip(args.iter().skip(1)) {
-        let v = eval_expr_with_env(arg, at, ctx.defs, env)?;
+    for (param, v) in routine.params.iter().skip(1).zip(values) {
         params.push((param.clone(), v.clone()));
         child.insert(param.clone(), v);
     }
@@ -572,6 +551,7 @@ fn unfold_cycle_stmts(
     let mut gap_fills = plan.gap_fills.into_iter().peekable();
     let mut events = Vec::new();
     let mut scope = MomentScope::default();
+    let unit = ctx.defs.main_unit();
     for (index, (stmt, placement)) in stmts.iter().zip(plan.placements).enumerate() {
         if !matches!(stmt.moment, MomentExpr::Absolute { .. }) {
             let occupancy = gap_fills.peek().map(|_| &mut occupied);
@@ -608,6 +588,7 @@ fn unfold_cycle_stmts(
                 &mut events,
                 zone_ms,
                 &mut scope,
+                unit,
             )?;
         }
     }
@@ -907,17 +888,22 @@ fn unfold_stmt(
     events: &mut Vec<Candidate>,
     zone_ms: i64,
     scope: &mut MomentScope,
+    unit: usize,
 ) -> Result<(), Error> {
     for start in starts {
         let time = base + i128::from(start);
         let at = AtFrame::new(clamp_i64(time), zone_ms);
         // Снимок `here` — O(events): строим только если условие на него ссылается.
         let mut cond_env = env.clone();
-        if stmt.condition.as_ref().is_some_and(cond_uses_here) {
+        if stmt
+            .condition
+            .as_ref()
+            .is_some_and(|cond| ctx.defs.condition_uses_here(cond))
+        {
             cond_env.insert("here".to_owned(), here_value(stack, events));
         }
         let enabled = match &stmt.condition {
-            Some(cond) => match eval_cond_with_env(cond, &at, ctx.defs, &cond_env) {
+            Some(cond) => match eval_cond_in_unit(cond, &at, ctx.defs, &cond_env, unit) {
                 Ok(enabled) => enabled,
                 Err(error) => {
                     ctx.row_error(time, k, error)?;
@@ -949,6 +935,7 @@ fn unfold_stmt(
             stack,
             events,
             zone_ms,
+            unit,
         ) {
             ctx.row_error(time, k, error)?;
             events.truncate(previous_events);
@@ -1028,8 +1015,9 @@ fn unfold_stmt_dynamic(
         let start = i128::from(first_offset) + i128::from(index) * i128::from(step);
         start as i64
     });
+    let unit = ctx.defs.main_unit();
     unfold_stmt(
-        stmt, starts, None, base, k, parent, ctx, env, stack, events, zone_ms, scope,
+        stmt, starts, None, base, k, parent, ctx, env, stack, events, zone_ms, scope, unit,
     )
 }
 
@@ -1138,6 +1126,7 @@ fn unfold(
     stack: &[StackFrame],
     events: &mut Vec<Candidate>,
     zone_ms: i64,
+    unit: usize,
 ) -> Result<(), Error> {
     let at = AtFrame::new(i64::try_from(base).unwrap_or(i64::MAX), zone_ms);
     let label = row_label.map(str::to_owned);
@@ -1168,12 +1157,15 @@ fn unfold(
             // заморозка момента (включая собственный кандидат): дальше не живой.
             // Снимок — O(events): строим только если блок на `here` ссылается.
             let mut block_env = env.clone();
-            if block.as_ref().is_some_and(expr_uses_here) {
+            if block
+                .as_ref()
+                .is_some_and(|expr| ctx.defs.expression_uses_here(expr))
+            {
                 block_env.insert("here".to_owned(), here_value(stack, events));
             }
             let action_attrs = match block {
                 None => Vec::new(),
-                Some(b) => match eval_expr_with_env(b, &at, ctx.defs, &block_env)? {
+                Some(b) => match eval_expr_in_unit(b, &at, ctx.defs, &block_env, unit)? {
                     Value::Map(pairs) => pairs,
                     _ => return Err(Error::type_mismatch()),
                 },
@@ -1206,6 +1198,7 @@ fn unfold(
                     stack,
                     events,
                     zone_ms,
+                    unit,
                 )
             } else {
                 let cycle = ctx
@@ -1217,8 +1210,8 @@ fn unfold(
                 debug_assert_eq!(cycle.params.len(), args.len());
                 let mut child = env.clone();
                 let mut params = Vec::with_capacity(cycle.params.len());
-                for (param, arg) in cycle.params.iter().zip(args.iter()) {
-                    let v = eval_expr_with_env(arg, &at, ctx.defs, env)?;
+                let values = eval_invocation_args(args, &at, ctx.defs, env, stack, events, unit)?;
+                for (param, v) in cycle.params.iter().zip(values) {
                     params.push((param.clone(), v.clone()));
                     child.insert(param.clone(), v);
                 }
@@ -1289,6 +1282,7 @@ fn unfold_routine(
     stack: &[StackFrame],
     events: &mut Vec<Candidate>,
     zone_ms: i64,
+    unit: usize,
 ) -> Result<(), Error> {
     let at = AtFrame::new(i64::try_from(base).unwrap_or(i64::MAX), zone_ms);
     let routine = ctx.tables.routines.get(name).expect("имена уже проверены");
@@ -1297,7 +1291,8 @@ fn unfold_routine(
     // Арность уже проверена (wrong-arguments): длины совпадают.
     debug_assert_eq!(routine.params.len(), args.len());
     let table_name = call_table_name(args, name)?;
-    let (params, child) = routine_call_values(routine, &table_name, args, &at, ctx, env)?;
+    let values = eval_invocation_args(&args[1..], &at, ctx.defs, env, stack, events, unit)?;
+    let (params, child) = routine_call_values(routine, &table_name, values, ctx, env)?;
     let table = ctx
         .tables
         .tables
@@ -1355,6 +1350,8 @@ fn unfold_routine(
 
     let mut routine_events = Vec::new();
     let mut routine_scope = MomentScope::default();
+    let body_unit = ctx.defs.main_unit();
+    let slot_unit = table.unit;
     for ((st, pl), lab) in body.iter().zip(body_placements).zip(&inst.body_labels) {
         unfold_stmt(
             st,
@@ -1369,6 +1366,7 @@ fn unfold_routine(
             &mut routine_events,
             zone_ms,
             &mut routine_scope,
+            body_unit,
         )?;
     }
     let fresh: HashMap<String, Value> = HashMap::new();
@@ -1390,6 +1388,7 @@ fn unfold_routine(
             &mut routine_events,
             zone_ms,
             &mut routine_scope,
+            slot_unit,
         )?;
     }
     Ok(())
@@ -1397,7 +1396,7 @@ fn unfold_routine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cond::{Defs, TableReg, check_conditions, resolve_units};
+    use crate::cond::{Defs, TableReg, check_conditions, eval_expr_with_env, resolve_units};
     use crate::datetime::{format_datetime, parse_datetime};
     use crate::validate::{check_bounds, check_recursion, check_tables, validate_names};
     use std::collections::HashMap;

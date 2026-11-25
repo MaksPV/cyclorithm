@@ -115,8 +115,6 @@ struct Def {
     cond: Option<Cond>,
     /// Файл-владелец: 0 — прелюдия, дальше импорты, последний — программа.
     unit: usize,
-    /// Имена на `__` видны только в своём файле.
-    private: bool,
 }
 
 /// Итоговое пространство имён: прелюдия, поверх импорты, поверх программа.
@@ -124,8 +122,96 @@ struct Def {
 #[derive(Debug)]
 pub struct Defs {
     map: HashMap<String, Def>,
+    private: Vec<HashMap<String, Def>>,
+    here_definitions: HashSet<String>,
+    at_definitions: HashSet<String>,
     /// Юнит тела программы: контекст условий расписания.
     main: usize,
+}
+
+impl Defs {
+    pub(crate) fn main_unit(&self) -> usize {
+        self.main
+    }
+
+    pub(crate) fn condition_uses_here(&self, cond: &Cond) -> bool {
+        cond_mentions(cond, &mut |name| self.here_definitions.contains(name))
+    }
+
+    pub(crate) fn expression_uses_here(&self, expr: &Expr) -> bool {
+        expr_mentions(expr, &mut |name| self.here_definitions.contains(name))
+    }
+
+    fn runtime_definitions(&self) -> (HashSet<String>, HashSet<String>) {
+        // Переходы по имени консервативны: затенение может потребовать лишний
+        // снимок, но никогда не скроет косвенную ссылку на here.
+        let mut referenced_by: HashMap<String, Vec<&str>> = HashMap::new();
+        let definitions = self.map.iter().chain(self.private.iter().flatten());
+        for (name, def) in definitions {
+            let mut reference = |used: &str| {
+                referenced_by.entry(used.to_owned()).or_default().push(name);
+                false
+            };
+            if let Some(expr) = &def.expr {
+                expr_mentions(expr, &mut reference);
+            }
+            if let Some(cond) = &def.cond {
+                cond_mentions(cond, &mut reference);
+            }
+        }
+        let dependants = |name: &str| {
+            let mut found = HashSet::new();
+            let mut pending = vec![name];
+            while let Some(name) = pending.pop() {
+                if found.insert(name.to_owned())
+                    && let Some(parents) = referenced_by.get(name)
+                {
+                    pending.extend(parents);
+                }
+            }
+            found
+        };
+        (dependants("here"), dependants("at"))
+    }
+}
+
+fn cond_mentions(cond: &Cond, reference: &mut impl FnMut(&str) -> bool) -> bool {
+    match cond {
+        Cond::Or(conds) | Cond::And(conds) => conds.iter().any(|c| cond_mentions(c, reference)),
+        Cond::Not(cond) => cond_mentions(cond, reference),
+        Cond::Pred { name, args } => {
+            reference(name) || args.iter().any(|e| expr_mentions(e, reference))
+        }
+        Cond::Cmp { left, right, .. } => {
+            expr_mentions(left, reference)
+                || match right {
+                    CondRhs::One(expr) => expr_mentions(expr, reference),
+                    CondRhs::Alt(args) => args.iter().any(|e| expr_mentions(e, reference)),
+                }
+        }
+        Cond::Truthy(expr) => expr_mentions(expr, reference),
+    }
+}
+
+fn expr_mentions(expr: &Expr, reference: &mut impl FnMut(&str) -> bool) -> bool {
+    match expr {
+        Expr::Name(name) => reference(name),
+        Expr::Call { name, args } => {
+            reference(name) || args.iter().any(|e| expr_mentions(e, reference))
+        }
+        Expr::Map(pairs) => pairs.iter().any(|(_, e)| expr_mentions(e, reference)),
+        Expr::Array(args) | Expr::Concat(args) => args.iter().any(|e| expr_mentions(e, reference)),
+        Expr::Field { base, .. } | Expr::Neg(base) => expr_mentions(base, reference),
+        Expr::Index { base, index } => {
+            expr_mentions(base, reference) || expr_mentions(index, reference)
+        }
+        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
+            expr_mentions(left, reference) || expr_mentions(right, reference)
+        }
+        Expr::Truth(cond) => cond_mentions(cond, reference),
+        Expr::At => reference("at"),
+        Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => false,
+    }
 }
 
 static PRELUDE: &str = include_str!("std.cyclo");
@@ -203,14 +289,18 @@ pub fn resolve_defs(decls: &[Decl]) -> Result<(Defs, TableReg), Error> {
 // (позиции ссылок не пересекаются с выражениями), дубли — `duplicate table`.
 pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
     let system = SYSTEM.clone()?;
-    let mut map = HashMap::new();
-    let mut all: Vec<String> = Vec::new();
-    for d in &system {
-        let (name, def) = to_def(d, 0);
-        if !map.contains_key(&name) {
-            all.push(name.clone());
-        }
-        map.insert(name, def);
+    let mut defs = Defs {
+        map: HashMap::new(),
+        private: vec![HashMap::new(); units.len() + 1],
+        here_definitions: HashSet::new(),
+        at_definitions: HashSet::new(),
+        main: units.len(),
+    };
+    let mut all = Vec::new();
+    for declaration in &system {
+        let (name, def) = to_def(declaration, 0);
+        all.push((name.clone(), def.unit));
+        insert_def(&mut defs, name, def);
     }
     let mut tables = TableReg::default();
     for (i, group) in units.iter().enumerate() {
@@ -252,19 +342,24 @@ pub fn resolve_units(units: &[Vec<Decl>]) -> Result<(Defs, TableReg), Error> {
                 return Err(Error::duplicate(kind, name));
             }
             check_reserved(name)?;
-            all.push(name.clone());
-            let (_, def) = to_def(d, unit);
-            map.insert(name.clone(), def);
+            let (name, def) = to_def(d, unit);
+            all.push((name.clone(), unit));
+            insert_def(&mut defs, name, def);
         }
     }
-    let defs = Defs {
-        map,
-        main: units.len(),
-    };
-    for name in &all {
-        check_def(&defs, name)?;
+    (defs.here_definitions, defs.at_definitions) = defs.runtime_definitions();
+    for (name, unit) in &all {
+        check_def(&defs, name, *unit)?;
     }
     Ok((defs, tables))
+}
+
+fn insert_def(defs: &mut Defs, name: String, def: Def) {
+    if name.starts_with("__") {
+        defs.private[def.unit].insert(name, def);
+    } else {
+        defs.map.insert(name, def);
+    }
 }
 
 fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
@@ -278,7 +373,6 @@ fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
                 expr: Some(body.clone()),
                 cond: None,
                 unit,
-                private: name.starts_with("__"),
             },
         ),
         Decl::Fun { name, param, body } => (
@@ -289,7 +383,6 @@ fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
                 expr: Some(body.clone()),
                 cond: None,
                 unit,
-                private: name.starts_with("__"),
             },
         ),
         Decl::Pred { name, body } => (
@@ -300,25 +393,25 @@ fn to_def(decl: &Decl, unit: usize) -> (String, Def) {
                 expr: None,
                 cond: Some(body.clone()),
                 unit,
-                private: name.starts_with("__"),
             },
         ),
     }
 }
 
-fn check_def(defs: &Defs, name: &str) -> Result<(), Error> {
-    let def = defs.map.get(name).expect("своё имя");
+fn check_def(defs: &Defs, name: &str, unit: usize) -> Result<(), Error> {
+    let def = resolve(defs, name, unit)?;
     // Тело проверяется изнутри своего файла: `__` видно.
     let mut cx = CxTy {
         defs,
         scope: Scope {
-            stack: vec![(name.to_owned(), def.unit)],
+            stack: Vec::new(),
             unit: def.unit,
         },
         vars: HashMap::new(),
         // Тела объявлений — позиция данных: `const M = {...}`, `const A = M`.
         data: true,
     };
+    cx.scope.enter(name, def.unit)?;
     match def.kind {
         // Константа — любое значение (число, строка, мапа, ...), не только Num:
         // данные живут в константах (`BJD_LECTURE`), условия их не видят (unknown-name).
@@ -366,22 +459,26 @@ struct CxEv<'a> {
 /// (`CxEv`). Раньше `enter`/`leave` жили копипастой в обоих контекстах.
 #[derive(Debug, Clone, Default)]
 struct Scope {
-    stack: Vec<(String, usize)>,
+    stack: Vec<(String, usize, usize)>,
     unit: usize,
 }
 
 impl Scope {
     fn enter(&mut self, name: &str, unit: usize) -> Result<(), Error> {
-        if self.stack.iter().any(|(n, _)| n == name) {
+        if self
+            .stack
+            .iter()
+            .any(|(n, owner, _)| n == name && *owner == unit)
+        {
             return Err(Error::recursive_definition(name));
         }
         let prev = std::mem::replace(&mut self.unit, unit);
-        self.stack.push((name.to_owned(), prev));
+        self.stack.push((name.to_owned(), unit, prev));
         Ok(())
     }
 
     fn leave(&mut self) {
-        if let Some((_, prev)) = self.stack.pop() {
+        if let Some((_, _, prev)) = self.stack.pop() {
             self.unit = prev;
         }
     }
@@ -395,10 +492,10 @@ fn resolve<'a>(defs: &'a Defs, name: &str, unit: usize) -> Result<&'a Def, Error
 /// для резолва, предикатов, встроенных и вызовов — раньше `infer` смотрел
 /// `contains_key`, а `eval` — `private`-видимость.
 fn visible_def<'a>(defs: &'a Defs, name: &str, unit: usize) -> Option<&'a Def> {
-    match defs.map.get(name) {
-        Some(d) if d.private && d.unit != unit => None,
-        Some(d) => Some(d),
-        None => None,
+    if name.starts_with("__") {
+        defs.private.get(unit)?.get(name)
+    } else {
+        defs.map.get(name)
     }
 }
 
@@ -454,18 +551,39 @@ pub fn check_conditions(
     }
     for c in &schedule.cycles {
         for st in &c.stmts {
-            check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+            check_row(
+                st.condition.as_ref(),
+                &st.invocation,
+                defs,
+                &params,
+                tables,
+                defs.main,
+            )?;
         }
     }
     for r in &schedule.routines {
         let mut scope = params.clone();
         scope.remove(&r.params[0]);
         for st in &r.stmts {
-            check_row(st.condition.as_ref(), &st.invocation, defs, &scope, tables)?;
+            check_row(
+                st.condition.as_ref(),
+                &st.invocation,
+                defs,
+                &scope,
+                tables,
+                defs.main,
+            )?;
         }
     }
     for st in &schedule.root.stmts {
-        check_row(st.condition.as_ref(), &st.invocation, defs, &params, tables)?;
+        check_row(
+            st.condition.as_ref(),
+            &st.invocation,
+            defs,
+            &params,
+            tables,
+            defs.main,
+        )?;
     }
     // Пожары таблиц — без параметров (данные рутин им недоступны статически;
     // при развёртке вызов слота выполняется в пустом окружении).
@@ -477,7 +595,14 @@ pub fn check_conditions(
             .expect("порядок — по реестру");
         for row in &t.rows {
             if let Some(slot_call) = &row.slot_call {
-                check_row(row.condition.as_ref(), slot_call, defs, &empty, tables)?;
+                check_row(
+                    row.condition.as_ref(),
+                    slot_call,
+                    defs,
+                    &empty,
+                    tables,
+                    t.unit,
+                )?;
             }
         }
     }
@@ -491,12 +616,13 @@ fn check_row(
     defs: &Defs,
     params: &HashMap<String, Ty>,
     tables: &NameTables<'_>,
+    unit: usize,
 ) -> Result<(), Error> {
     let mut cx = CxTy {
         defs,
         scope: Scope {
             stack: Vec::new(),
-            unit: defs.main,
+            unit,
         },
         vars: params.clone(),
         data: false,
@@ -715,7 +841,14 @@ impl CxTy<'_> {
                 Ok(Ty::Num)
             }
             Expr::Bin { op, left, right } => {
-                let ty = match (self.infer(left)?, self.infer(right)?) {
+                let left_ty = self.infer(left)?;
+                let right_ty = self.infer(right)?;
+                if matches!(op, ArithOp::Mod | ArithOp::FloorDiv | ArithOp::FloorMod)
+                    && (left_ty == Ty::Float || right_ty == Ty::Float)
+                {
+                    return Err(Error::type_mismatch());
+                }
+                let ty = match (left_ty, right_ty) {
                     (Ty::Num, Ty::Num) => Ty::Num,
                     (Ty::Float, Ty::Float) => Ty::Float,
                     (Ty::Num, Ty::Float) | (Ty::Float, Ty::Num) => Ty::Float,
@@ -731,10 +864,10 @@ impl CxTy<'_> {
                 {
                     return Err(e);
                 }
-                // Константный `MIN floordiv -1` / `MIN floormod -1` переполняет i64:
+                // Пара `MIN` и `-1` переполняет частное:
                 // ловим сразу, как константный ноль (иначе — в момент строки).
                 if matches!(op, ArithOp::FloorDiv | ArithOp::FloorMod)
-                    && let Some(e) = self.const_euclid_overflow(left, right)
+                    && let Some(e) = self.const_floor_overflow(left, right)
                 {
                     return Err(e);
                 }
@@ -814,7 +947,7 @@ impl CxTy<'_> {
                 if let Some(Err(e)) = self.const_div(b) {
                     return Err(e);
                 }
-                if let Some(e) = self.const_euclid_overflow(a, b) {
+                if let Some(e) = self.const_floor_overflow(a, b) {
                     return Err(e);
                 }
                 return Ok(Ty::Num);
@@ -932,9 +1065,9 @@ impl CxTy<'_> {
     }
 
     /// Константное переполнение `MIN floordiv -1` / `MIN floormod -1`
-    /// (единственная переполняющая пара евклидова деления).
+    /// (единственная переполняющая пара целочисленного деления).
     /// `None` — хотя бы один операнд неконстантен: поймает рантайм.
-    fn const_euclid_overflow(&mut self, left: &Expr, right: &Expr) -> Option<Error> {
+    fn const_floor_overflow(&mut self, left: &Expr, right: &Expr) -> Option<Error> {
         match (const_eval(left, self)?, const_eval(right, self)?) {
             (Ok(Value::Num(a)), Ok(Value::Num(b))) if a == i64::MIN && b == -1 => {
                 Some(Error::integer_out_of_range("arithmetic overflow"))
@@ -976,18 +1109,8 @@ pub fn resolve_point_attrs(
                 check_map_dupes(pairs)?;
                 eval_attr_pairs(pairs, defs, &empty)?
             }
-            Some(Expr::Name(name)) => {
-                let def = resolve(defs, name, defs.main)?;
-                match def.kind {
-                    DefKind::Const => {}
-                    _ => return Err(Error::type_mismatch()),
-                }
-                match eval_expr_with_env(
-                    def.expr.as_ref().expect("const: тело"),
-                    &AtFrame::zero(),
-                    defs,
-                    &empty,
-                )? {
+            Some(expr @ Expr::Name(_)) => {
+                match eval_expr_with_env(expr, &AtFrame::zero(), defs, &empty)? {
                     Value::Map(pairs) => pairs,
                     _ => return Err(Error::type_mismatch()),
                 }
@@ -1080,7 +1203,10 @@ fn normalize_date_literal(raw: &str) -> Result<String, Error> {
 
 /// Вычисление константы; `None` — внутри есть `at`/`here` или параметр.
 fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
-    if has_at(expr) || has_here(expr) || has_param(expr, cx) {
+    let mut runtime = |name: &str| {
+        cx.defs.at_definitions.contains(name) || cx.defs.here_definitions.contains(name)
+    };
+    if expr_mentions(expr, &mut runtime) || has_param(expr, cx) {
         return None;
     }
     let mut ev = CxEv {
@@ -1091,77 +1217,6 @@ fn const_eval(expr: &Expr, cx: &mut CxTy<'_>) -> Option<Result<Value, Error>> {
     };
     let r = eval_expr(expr, &mut ev);
     Some(r)
-}
-
-fn has_at(expr: &Expr) -> bool {
-    match expr {
-        Expr::At => true,
-        Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) | Expr::Name(_) => false,
-        Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_at(v)),
-        Expr::Array(xs) => xs.iter().any(has_at),
-        Expr::Field { base, .. } => has_at(base),
-        Expr::Index { base, index } => has_at(base) || has_at(index),
-        Expr::Neg(x) => has_at(x),
-        Expr::Truth(c) => has_cond_at(c),
-        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
-            has_at(left) || has_at(right)
-        }
-        Expr::Concat(xs) => xs.iter().any(has_at),
-        Expr::Call { args, .. } => args.iter().any(has_at),
-    }
-}
-
-fn has_cond_at(cond: &Cond) -> bool {
-    match cond {
-        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_at),
-        Cond::Not(c) => has_cond_at(c),
-        Cond::Truthy(e) => has_at(e),
-        Cond::Pred { args, .. } => args.iter().any(has_at),
-        Cond::Cmp { left, right, .. } => {
-            has_at(left)
-                || match right {
-                    CondRhs::One(r) => has_at(r),
-                    CondRhs::Alt(alts) => alts.iter().any(has_at),
-                }
-        }
-    }
-}
-
-/// `here` — тоже не константа (синтетика развёртки): там, где `has_at`
-/// запрещает константное сложение, запрещён и `here` (иначе `len(here...)`
-/// в делителе дал бы статичный `unknown-name` вместо вычисления в строке).
-fn has_here(expr: &Expr) -> bool {
-    match expr {
-        Expr::Name(n) => n == "here",
-        Expr::At | Expr::Num(_) | Expr::Float(_) | Expr::Str(_) | Expr::Bool(_) => false,
-        Expr::Map(pairs) => pairs.iter().any(|(_, v)| has_here(v)),
-        Expr::Array(xs) => xs.iter().any(has_here),
-        Expr::Field { base, .. } => has_here(base),
-        Expr::Index { base, index } => has_here(base) || has_here(index),
-        Expr::Neg(x) => has_here(x),
-        Expr::Truth(c) => has_cond_here(c),
-        Expr::Bin { left, right, .. } | Expr::Bit { left, right, .. } => {
-            has_here(left) || has_here(right)
-        }
-        Expr::Concat(xs) => xs.iter().any(has_here),
-        Expr::Call { args, .. } => args.iter().any(has_here),
-    }
-}
-
-fn has_cond_here(cond: &Cond) -> bool {
-    match cond {
-        Cond::Or(cs) | Cond::And(cs) => cs.iter().any(has_cond_here),
-        Cond::Not(c) => has_cond_here(c),
-        Cond::Truthy(e) => has_here(e),
-        Cond::Pred { args, .. } => args.iter().any(has_here),
-        Cond::Cmp { left, right, .. } => {
-            has_here(left)
-                || match right {
-                    CondRhs::One(r) => has_here(r),
-                    CondRhs::Alt(alts) => alts.iter().any(has_here),
-                }
-        }
-    }
 }
 
 fn has_param(expr: &Expr, cx: &CxTy<'_>) -> bool {
@@ -1220,11 +1275,21 @@ pub fn eval_cond_with_env(
     defs: &Defs,
     env: &HashMap<String, Value>,
 ) -> Result<bool, Error> {
+    eval_cond_in_unit(cond, at, defs, env, defs.main)
+}
+
+pub(crate) fn eval_cond_in_unit(
+    cond: &Cond,
+    at: &AtFrame,
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+    unit: usize,
+) -> Result<bool, Error> {
     CxEv {
         defs,
         scope: Scope {
             stack: Vec::new(),
-            unit: defs.main,
+            unit,
         },
         vars: env.clone(),
         at: *at,
@@ -1240,11 +1305,21 @@ pub fn eval_expr_with_env(
     defs: &Defs,
     env: &HashMap<String, Value>,
 ) -> Result<Value, Error> {
+    eval_expr_in_unit(expr, at, defs, env, defs.main)
+}
+
+pub(crate) fn eval_expr_in_unit(
+    expr: &Expr,
+    at: &AtFrame,
+    defs: &Defs,
+    env: &HashMap<String, Value>,
+    unit: usize,
+) -> Result<Value, Error> {
     let mut cx = CxEv {
         defs,
         scope: Scope {
             stack: Vec::new(),
-            unit: defs.main,
+            unit,
         },
         vars: env.clone(),
         at: *at,
@@ -1401,6 +1476,23 @@ fn cmp_values(op: CmpOp, l: &Value, r: &Value) -> Result<bool, Error> {
     }
 }
 
+fn floor_arithmetic(a: i64, b: i64, remainder_only: bool) -> Result<Value, Error> {
+    if b == 0 {
+        return Err(Error::division_by_zero());
+    }
+    let quotient = a
+        .checked_div(b)
+        .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))?;
+    let remainder = a % b;
+    let adjust = remainder != 0 && (remainder < 0) != (b < 0);
+    let value = if remainder_only {
+        if adjust { remainder + b } else { remainder }
+    } else {
+        quotient - i64::from(adjust)
+    };
+    Ok(Value::Num(value))
+}
+
 /// Float-арифметика `+ - * /` с промоушеном; `%`/`floordiv`/`floormod` — только целые.
 fn float_bin(a: f64, b: f64, op: &ArithOp) -> Result<Value, Error> {
     match op {
@@ -1548,17 +1640,8 @@ fn eval_expr(expr: &Expr, cx: &mut CxEv<'_>) -> Result<Value, Error> {
                             }
                             a.checked_rem(b)
                         }
-                        ArithOp::FloorDiv => {
-                            if b == 0 {
-                                return Err(Error::division_by_zero());
-                            }
-                            a.checked_div_euclid(b)
-                        }
-                        ArithOp::FloorMod => {
-                            if b == 0 {
-                                return Err(Error::division_by_zero());
-                            }
-                            a.checked_rem_euclid(b)
+                        ArithOp::FloorDiv | ArithOp::FloorMod => {
+                            return floor_arithmetic(a, b, matches!(op, ArithOp::FloorMod));
                         }
                     };
                     v.map(Value::Num)
@@ -1654,7 +1737,12 @@ fn eval_call(name: &str, args: &[Expr], cx: &mut CxEv<'_>) -> Result<Value, Erro
             if s.len() >= w {
                 Ok(Value::Str(s))
             } else {
-                Ok(Value::Str("0".repeat(w - s.len()) + &s))
+                let zeroes = "0".repeat(w - s.len());
+                let padded = match s.strip_prefix('-') {
+                    Some(digits) => format!("-{zeroes}{digits}"),
+                    None => zeroes + &s,
+                };
+                Ok(Value::Str(padded))
             }
         }
         "floordiv" | "floormod" => {
@@ -1665,17 +1753,7 @@ fn eval_call(name: &str, args: &[Expr], cx: &mut CxEv<'_>) -> Result<Value, Erro
                 (Value::Num(x), Value::Num(y)) => (x, y),
                 _ => return Err(Error::type_mismatch()),
             };
-            if y == 0 {
-                return Err(Error::division_by_zero());
-            }
-            // `MIN / -1` переполняет i64: только checked-версии, иначе паника на вводе.
-            let v = if name == "floordiv" {
-                x.checked_div_euclid(y)
-            } else {
-                x.checked_rem_euclid(y)
-            };
-            v.map(Value::Num)
-                .ok_or_else(|| Error::integer_out_of_range("arithmetic overflow"))
+            floor_arithmetic(x, y, name == "floormod")
         }
         "mkdate" => {
             if args.len() != 7 {
@@ -1746,9 +1824,6 @@ fn build_date(v: &[i64], name: &str) -> Result<i64, Error> {
 }
 
 fn eval_def_call(name: &str, def: &Def, args: &[Expr], cx: &mut CxEv<'_>) -> Result<Value, Error> {
-    if cx.scope.stack.iter().any(|(n, _)| n == name) {
-        return Err(Error::recursive_definition(name));
-    }
     match def.kind {
         DefKind::Const => {
             if !args.is_empty() {

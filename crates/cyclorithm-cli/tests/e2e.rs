@@ -663,6 +663,113 @@ fn imports_matches_expected_json() {
 }
 
 #[test]
+fn flooring_with_negative_divisors_and_signed_padding() {
+    let src = r#"
+    schedule "Округление" {
+      point P { actions = [x]; }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+        0h: P.x() {
+          "operators": [7 floordiv -3, 7 floormod -3, -7 floordiv -3, -7 floormod -3],
+          "functions": [floordiv(7, -3), floormod(7, -3), floordiv(-7, -3), floormod(-7, -3)],
+          "pad": pad(-3, 3)
+        };
+      }
+    }
+    "#;
+    let out = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", "+1h"], src);
+    let json = stdout_json(&out);
+    let attrs = &json["events"][0]["action_attrs"];
+    assert_eq!(attrs["operators"], serde_json::json!([-3, -2, 2, -1]));
+    assert_eq!(attrs["functions"], attrs["operators"]);
+    assert_eq!(attrs["pad"], "-03");
+}
+
+#[test]
+fn check_rejects_float_operands_for_integer_only_operators() {
+    for operator in ["%", "floordiv", "floormod"] {
+        let src = format!(
+            r#"
+        schedule "Тип делителя" {{
+          point P {{ actions = [x]; }}
+          root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {{
+            [3.5 {operator} 2] 0h: P.x();
+          }}
+        }}
+        "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).starts_with("type-mismatch: "));
+    }
+}
+
+#[test]
+fn check_validates_static_point_attributes() {
+    for (attrs, diagnostic) in [
+        (r#"attrs = {"x": MISSING};"#, "unknown-name"),
+        (r#"attrs = {"x": 1, "x": 2};"#, "duplicate-attribute"),
+    ] {
+        let src = format!(
+            r#"
+        schedule "Атрибуты точки" {{
+          point P {{ actions = [x]; {attrs} }}
+          root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {{}}
+        }}
+        "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).starts_with(&format!("{diagnostic}: ")));
+    }
+}
+
+#[test]
+fn here_is_available_through_definitions_and_invocation_arguments() {
+    let src = r#"
+    const COUNT = len(here.enabled_events);
+    const ATTRS = {"count": COUNT};
+    const HOUR = hour(at);
+    pred ready(at) = COUNT == 1 and (10 / HOUR) > 0;
+    time_const T duration = 1h {}
+    schedule "Контекст вызова" {
+      point P { actions = [first, captured]; }
+      cycle C(n, snapshot) duration = 1h {
+        0h: P.captured() {"caller": n, "snapshot": snapshot, "callee": COUNT};
+      }
+      routine R(TC, n) {
+        0h: P.captured() {"caller": n, "callee": COUNT};
+      }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {
+        0h: P.first() ATTRS;
+        [ready(at)] 1h: C(COUNT, len(here.events));
+        2h: R(T, COUNT);
+      }
+    }
+    "#;
+    let check = run_stdin(&["check", "-"], src);
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    let out = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", "+3h"], src);
+    let json = stdout_json(&out);
+    let events = json["events"].as_array().unwrap();
+    let got: Vec<_> = events
+        .iter()
+        .map(|event| event["action_attrs"].clone())
+        .collect();
+    assert_eq!(
+        got,
+        [
+            serde_json::json!({"count": 1}),
+            serde_json::json!({"caller": 1, "snapshot": 1, "callee": 1}),
+            serde_json::json!({"caller": 2, "callee": 1}),
+        ]
+    );
+}
+
+#[test]
 fn cli_reports_duration_overflow_without_panicking() {
     let src = r#"
     schedule "Длительность" {
