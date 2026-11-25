@@ -161,7 +161,7 @@ pub fn parse_cli_duration(s: &str) -> Option<i64> {
     }
     let b = s.as_bytes();
     let mut i = 0;
-    let mut total: i128 = 0;
+    let mut total = 0i64;
     while i < b.len() {
         let from = i;
         while i < b.len() && b[i].is_ascii_digit() {
@@ -170,13 +170,12 @@ pub fn parse_cli_duration(s: &str) -> Option<i64> {
         if from == i {
             return None;
         }
-        let n: i128 = s[from..i].parse().ok()?;
+        let n: i64 = s[from..i].parse().ok()?;
         // Голое число без юнита — миллисекунды (`--within 0`).
         if i >= b.len() {
-            total += n;
-            break;
+            return total.checked_add(n);
         }
-        let (mult, adv) = if s[i..].starts_with("ms") {
+        let (mult, adv) = if b[i..].starts_with(b"ms") {
             (1, 2)
         } else {
             match b[i] {
@@ -188,10 +187,10 @@ pub fn parse_cli_duration(s: &str) -> Option<i64> {
                 _ => return None,
             }
         };
-        total += n * mult;
+        total = total.checked_add(n.checked_mul(mult)?)?;
         i += adv;
     }
-    i64::try_from(total).ok()
+    Some(total)
 }
 
 /// Миллисекунды epoch обратно в наивную ISO-строку (см. docs/reference/output.md).
@@ -203,12 +202,10 @@ pub fn format_datetime(ms: i64) -> String {
 /// Миллисекунды epoch в строку с зоной окна: `None` — наивная, `Some(0)` → `Z`,
 /// иначе `±HH:MM`. `.mmm` — только при ненулевых миллисекундах.
 pub fn format_datetime_tz(ms: i64, offset: Option<i16>) -> String {
-    let wall = match offset {
-        Some(o) => ms.saturating_add(o as i64 * MS_PER_MIN),
-        None => ms,
-    };
-    let days = wall.div_euclid(MS_PER_DAY);
-    let rem = wall.rem_euclid(MS_PER_DAY);
+    let offset_ms = i64::from(offset.unwrap_or_default()) * MS_PER_MIN;
+    let wall = i128::from(ms) + i128::from(offset_ms);
+    let days = wall.div_euclid(i128::from(MS_PER_DAY)) as i64;
+    let rem = wall.rem_euclid(i128::from(MS_PER_DAY)) as i64;
     let (y, mo, d) = civil_from_days(days);
     let h = rem / MS_PER_HOUR;
     let mi = rem % MS_PER_HOUR / MS_PER_MIN;

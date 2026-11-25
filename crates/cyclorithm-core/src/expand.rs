@@ -24,7 +24,8 @@ use crate::cond::{
 use crate::datetime::{parse_in_frame, parse_timezone};
 use crate::duration::{duration_ms, root_period_ms};
 use crate::validate::{
-    NameTables, blame, chain, instantiate, plan_ordinary_stmts, plan_stmts, root_actual_ms,
+    NameTables, PlanMode, blame, chain, instantiate, plan_ordinary_stmts, plan_stmts,
+    root_actual_ms,
 };
 
 /// Зона кадра в мс (`file.or(query)`, минуты → мс): стена = абсолют + зона.
@@ -560,7 +561,14 @@ fn unfold_cycle_stmts(
     limit_raw: &str,
 ) -> Result<(), Error> {
     let mut occupied = Vec::new();
-    let plan = plan_ordinary_stmts(stmts, limit, limit_raw, ctx.tables, &mut occupied)?;
+    let plan = plan_ordinary_stmts(
+        stmts,
+        limit,
+        limit_raw,
+        ctx.tables,
+        &mut occupied,
+        PlanMode::Starts,
+    )?;
     let mut gap_fills = plan.gap_fills.into_iter().peekable();
     let mut events = Vec::new();
     let mut scope = MomentScope::default();
@@ -584,7 +592,7 @@ fn unfold_cycle_stmts(
             )?;
         } else {
             let placement = match gap_fills.next_if(|(row, _)| *row == index) {
-                Some((_, fill)) => fill.place(&mut occupied),
+                Some((_, fill)) => fill.place(&mut occupied, PlanMode::Starts),
                 None => placement,
             };
             unfold_stmt(
@@ -681,7 +689,7 @@ pub fn next_events(
     let zone_ms = frame_zone_ms(file_zone, query_zone);
 
     let from = from_ms as i128;
-    let cap = from + i128::from(within_ms);
+    let cap = (from + i128::from(within_ms)).min(i128::from(i64::MAX) + 1);
     let mut errors = NextErrors {
         window: from..cap,
         earliest: None,
@@ -1006,16 +1014,7 @@ fn unfold_stmt_dynamic(
     let (count, step) = chain(stmt, first_offset, scope_limit, limit_raw, ctx.tables)?;
     let end = i128::from(first_offset) + i128::from(count) * i128::from(step);
     if end > i128::from(scope_limit) {
-        return ctx.row_error(
-            first,
-            k,
-            blame(
-                stmt,
-                &parent.cycle,
-                i64::try_from(end).unwrap_or(i64::MAX),
-                scope_limit,
-            ),
-        );
+        return ctx.row_error(first, k, blame(stmt, &parent.cycle, end, scope_limit));
     }
 
     if count > 0

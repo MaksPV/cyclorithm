@@ -121,6 +121,10 @@ pub fn effective_offset_ms(
 /// суммарно в `m`, иначе целые секунды — в `s`, иначе `s+ms`/`ms`.
 /// Часы и крупнее никогда не печатаются (иначе пример не сходится).
 pub fn format_duration(ms: i64) -> String {
+    format_duration_wide(i128::from(ms))
+}
+
+pub(crate) fn format_duration_wide(ms: i128) -> String {
     if ms % 60_000 == 0 {
         format!("{}m", ms / 60_000)
     } else if ms % 1_000 == 0 {

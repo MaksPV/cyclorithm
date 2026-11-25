@@ -663,6 +663,155 @@ fn imports_matches_expected_json() {
 }
 
 #[test]
+fn cli_reports_duration_overflow_without_panicking() {
+    let src = r#"
+    schedule "Длительность" {
+      point P { actions = [x]; }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h { 0h: P.x(); }
+    }
+    "#;
+    for duration in [
+        "170141183460469231731687303715884105727h",
+        "170141183460469231731687303715884105727ms1ms",
+        "9223372036854775807ms1ms",
+    ] {
+        let out = run_stdin(&["next", "-", "--within", duration], src);
+        assert_eq!(out.status.code(), Some(2), "{duration}");
+        let end = format!("+{duration}");
+        let out = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", &end], src);
+        assert_eq!(out.status.code(), Some(1), "{duration}");
+        assert!(String::from_utf8_lossy(&out.stderr).starts_with("invalid-datetime: "));
+    }
+}
+
+#[test]
+fn next_does_not_wrap_beyond_the_last_representable_instant() {
+    let src = r#"
+    schedule "Дальняя дата" {
+      point P { actions = [x]; }
+      root_cycle start_time = "2026-01-01T00:00:00Z", duration = 9223372036854775807ms {
+        0ms: P.x();
+      }
+    }
+    "#;
+    let args = [
+        "next",
+        "-",
+        "--from",
+        "2026-01-02",
+        "--within",
+        "9223372036854775807",
+    ];
+    assert_eq!(
+        stdout_json(&run_stdin(&args, src))["events"],
+        serde_json::json!([])
+    );
+
+    let src = src.replace("2026-01-01T00:00:00Z", "1970-01-01T00:00:00Z");
+    let utc = stdout_json(&run_stdin(&args, &src));
+    let max = i64::MAX;
+    let utc_time = cyclorithm_core::datetime::format_datetime_tz(max, None);
+    assert_eq!(utc["events"][0]["time"], utc_time);
+
+    let args = [
+        "next",
+        "-",
+        "--from",
+        "2026-01-02T00:00:00+00:01",
+        "--within",
+        "9223372036854775807",
+    ];
+    // Compare with a timestamp one minute earlier in UTC to verify that the
+    // shift at i64::MAX is the same as elsewhere.
+    let earlier = cyclorithm_core::datetime::format_datetime_tz(max - 60_000, Some(2));
+    let wall = earlier.strip_suffix("+00:02").unwrap();
+    let zoned = stdout_json(&run_stdin(&args, &src));
+    assert_eq!(zoned["events"][0]["time"], format!("{wall}+00:01"));
+}
+
+#[test]
+fn check_uses_exact_bounds_without_materializing_repetitions() {
+    for (cycle, statement) in [
+        (
+            "cycle C duration = 0ms {}",
+            "0ms: repeat 18446744073709551615 C();",
+        ),
+        ("cycle C duration = 1ms {}", "0ms: fill gaps C();"),
+    ] {
+        let src = format!(
+            r#"
+        schedule "Проверка большого расписания" {{
+          {cycle}
+          root_cycle start_time = "2026-01-01T00:00:00", duration = 9223372036854775807ms {{
+            {statement}
+          }}
+        }}
+        "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let src = r#"
+    schedule "Переполнение границы" {
+      cycle C duration = 4611686018427387904ms {}
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 9223372036854775807ms {
+        0ms: repeat 2 C();
+      }
+    }
+    "#;
+    let out = run_stdin(&["check", "-"], src);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .starts_with("cycle-overruns: cycle 'C' overruns 'root_cycle' by 1ms ")
+    );
+}
+
+#[test]
+fn routine_offsets_can_count_from_the_end_of_the_table() {
+    let src = r#"
+    time_const T duration = 2h { last: 2h; }
+    schedule "Конец рутины" {
+      point P { actions = [x]; }
+      routine R(TC) { -30m: P.x(); }
+      root_cycle start_time = "2026-01-01T00:00:00", duration = 24h { 0h: R(T); }
+    }
+    "#;
+    let out = run_stdin(&["run", "-", "--start", "2026-01-01", "--end", "+2h"], src);
+    assert_eq!(
+        stdout_json(&out)["events"][0]["time"],
+        "2026-01-01T01:30:00"
+    );
+
+    let overrun = src.replace("-30m: P.x()", "-3h: P.x()");
+    let out = run_stdin(&["check", "-"], &overrun);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("offset-out-of-bounds: "));
+}
+
+#[test]
+fn check_validates_unused_table_slots() {
+    for (offset, slug) in [("1h2h", "invalid-duration"), ("3h", "offset-out-of-bounds")] {
+        let src = format!(
+            r#"
+        time_const T duration = 2h {{ unused: {offset}; }}
+        schedule "Неиспользуемый слот" {{
+          root_cycle start_time = "2026-01-01T00:00:00", duration = 24h {{}}
+        }}
+        "#
+        );
+        let out = run_stdin(&["check", "-"], &src);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).starts_with(&format!("{slug}: ")));
+    }
+}
+
+#[test]
 fn empty_windows_do_not_evaluate_rows() {
     let src = r#"
     schedule "Пустое окно" {

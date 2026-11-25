@@ -22,7 +22,7 @@ use crate::parser::{
 
 use crate::Error;
 use crate::cond::{TableReg, check_reserved};
-use crate::duration::{duration_ms, effective_offset_ms, format_duration, root_period_ms};
+use crate::duration::{duration_ms, effective_offset_ms, format_duration_wide, root_period_ms};
 
 /// Таблицы имён после успешной проверки — вход later-фаз ядра.
 #[derive(Debug)]
@@ -653,21 +653,16 @@ pub fn instantiate(
     let mut body = Vec::with_capacity(routine.stmts.len());
     let mut body_labels = Vec::with_capacity(routine.stmts.len());
     for st in &routine.stmts {
-        let (offset, label) = match &st.offset {
-            RoutineOffset::Duration(d) => (d.clone(), None),
+        let (negative, offset, label) = match &st.offset {
+            RoutineOffset::Duration(d) => (false, d.clone(), None),
             RoutineOffset::Label(label) => match table.rows.iter().find(|r| &r.label == label) {
-                Some(slot) => (slot.offset.clone(), Some(label.clone())),
+                Some(slot) => (false, slot.offset.clone(), Some(label.clone())),
                 None => return Err(Error::unknown_slot(label)),
             },
             RoutineOffset::Moment(m) => match m {
-                MomentExpr::Absolute {
-                    negative: false,
-                    duration,
-                } => (duration.clone(), None),
+                MomentExpr::Absolute { negative, duration } => (*negative, duration.clone(), None),
                 _ => {
-                    return Err(Error::invalid_routine_moment(
-                        "relative/dependency/func moment",
-                    ));
+                    return Err(Error::invalid_routine_moment(&m.to_string()));
                 }
             },
         };
@@ -689,7 +684,7 @@ pub fn instantiate(
         };
         body.push(Stmt {
             moment: MomentExpr::Absolute {
-                negative: false,
+                negative,
                 duration: offset,
             },
             repeat: st.repeat.clone(),
@@ -727,13 +722,19 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
             .get(tname.as_str())
             .expect("порядок — по реестру");
         let limit = duration_ms(&table.duration)?;
-        let rows: Vec<Stmt> = table
-            .rows
-            .iter()
-            .filter_map(|row| row.slot_call.as_ref().map(|f| slot_call_stmt(row, f)))
-            .collect();
+        let mut rows = Vec::new();
+        for row in &table.rows {
+            if let Some(call) = &row.slot_call {
+                rows.push(slot_call_stmt(row, call));
+            } else if duration_ms(&row.offset)? > limit {
+                return Err(Error::offset_out_of_bounds(
+                    &row.offset.raw,
+                    &table.duration.raw,
+                ));
+            }
+        }
         let (end, argmax) = stmts_end(&rows, limit, &table.duration.raw, tables)?;
-        if end > limit {
+        if end > i128::from(limit) {
             let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
             return Err(blame(&rows[row], &table.name, end, limit));
         }
@@ -751,7 +752,7 @@ pub fn check_tables(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
         let body: Vec<Stmt> = inst.body.into_iter().chain(inst.slot_calls).collect();
         let limit = duration_ms(&table.duration)?;
         let (end, argmax) = stmts_end(&body, limit, &table.duration.raw, tables)?;
-        if end > limit {
+        if end > i128::from(limit) {
             let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
             return Err(blame(&body[row], rname, end, limit));
         }
@@ -771,7 +772,7 @@ pub fn check_bounds(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
     for c in &schedule.cycles {
         let limit = duration_ms(&c.duration)?;
         let (end, argmax) = stmts_end(&c.stmts, limit, &c.duration.raw, tables)?;
-        if end > limit {
+        if end > i128::from(limit) {
             let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
             return Err(blame(&c.stmts[row], &c.name, end, limit));
         }
@@ -783,7 +784,7 @@ pub fn check_bounds(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
         &schedule.root.duration.raw,
         tables,
     )?;
-    if end > period {
+    if end > i128::from(period) {
         let row = argmax.expect("конец больше лимита — строка-аргмакс есть");
         return Err(blame(&schedule.root.stmts[row], "root_cycle", end, period));
     }
@@ -800,20 +801,22 @@ pub fn check_bounds(schedule: &Schedule, tables: &NameTables<'_>) -> Result<(), 
 pub fn actual_ms(name: &str, tables: &NameTables<'_>) -> Result<i64, Error> {
     let cycle = tables.cycles.get(name).expect("имена уже проверены");
     let limit = duration_ms(&cycle.duration)?;
-    Ok(stmts_end(&cycle.stmts, limit, &cycle.duration.raw, tables)?.0)
+    let end = stmts_end(&cycle.stmts, limit, &cycle.duration.raw, tables)?.0;
+    Ok(i64::try_from(end).unwrap_or(i64::MAX))
 }
 
 /// Фактическая длительность `root_cycle` — горизонт занятости `S`
 /// (см. docs/reference/semantics.md).
 pub fn root_actual_ms(schedule: &Schedule, tables: &NameTables<'_>) -> Result<i64, Error> {
     let period = duration_ms(&schedule.root.duration)?;
-    Ok(stmts_end(
+    let end = stmts_end(
         &schedule.root.stmts,
         period,
         &schedule.root.duration.raw,
         tables,
     )?
-    .0)
+    .0;
+    Ok(i64::try_from(end).unwrap_or(i64::MAX))
 }
 
 /// Литералы в динамическом моменте проверяются даже при пропуске запуска.
@@ -868,27 +871,20 @@ fn stmts_end(
     limit: i64,
     limit_raw: &str,
     tables: &NameTables<'_>,
-) -> Result<(i64, Option<usize>), Error> {
-    let plans = plan_stmts(stmts, limit, limit_raw, tables)?;
-    let mut best: (i64, Option<usize>) = (0, None);
-    for (i, pl) in plans.iter().enumerate() {
-        if let Some(end) = pl.end
-            && (best.1.is_none() || end > best.0)
-        {
-            best = (end, Some(i));
-        }
+) -> Result<(i128, Option<usize>), Error> {
+    let plan = plan_stmts_in_mode(stmts, limit, limit_raw, tables, PlanMode::Bounds)?;
+    let (mut end, argmax) = plan.farthest.map_or((0, None), |(end, i)| (end, Some(i)));
+    // Если точные моменты известны лишь при развёртке, решётка использует весь период.
+    if has_dynamic_moments(stmts) {
+        end = end.max(i128::from(limit));
     }
-    // Динамические моменты (issue 45) статически не планируются:
-    // их конец неизвестен — консервативно считаем занятым весь лимит
-    // (горизонт S для решётки), переполнения абсолютных строк при этом
-    // всё равно ловятся выше. Границы динамики — в рантайме развёртки.
-    if stmts
+    Ok((end, argmax))
+}
+
+fn has_dynamic_moments(stmts: &[Stmt]) -> bool {
+    stmts
         .iter()
         .any(|st| !matches!(st.moment, MomentExpr::Absolute { .. }))
-    {
-        best.0 = best.0.max(limit);
-    }
-    Ok(best)
 }
 
 /// План экземпляров списка строк: для каждой строки — старты (относительно
@@ -904,26 +900,46 @@ pub fn plan_stmts(
     limit_raw: &str,
     tables: &NameTables<'_>,
 ) -> Result<Vec<Placement>, Error> {
+    Ok(plan_stmts_in_mode(stmts, limit, limit_raw, tables, PlanMode::Starts)?.placements)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PlanMode {
+    Bounds,
+    Starts,
+}
+
+fn plan_stmts_in_mode(
+    stmts: &[Stmt],
+    limit: i64,
+    limit_raw: &str,
+    tables: &NameTables<'_>,
+    mode: PlanMode,
+) -> Result<StmtPlan, Error> {
     let mut occupied = Vec::new();
-    let StmtPlan {
-        mut placements,
-        gap_fills,
-    } = plan_ordinary_stmts(stmts, limit, limit_raw, tables, &mut occupied)?;
-    // При динамике точная занятость станет известна только при развёртке.
-    if stmts
-        .iter()
-        .all(|st| matches!(st.moment, MomentExpr::Absolute { .. }))
-    {
-        for (index, fill) in gap_fills {
-            placements[index] = fill.place(&mut occupied);
+    let mut plan = plan_ordinary_stmts(stmts, limit, limit_raw, tables, &mut occupied, mode)?;
+    if !has_dynamic_moments(stmts) {
+        for (index, fill) in std::mem::take(&mut plan.gap_fills) {
+            let placement = fill.place(&mut occupied, mode);
+            if let Some(end) = placement.end {
+                record_end(&mut plan.farthest, i128::from(end), index);
+            }
+            plan.placements[index] = placement;
         }
     }
-    Ok(placements)
+    Ok(plan)
 }
 
 pub(crate) struct StmtPlan {
     pub placements: Vec<Placement>,
     pub gap_fills: Vec<(usize, GapFill)>,
+    farthest: Option<(i128, usize)>,
+}
+
+fn record_end(farthest: &mut Option<(i128, usize)>, end: i128, index: usize) {
+    if farthest.is_none_or(|(best, row)| end > best || (end == best && index < row)) {
+        *farthest = Some((end, index));
+    }
 }
 
 pub(crate) struct GapFill {
@@ -940,9 +956,11 @@ pub(crate) fn plan_ordinary_stmts(
     limit_raw: &str,
     tables: &NameTables<'_>,
     occupied: &mut Vec<(i64, i64)>,
+    mode: PlanMode,
 ) -> Result<StmtPlan, Error> {
     let mut plans: Vec<Placement> = Vec::with_capacity(stmts.len());
     let mut gap_fills = Vec::new();
+    let mut farthest = None;
     for (i, st) in stmts.iter().enumerate() {
         // Динамические моменты (issue 45) статически не планируются:
         // их старты разрешаются в развёртке (курсор/метки), границы —
@@ -985,18 +1003,16 @@ pub(crate) fn plan_ordinary_stmts(
             }
             _ => {
                 let (count, step) = chain(st, offset, limit, limit_raw, tables)?;
-                let end = saturating_add_mul(offset, count, step);
-                // Материализация только влезающих стартов: всё, что за лимитом,
-                // отсечёт `check_bounds` по точному `end` (тот же `blame`).
-                // Без капа `repeat 99999999999` собирает Vec до проверки границ
-                // (OOM), а `j as i64 * step` переполняется в debug (паника).
-                // Кап точен для валидных программ: при `end <= limit` влезают все.
-                let materialized = if step > 0 && offset <= limit {
-                    let room: u64 = ((limit as i128 - offset as i128) / step as i128)
-                        .clamp(0, u64::MAX as i128) as u64;
-                    count.min(room.saturating_add(1))
-                } else if step == 0 && offset > limit {
+                let exact_end = i128::from(offset) + i128::from(count) * i128::from(step);
+                record_end(&mut farthest, exact_end, i);
+                let end = i64::try_from(exact_end).unwrap_or(i64::MAX);
+                // Проверке границ нужны только концы цепочек. При развёртке
+                // материализуются старты, которые лежат в пределах цикла.
+                let materialized = if matches!(mode, PlanMode::Bounds) || offset > limit {
                     0
+                } else if step > 0 {
+                    let room = ((limit - offset) / step) as u64;
+                    count.min(room + 1)
                 } else {
                     count
                 };
@@ -1020,12 +1036,14 @@ pub(crate) fn plan_ordinary_stmts(
     Ok(StmtPlan {
         placements: plans,
         gap_fills,
+        farthest,
     })
 }
 
 impl GapFill {
-    pub(crate) fn place(&self, occupied: &mut Vec<(i64, i64)>) -> Placement {
+    pub(crate) fn place(&self, occupied: &mut Vec<(i64, i64)>, mode: PlanMode) -> Placement {
         let mut starts = Vec::new();
+        let mut end = None;
         let step = self.step;
         for (a, b) in free_segments(occupied, self.from, self.to) {
             let n = (b - a) / step;
@@ -1038,12 +1056,13 @@ impl GapFill {
                 Pack::Right => a + remainder,
                 Pack::Center => a + remainder / 2,
             };
-            for j in 0..n {
-                starts.push(base + j * step);
+            if matches!(mode, PlanMode::Starts) {
+                starts.extend((0..n).map(|j| base + j * step));
             }
-            occupied.push((base, base + n * step));
+            let block_end = base + n * step;
+            occupied.push((base, block_end));
+            end = Some(block_end);
         }
-        let end = starts.last().map(|s| s + step);
         Placement { starts, end }
     }
 }
@@ -1187,18 +1206,13 @@ fn cycle_duration<'a>(tables: &NameTables<'a>, name: &str) -> &'a crate::parser:
     tables.cycles.get(name).expect("имена уже проверены")
 }
 
-/// `offset + n*d` с насыщением: переполнение всё равно больше лимита.
-fn saturating_add_mul(offset: i64, n: u64, d: i64) -> i64 {
-    let end = offset as i128 + n as i128 * d as i128;
-    i64::try_from(end).unwrap_or(i64::MAX)
-}
-
 /// Ошибка cycle-overruns с виной на вызове строки: цикл — `cycle 'X' overruns ...`,
 /// действие точки — симметричное `action 'a' overruns ...`.
-pub(crate) fn blame(stmt: &Stmt, outer: &str, end: i64, limit: i64) -> Error {
-    let excess = format_duration(end - limit);
-    let end_s = format_duration(end);
-    let limit_s = format_duration(limit);
+pub(crate) fn blame(stmt: &Stmt, outer: &str, end: i128, limit: i64) -> Error {
+    let limit = i128::from(limit);
+    let excess = format_duration_wide(end - limit);
+    let end_s = format_duration_wide(end);
+    let limit_s = format_duration_wide(limit);
     match &stmt.invocation {
         Invocation::PointAction { action, .. } => {
             Error::action_overruns(action, outer, &excess, &end_s, &limit_s)
