@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -562,7 +562,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Быстрый путь: готовый бинарь
+        Готовая сборка
       
     </span>
   </a>
@@ -614,7 +614,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -701,7 +701,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -1067,7 +1067,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1200,7 +1200,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Быстрый путь: готовый бинарь
+        Готовая сборка
       
     </span>
   </a>
@@ -1250,14 +1250,15 @@
 
 
 <h1 id="_1">Установка<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<h2 id="_2">Быстрый путь: готовый бинарь<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Собранный <code>cyclo</code> (Linux/Windows, x86-64/ARM64) — в
-<a href="https://github.com/MaksPV/cyclorithm/releases">релизах</a>. Проверка:</p>
+<h2 id="_2">Готовая сборка<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>Скачайте <code>cyclo</code> для Linux или Windows (x86-64 или ARM64) со
+<a href="https://github.com/MaksPV/cyclorithm/releases">страницы релизов</a>.
+После распаковки проверьте версию:</p>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>cyclo<span class="w"> </span>--version
 <span class="go">cyclo 0.3.2</span>
 </code></pre></div>
 <h2 id="_3">Из исходников<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>Требуется стабильный Rust (<code>rustup</code>). Команды — из корня репо:</p>
+<p>Требуется стабильная версия Rust (<code>rustup</code>). Выполните команду из корня репозитория:</p>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>cargo<span class="w"> </span>run<span class="w"> </span>-p<span class="w"> </span>cyclorithm-cli<span class="w"> </span>--<span class="w"> </span>run<span class="w"> </span>examples/valid/route.cyclo<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--start<span class="w"> </span><span class="m">2026</span>-01-09T00:00:00<span class="w"> </span>--end<span class="w"> </span><span class="m">2026</span>-01-10T00:00:00
 </code></pre></div>
@@ -1266,8 +1267,8 @@
 <span class="gp">$ </span>cargo<span class="w"> </span>fmt<span class="w"> </span>--all<span class="w"> </span>--<span class="w"> </span>--check
 <span class="gp">$ </span>cargo<span class="w"> </span>clippy<span class="w"> </span>--workspace<span class="w"> </span>--all-targets
 </code></pre></div>
-<p>Те же проверки выполняет CI на push и PR в <code>main</code>/<code>dev</code>.</p>
-<p>Дальше — <a href="../tutorial/">туториал с нуля</a>.</p>
+<p>Те же проверки выполняются в CI при отправке изменений и открытии pull request в <code>main</code> или <code>dev</code>.</p>
+<p>Далее можно составить <a href="../tutorial/">первое расписание</a>.</p>
 
 
 

@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Туториал с нуля - Cyclorithm</title>
+        <title>Первое расписание - Cyclorithm</title>
       
     
     
@@ -118,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Туториал с нуля
+              Первое расписание
             
           </span>
         </div>
@@ -543,7 +543,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -561,7 +561,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -634,7 +634,7 @@
   <a href="#5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Шаг 5. Читаем вывод
+        Шаг 5. Проверьте вывод
       
     </span>
   </a>
@@ -723,7 +723,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -1089,7 +1089,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1266,7 +1266,7 @@
   <a href="#5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Шаг 5. Читаем вывод
+        Шаг 5. Проверьте вывод
       
     </span>
   </a>
@@ -1293,9 +1293,9 @@
   
 
 
-<h1 id="_1">Туториал: первое расписание с нуля<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Цель — за 5 шагов получить собственный список событий. Технические детали
-намеренно опущены — за ними в <a href="../../reference/concepts/">Справочник</a>.</p>
+<h1 id="_1">Первое расписание<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>За пять шагов вы составите расписание одного рейса и получите список его событий.
+Термины и правила языка описаны в <a href="../../reference/concepts/">справочнике</a>.</p>
 <h2 id="1-point">Шаг 1. Точка <code>point</code><a class="headerlink" href="#1-point" title="Permanent link">&para;</a></h2>
 <p>Точка — место, где происходят действия:</p>
 <div class="highlight"><pre><span></span><code><span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span>
@@ -1331,14 +1331,13 @@
 <h2 id="4">Шаг 4. Запуск<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>cyclo<span class="w"> </span>run<span class="w"> </span>my.cyclo<span class="w"> </span>--start<span class="w"> </span><span class="m">2026</span>-01-09T00:00:00<span class="w"> </span>--end<span class="w"> </span><span class="m">2026</span>-01-10T00:00:00
 </code></pre></div>
-<h2 id="5">Шаг 5. Читаем вывод<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
-<p>Каждое событие — <code>{time, action, point, point_attrs, action_attrs}</code>:</p>
+<h2 id="5">Шаг 5. Проверьте вывод<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
+<p>Команда выведет два события: отправление в 06:00 и прибытие в 06:40.
+Первое событие выглядит так:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"time"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-01-09T06:00:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"action"</span><span class="p">:</span><span class="w"> </span><span class="s2">"depart"</span><span class="p">,</span><span class="w"> </span><span class="nt">"point"</span><span class="p">:</span><span class="w"> </span><span class="s2">"DEPOT"</span><span class="p">,</span><span class="w"> </span><span class="nt">"point_attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span><span class="w"> </span><span class="nt">"action_attrs"</span><span class="p">:</span><span class="w"> </span><span class="p">{}}</span>
 </code></pre></div>
-<p>При ошибке сверьтесь с разделом <a href="../../reference/errors/">ошибок</a> — там каждая
-ситуация с примером некорректного файла и исправлением.</p>
-<p>Следующий шаг — <a href="../../reference/concepts/">концепты</a>: чем цикл отличается
-от рутины и таблицы времени.</p>
+<p>Если команда вернула ошибку, найдите её код и способ исправления в <a href="../../reference/errors/">справочнике ошибок</a>.</p>
+<p>Отличия цикла, рутины и таблицы времени описаны в разделе <a href="../../reference/concepts/">«Основные понятия»</a>.</p>
 
 
 

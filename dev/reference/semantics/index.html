@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -621,7 +621,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -758,7 +758,7 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#time-zones" class="md-nav__link">
     <span class="md-ellipsis">
       
         Часовые пояса
@@ -769,7 +769,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Решётка корневого цикла
@@ -780,7 +780,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Строки и вложенность
@@ -791,7 +791,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#launch-labels" class="md-nav__link">
     <span class="md-ellipsis">
       
         Метки запуска, зависимости и курсор
@@ -813,7 +813,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#repeats" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -824,7 +824,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#reverse-cycles" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -835,7 +835,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#conditions-and-time" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -849,12 +849,12 @@
   <a href="#here" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Контекст инстанции here
+        Контекст экземпляра here
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Контекст инстанции here">
+    <nav class="md-nav" aria-label="Контекст экземпляра here">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -880,7 +880,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Снимки
@@ -891,7 +891,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         Пример целиком
@@ -907,7 +907,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -918,7 +918,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1205,7 +1205,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1335,7 +1335,7 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#time-zones" class="md-nav__link">
     <span class="md-ellipsis">
       
         Часовые пояса
@@ -1346,7 +1346,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         Решётка корневого цикла
@@ -1357,7 +1357,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         Строки и вложенность
@@ -1368,7 +1368,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#launch-labels" class="md-nav__link">
     <span class="md-ellipsis">
       
         Метки запуска, зависимости и курсор
@@ -1390,7 +1390,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#repeats" class="md-nav__link">
     <span class="md-ellipsis">
       
         Повторы
@@ -1401,7 +1401,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#reverse-cycles" class="md-nav__link">
     <span class="md-ellipsis">
       
         Разворот циклов
@@ -1412,7 +1412,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#conditions-and-time" class="md-nav__link">
     <span class="md-ellipsis">
       
         Условия и момент строки
@@ -1426,12 +1426,12 @@
   <a href="#here" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Контекст инстанции here
+        Контекст экземпляра here
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Контекст инстанции here">
+    <nav class="md-nav" aria-label="Контекст экземпляра here">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1457,7 +1457,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
         Снимки
@@ -1468,7 +1468,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         Пример целиком
@@ -1484,7 +1484,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         Параметры и данные
@@ -1495,7 +1495,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_12" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         Таблицы времени и рутины
@@ -1527,30 +1527,29 @@
 
 <h1 id="_1">Семантика<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <p>Как циклы разворачиваются в события.</p>
-<h2 id="_2">Часовые пояса<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<div class="admonition danger">
-<p class="admonition-title">Переходы DST не поддерживаются</p>
-<p>Движок не знает летнего/зимнего времени: сутки всегда ровно 24 часа,
-офсеты постоянны. Зоны с переходами (IANA-имена вроде <code>Europe/Berlin</code>)
-отклоняются ошибкой <code>invalid-timezone</code>; правильное DST — в <a href="../../todo/">todo</a>.</p>
-</div>
-<p><code>timezone</code> расписания (опционально) — только <code>Z</code> или числовой <code>±HH:MM</code>.
-Наивные литералы файла (<code>start_time</code>) интерпретируются в кадре
-<code>file_zone.or(query_zone)</code>: зона файла, иначе — зона окна (<code>start</code>/<code>from</code>),
-иначе — 1:1 как написано. Город пишут в файле один раз — дальше расписание
-смотрят из любой точки земли: файл абсолютен, зона окна влияет только
-на подписи. Без города в файле наивное читается в городе, из которого
-спрашивают: стены стоят, инстанты = стена − зона окна.
-Aware-литералы с собственным суффиксом — абсолютны всегда.
-Окно вывода форматируется в зоне <code>start</code>/<code>from</code>,
-иначе — в зоне файла, иначе — наивно. Дефолтное окно (без <code>--from</code>,
-дельта <code>+DURATION</code> от now) — в системной зоне ОС. Сравнение дат — по абсолютным мс.</p>
-<p>Календарные встроенные (<code>hour</code>, <code>dow</code>, <code>morning</code>, <code>evening</code>, <code>datestr</code>, …)
-считают по стене кадра (<code>at.wall</code>), поэтому кадру подчиняются: наивный
-<code>route.cyclo</code> с окном <code>09:00+03:00</code> держит стены (06:00, 10:00, 14:00)
-и 18:00-рейс на месте — <code>commute(at)</code> видит московский вечер, всего
-18 событий. Сравнение дат-как-строк (<code>at &gt;= "2026-01-10"</code>) — тоже по стене.</p>
-<h2 id="_3">Решётка корневого цикла<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="time-zones">Часовые пояса<a class="headerlink" href="#time-zones" title="Permanent link">&para;</a></h2>
+<p>В <code>timezone</code> можно указать <code>Z</code> (UTC) или фиксированное смещение от UTC
+в формате <code>±HH:MM</code>. Имена часовых поясов, например <code>Europe/Berlin</code>,
+возвращают ошибку <code>invalid-timezone</code>. Все сутки длятся ровно 24 часа.
+Поддержка часовых поясов IANA и переходов на летнее время описана в <a href="../../todo/#iana-and-dst">планах</a>.</p>
+<p>Если у даты в файле есть суффикс <code>Z</code> или <code>±HH:MM</code>, он задаёт точный момент.
+Дату без суффикса движок интерпретирует в зоне расписания, если задана
+<code>timezone</code>, или в зоне начала окна (<code>start</code> или <code>from</code>). Если смещение
+отсутствует в обоих местах, движок использует дату как записано и выводит
+время без суффикса.</p>
+<p>Например, <code>06:00</code> в файле без <code>timezone</code> при запросе с началом окна
+в 09:00 со смещением <code>+03:00</code> означает 06:00 по времени этого окна, то есть 03:00 UTC.
+Если в файле задана <code>timezone</code>, изменение зоны окна не меняет момент
+запуска. Оно меняет только то, как время события записано в выводе.</p>
+<p>Вывод использует смещение начала окна или, если его нет, <code>timezone</code>
+расписания. Для относительного начала окна (<code>+DURATION</code>) и для <code>next</code>
+без <code>--from</code> берётся текущее смещение системной зоны.</p>
+<p>Календарные функции, например <code>hour</code>, <code>dow</code> и <code>datestr</code>, используют
+местное время расчёта (<code>at.wall</code>): время в зоне расписания или, если она
+не задана, в зоне начала окна. То же местное время
+используется при сравнении <code>at</code> с датой в строке, например
+<code>at &gt;= "2026-01-10"</code>.</p>
+<h2 id="_2">Решётка корневого цикла<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>Корневой цикл задаёт бесконечную решётку стартов: якорь <code>start_time</code>
 (с учётом <code>timezone</code> файла), период <code>duration</code>.</p>
 <div class="arithmatex">\[
@@ -1560,47 +1559,51 @@ T(k) = T_0 + k \cdot P, \quad k = 0, 1, 2, \dots
 в вывод идут события со временем в <code>[start, end)</code>. Окно 10.01–11.01 (суббота)
 пересекает решётку маршрута в старте <code>k = 9</code> (10.01 00:00): работают рейсы
 6:00 и 12:00 — всего 8 событий, будние ветки молчат.</p>
-<h2 id="_4">Строки и вложенность<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>Строка выполняется в момент «старт объемлющего цикла плюс смещение».
-Смещения накапливаются вниз по вложенности: вызов <code>CITY_ROUTE</code> на <code>6h</code>,
-внутри строка на <code>40m</code> — событие в 6:40 (<code>arrive</code>, <code>AIRPORT</code>).</p>
-<p>Вызов действия даёт событие в момент строки. Пропуск родителя (ложное
-условие) подавляет потомков.</p>
-<h2 id="_5">Метки запуска, зависимости и курсор<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_3">Строки и вложенность<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>Смещение строки отсчитывается от начала текущего цикла. Если <code>CITY_ROUTE</code>
+запускается в 06:00, его строка <code>40m: AIRPORT.arrive();</code> даёт событие в 06:40.</p>
+<p>Действие точки создаёт событие. Если условие вызова цикла ложно,
+все строки этого запуска пропускаются.</p>
+<h2 id="launch-labels">Метки запуска, зависимости и курсор<a class="headerlink" href="#launch-labels" title="Permanent link">&para;</a></h2>
 <p>Метка запуска (<code>as</code>) даёт имя конкретному запуску цикла:</p>
 <div class="highlight"><pre><span></span><code><span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>
 <span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>
 </code></pre></div>
-<p><code>W1</code> — момент старта, конец — через <code>end(W1)</code>. Виды зависимостей:
-<code>after W1:</code> — старт по концу <code>W1</code>, <code>at W1:</code> — старт по старту <code>W1</code>,
-<code>until W1:</code> — то же, что <code>after</code> (конец <code>W1</code>). Функции момента:
-<code>start(W1)</code>, <code>end(W1)</code> (ровно 1 голая метка), <code>max(...)</code>/<code>min(...)</code> (≥1
-аргумента: моменты, длительности от старта scope, голые метки как концы).</p>
-<p>Курсор scope ведётся движком неявно и равен <code>max(end)</code> всех уже испущенных
-прямых детей scope; стартовое значение — 0 (старт scope). Относительный
-момент читает курсор: <code>+:</code> — в точке курсора, <code>+10m:</code> — через 10 минут
-после него. У каждого экземпляра цикла свой курсор и свои метки.
-Строка может ссылаться на метки, объявленные выше в теле того же цикла.
-Если у строки с меткой несколько запусков, метка обозначает последний
-выпущенный запуск.</p>
-<p>Если элемент не испустил событие (условие ложно), курсор не двигается:</p>
+<ul>
+<li><code>after W1:</code> и <code>until W1:</code> задают момент окончания запуска <code>W1</code>.</li>
+<li><code>at W1:</code> задаёт момент его начала.</li>
+<li><code>start(W1)</code> и <code>end(W1)</code> принимают по одной метке и возвращают начало
+  и конец запуска соответственно.</li>
+<li><code>max(...)</code> и <code>min(...)</code> принимают один или несколько аргументов. Длительность
+  отсчитывается от начала текущего цикла. Метка без <code>start()</code> или <code>end()</code>
+  означает время окончания запуска.</li>
+</ul>
+<p>Курсор хранит самое позднее время окончания уже выполненных строк тела
+текущего цикла. Изначально он указывает на начало цикла. Строка с <code>+:</code>
+выполняется в момент, на который указывает курсор, а с <code>+10m:</code> — на 10 минут
+позже. У каждого экземпляра цикла свои курсор и метки. Строка может
+ссылаться на метки, объявленные выше в теле того же цикла. Если строка
+с меткой запускает цикл несколько раз, метка обозначает последний
+состоявшийся запуск.</p>
+<p>Строка, пропущенная из-за ложного условия, не сдвигает курсор:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">workday</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="o">+</span><span class="m">0m</span><span class="p">:</span> <span class="nf">LUNCH</span><span class="p">();</span>
 <span class="o">+</span><span class="m">30m</span><span class="p">:</span> <span class="nf">TEA</span><span class="p">();</span>
 </code></pre></div>
-<p>В выходной <code>LUNCH</code> выпадает, курсор стоит, и <code>TEA</code> стартует через 30 минут
-после той же точки, где мог бы быть <code>LUNCH</code>. Если зависимость не
-разрешилась (метка не испущена), строка каскадно скипается вместе со всеми
-зависящими от неё — тоже без движения курсора.</p>
-<p>Ограничения: <code>fill gaps</code> и <code>reverse</code>-источник принимают только абсолютные
-смещения; в рутинах — только длительности и метки слотов.</p>
+<p>В выходные <code>LUNCH</code> пропускается. <code>TEA</code> запускается через 30 минут после
+того момента, когда мог бы начаться <code>LUNCH</code>. Если помеченный запуск
+пропущен, его метка недоступна. Строки, которые зависят от неё напрямую
+или через другие запуски, тоже пропускаются без сдвига курсора.</p>
+<p>Для строки <code>fill gaps</code> и тела исходного цикла в объявлении <code>reverse</code>
+допустимы только абсолютные смещения. В рутинах можно указывать смещения
+и метки слотов таблицы.</p>
 <h2 id="overruns">Границы (<code>overruns</code>)<a class="headerlink" href="#overruns" title="Permanent link">&para;</a></h2>
 <p>Фактическая длительность цикла — самый поздний конец его строк:</p>
 <div class="arithmatex">\[
 actual(C) = \max_i (o_i + d(X_i))
 \]</div>
-<p>Она обязана умещаться в объявленную: завершение ровно в границу допустимо,
-выход — ошибка. Цикл <code>C1</code> длительностью 1h вызывает на <code>40m</code> цикл <code>C2</code>
-длительностью 40m — конец на <code>40m + 40m = 80m</code> вылезает на 20m:</p>
+<p>Каждый вызов должен завершиться к концу текущего цикла. В примере часовой
+цикл <code>C1</code> вызывает <code>C2</code> через 40 минут после своего начала. Поскольку
+<code>C2</code> длится 40 минут, он заканчивается на 20 минут позже <code>C1</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">C1</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h</span> <span class="p">{</span>
   <span class="m">40m</span><span class="p">:</span> <span class="nf">C2</span><span class="p">();</span>  <span class="c1">// конец на 80m — за границей</span>
 <span class="p">}</span>
@@ -1614,61 +1617,68 @@ actual(C) = \max_i (o_i + d(X_i))
 </code></pre></div>
 <p>Цепочки, пересекающие границу периода корневого цикла, запрещены; для них
 выбирается больший <code>duration</code> или сдвинутый <code>start_time</code>.</p>
-<h2 id="_6">Повторы<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<p>Про <code>repeat</code> и <code>fill</code> — в <a href="../concepts/">концептах</a>. Здесь формальные
-детали: горизонт <code>fill</code> — конец объемлющего цикла, граница включительная
-(<code>старт + duration ≤ горизонт</code>); <code>fill X()</code> эквивалентен
-<code>fill until &lt;конец родителя&gt; X()</code>; влезло ноль — ноль событий, это не ошибка.</p>
-<p><code>fill gaps X [pack DIR] [until T]</code> упаковывает экземпляры <code>X</code> в свободные отрезки
-окна <code>[o, h)</code>, где <code>o</code> — эффективное смещение строки, <code>h</code> — горизонт
-(по умолчанию конец родителя, <code>until T</code> и <code>until -T</code> — как у <code>fill</code>).
-Занятость — отрезки <code>[o_i, o_i + n_i·d_i)</code> обычных строк (по объявленным
-длительностям, все условия считаются истинными). В каждом свободном
-отрезке <code>[a, b)</code> ставится <code>n = ⌊len / d⌋</code> экземпляров встык; остаток
-короче <code>d</code> пропускается. Направление упаковки <code>DIR</code>:
-<code>pack left</code> (default) — старт блока в <code>a</code>;
-<code>pack right</code> — старт блока в <code>b − n·d</code>;
-<code>pack center</code> — старт блока в <code>a + (len − n·d) / 2</code> с округлением сдвига вниз.
-Строки <code>fill gaps</code> идут в порядке объявления и учитывают занятость обычных
-строк и предыдущих добивок. Обычные строки с динамическим моментом должны
-стоять до первой добивки в том же цикле. Их интервалы определяются по
-разрешённому моменту и объявленной длительности. Строка с неразрешённой
-зависимостью интервала не занимает. <code>o &gt; h</code> — окно
-пустое и это ошибка. Условие на <code>fill gaps</code> проверяется на каждый
-экземпляр в его старте; влезло ноль — ноль событий, это не ошибка.</p>
-<h2 id="_7">Разворот циклов<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="repeats">Повторы<a class="headerlink" href="#repeats" title="Permanent link">&para;</a></h2>
+<p><code>fill</code> размещает столько полных запусков подряд, сколько помещается до
+границы: время начала запуска плюс его длительность должно быть меньше
+или равно границе. Без <code>until</code> границей служит конец текущего цикла.
+Если не помещается ни один запуск, команда не создаёт событий для строки.</p>
+<p><code>fill gaps [pack DIR] [until T] X()</code> размещает запуски <code>X</code> в свободных
+отрезках окна <code>[o, h)</code>. Здесь <code>o</code> — смещение строки, а <code>h</code> — граница
+<code>until</code> или конец текущего цикла. Если <code>until</code> задан и <code>o &gt; h</code>,
+возникает ошибка <code>until-out-of-bounds</code>.</p>
+<p>Запланированные запуски обычной строки занимают интервал
+<code>[o_i, o_i + n_i·d_i)</code>, где <code>n_i</code> — число запусков, а <code>d_i</code> —
+объявленная длительность вызова. При расчёте занятости условия строк
+считаются истинными. Строки с динамическими моментами должны стоять выше
+первой добивки в том же цикле. Их интервалы вычисляются при расчёте
+событий. Если зависимость не разрешилась, строка не занимает интервал.</p>
+<p>В свободном отрезке <code>[a, b)</code> длиной <code>len = b − a</code> помещается
+<code>n = ⌊len / d⌋</code> полных запусков длительностью <code>d</code>. Они идут подряд,
+а начало первого запуска задаёт <code>pack</code>:</p>
+<ul>
+<li><code>pack left</code> (по умолчанию) начинает запуски в <code>a</code>.</li>
+<li><code>pack right</code> начинает запуски в <code>b − n·d</code>.</li>
+<li><code>pack center</code> начинает запуски в <code>a + ⌊(len − n·d) / 2⌋</code>.</li>
+</ul>
+<p>Каждая строка <code>fill gaps</code> учитывает интервалы, занятые предыдущими
+добивками. Условие проверяется отдельно для каждого запуска в момент
+его начала. Если условие ложно, запуск пропускается.</p>
+<h2 id="reverse-cycles">Разворот циклов<a class="headerlink" href="#reverse-cycles" title="Permanent link">&para;</a></h2>
 <p><code>cycle BACK reverse FWD;</code> разворачивается в обычный цикл до всех проверок:
 смещения зеркалятся относительно длительности (<code>o' = duration − o</code>
 от эффективного смещения — минус уже разрешён), вызовы, условия, повторы,
 параметры и длительность наследуются как есть. Порядок строк — порядок
 объявления источника.</p>
-<p>Зеркало корректно ложится, когда плечи кончаются на <code>duration</code>: крайние
-строки <code>0 ↔ duration</code> меняются местами. Середина с асимметричными плечами
-правится руками отдельным явным циклом. Проверки идут на результате общим
-порядком (<code>cycle-overruns</code> и остальные): вылезшее за длительность зеркало —
-ошибка. Цепочки запрещены — источник обязан быть явным циклом
-(иначе <code>recursive</code>); рутина или точка как источник — <code>wrong-kind</code>,
-нет имени — <code>unknown-cycle</code>.</p>
-<h2 id="_8">Условия и момент строки<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
-<p>Момент строки <code>at</code> — словарь кадра <code>{wall, abs, zone}</code>: <code>wall</code> — стена
-(представление в зоне кадра <code>file.or(query)</code>), <code>abs</code> — миллисекунды epoch,
-<code>zone</code> — сдвиг кадра в мс. Инвариант: <code>wall ≡ abs + zone</code>; без зон
-<code>wall == abs</code>. Доступ — только явный (<code>at.wall</code>, <code>at.abs</code>): голый <code>at</code>
-в арифметике и сравнениях с числами — <code>type-mismatch</code>. В телах объявлений
-<code>fun</code>/<code>pred</code> <code>at</code> означает время места вызова: предикат ниже в строке
-<code>[commute(at)] 18h</code> вычисляется для момента строки — старта плюс 18h.</p>
+<p>Строки на отметках <code>0</code> и <code>duration</code> меняются местами. Если для
+обратного маршрута нужны другие интервалы, опишите его отдельным циклом.
+К развёрнутому циклу применяются обычные проверки, включая
+<code>cycle-overruns</code>. Источник должен быть циклом с явно заданным телом.
+Ссылка на другой <code>reverse</code> даёт <code>recursive</code>, на точку или рутину —
+<code>wrong-kind</code>, на отсутствующее имя — <code>unknown-cycle</code>.</p>
+<h2 id="conditions-and-time">Условия и момент строки<a class="headerlink" href="#conditions-and-time" title="Permanent link">&para;</a></h2>
+<p>Момент строки <code>at</code> — словарь с тремя полями:</p>
+<ul>
+<li><code>abs</code> — абсолютное время в миллисекундах с начала эпохи Unix.</li>
+<li><code>zone</code> — смещение зоны расчёта от UTC в миллисекундах.</li>
+<li><code>wall</code> — местное время в той же шкале, то есть <code>abs + zone</code>. Без
+  смещения <code>wall</code> и <code>abs</code> равны.</li>
+</ul>
+<p>Для арифметики и сравнения с числами используйте поля словаря, например
+<code>at.wall</code>. Использование самого словаря в такой операции вызывает
+<code>type-mismatch</code>. В теле <code>fun</code> или <code>pred</code> значение <code>at</code> соответствует
+моменту строки, из которой вызвана функция или предикат.</p>
 <div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"2026-01-09T02:00:00"</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
   <span class="p">[</span><span class="nf">commute</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">18h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>  <span class="c1">// сработает в 20:00, а не в 18:00</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Смещение — не время суток: при старте в 02:00 строка стреляет в 20:00,
-при старте в полночь та же строка стреляла бы в 18:00. Условие уже решает
-по готовому моменту.</p>
-<h2 id="here">Контекст инстанции <code>here</code><a class="headerlink" href="#here" title="Permanent link">&para;</a></h2>
-<p>Вторая синтетика строк (наряду с <code>at</code>) — словарь инстанции: виден
-в условиях строк и в блоках действий. Объявлять <code>here</code> нельзя
-(<code>reserved-name</code>), как и <code>at</code>; голый <code>here</code> в позиции условия —
-<code>type-mismatch</code> (словарь — не условие).</p>
+<p>При старте цикла в 02:00 условие строки со смещением <code>18h</code> проверяется
+для 20:00. При старте в полночь оно проверяется для 18:00.</p>
+<h2 id="here">Контекст экземпляра <code>here</code><a class="headerlink" href="#here" title="Permanent link">&para;</a></h2>
+<p>Словарь <code>here</code> содержит контекст текущего экземпляра цикла или рутины.
+Он доступен в условиях строк и в атрибутах действий. Имена <code>here</code> и <code>at</code>
+зарезервированы (<code>reserved-name</code>). Чтобы построить условие на основе
+<code>here</code>, обращайтесь к его полям. Сам словарь в роли условия даёт
+<code>type-mismatch</code>.</p>
 <p>Ключи верхнего уровня:</p>
 <table>
 <thead>
@@ -1680,35 +1690,35 @@ actual(C) = \max_i (o_i + d(X_i))
 <tbody>
 <tr>
 <td><code>stack</code></td>
-<td>Путь вызовов от корня до текущей инстанции (массив кадров)</td>
+<td>Путь вызовов от корня до текущего экземпляра (массив кадров)</td>
 </tr>
 <tr>
 <td><code>events</code></td>
-<td>Все кандидаты инстанции с флагом <code>enabled</code></td>
+<td>Запланированные вызовы и действия текущего экземпляра со статусом <code>enabled</code></td>
 </tr>
 <tr>
 <td><code>enabled_events</code></td>
-<td>Те же кандидаты, где <code>event.enabled == true</code> — то, что попадает в timeline</td>
+<td>Выполненные вызовы и действия (<code>event.enabled == true</code>)</td>
 </tr>
 <tr>
 <td><code>disabled_events</code></td>
-<td>Где <code>event.enabled == false</code> — проверки отсутствия и диагностика</td>
+<td>Пропущенные вызовы и действия (<code>event.enabled == false</code>)</td>
 </tr>
 </tbody>
 </table>
 <h3 id="stack">Стек <code>stack</code><a class="headerlink" href="#stack" title="Permanent link">&para;</a></h3>
-<p>Кадр — <code>{name}</code> или <code>{name, params}</code> (<code>root_cycle</code> — без параметров).
-<code>params</code> — формальное имя → разрешённое значение; табличный параметр
-рутины (<code>TC</code>) — дескриптор <code>{duration, labels}</code> (длительность таблицы
-и метки в мс). Глубина вложенности — <code>len(here.stack)</code>; верх —
-<code>here.stack[-1]</code>, корень — <code>here.stack[0]</code>. Цепочки — обычными точкой
-и индексом (отрицательный — с конца, как везде):</p>
+<p>Кадр содержит имя вызова (<code>name</code>) и, если есть параметры, словарь
+<code>params</code> со значениями по именам параметров. У <code>root_cycle</code> параметров
+нет. Для табличного параметра рутины (<code>TC</code>) словарь хранит длительность
+таблицы (<code>duration</code>) и смещения её меток (<code>labels</code>) в миллисекундах.</p>
+<p><code>len(here.stack)</code> возвращает глубину вложенности. Текущий вызов доступен
+по индексу <code>-1</code>, корневой цикл — по индексу <code>0</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">-1</span><span class="p">].</span><span class="nf">params</span><span class="p">.</span><span class="nf">subj</span><span class="p">.</span><span class="nf">teacher</span>
 <span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">-1</span><span class="p">].</span><span class="nf">params</span><span class="p">.</span><span class="nf">TC</span><span class="p">.</span><span class="nf">labels</span><span class="p">.</span><span class="nf">first</span>
 <span class="n">here</span><span class="p">.</span><span class="nf">stack</span><span class="p">[</span><span class="m">0</span><span class="p">].</span><span class="nf">name</span>  <span class="c1">// всегда "root_cycle"</span>
 </code></pre></div>
 <h3 id="events">Кандидаты <code>events</code><a class="headerlink" href="#events" title="Permanent link">&para;</a></h3>
-<p>Кандидат — строка инстанции в конкретном старте: <code>{point?, cycle?, event}</code>.
+<p>Кандидат — запись о вызове или действии. Она содержит <code>event</code> и одно из полей <code>point</code> или <code>cycle</code>.
 Действие точки даёт <code>point</code>, вызов цикла/рутины — <code>cycle</code>:</p>
 <table>
 <thead>
@@ -1732,25 +1742,24 @@ actual(C) = \max_i (o_i + d(X_i))
 </tr>
 <tr>
 <td><code>event</code></td>
-<td><code>{action?, offset, label?, at, enabled}</code> — действие (<code>null</code> у вызовов циклов — ключа нет), смещение в мс от старта инстанции, метка рутины, момент <code>{wall, abs, zone}</code>, флаг</td>
+<td><code>{action?, offset, label?, at, enabled}</code> — имя действия точки, смещение от начала текущего экземпляра в миллисекундах, метка слота рутины, момент <code>{wall, abs, zone}</code> и признак выполнения</td>
 </tr>
 </tbody>
 </table>
-<p>Отсутствующие <code>point</code> / <code>cycle</code> / <code>action</code> / <code>label</code> — без ключа
-(у значений нет null): доступ к ним — <code>unknown-field</code>. Индекс вне границ —
-<code>index-out-of-bounds</code>. Невыполненная строка аргументы не вычисляет:
-её <code>params</code> пусты (у рутины — только дескриптор <code>TC</code>, таблица — литерал).</p>
-<h3 id="_9">Снимки<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
-<p>Снимок — «на данный момент» в порядке развёртки: условие строки видит
-кандидатов ранее разобранных строк своей инстанции. Вызовы слотов <code>-&gt;</code>
-видят итоговый список тела (детерминирован) — так условие отличает пустое
-тело от полного:</p>
+<p>Если поле <code>point</code>, <code>cycle</code>, <code>action</code> или <code>label</code> неприменимо, соответствующего
+ключа нет. Обращение к нему даёт <code>unknown-field</code>. Индекс за пределами
+массива даёт <code>index-out-of-bounds</code>. Для пропущенного вызова аргументы не
+вычисляются. Его <code>params</code> пуст, а у рутины содержит только описание таблицы.</p>
+<h3 id="_4">Снимки<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<p>Условие строки видит кандидатов, уже обработанных в текущем экземпляре.
+Вызовы слотов <code>-&gt;</code> видят результаты обработки всего тела рутины:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">workday</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="k">and</span> <span class="nf">len</span><span class="p">(</span><span class="n">here</span><span class="p">.</span><span class="nf">enabled_events</span><span class="p">)</span> <span class="o">&gt;</span> <span class="m">0</span><span class="p">]</span> <span class="n">lunch</span><span class="p">:</span> <span class="m">12h</span> <span class="o">-&gt;</span> <span class="nf">LUNCH</span><span class="p">();</span>
 </code></pre></div>
-<p>Пустое тело — обеда нет. Блок действий видит <code>here</code> уже с собственным
-кандидатом, а в <code>action_attrs</code> словарь замораживается копированием:
-<code>{"snap": here}</code> кладёт мёртвый JSON момента, живых ссылок нет.</p>
-<h3 id="_10">Пример целиком<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
+<p>В этом примере обед добавляется в будни, если при обработке тела рутины
+выполнилась хотя бы одна строка. В атрибутах действия <code>here</code> уже содержит
+запись об этом действии. Выражение <code>{"snap": here}</code> сохраняет копию словаря
+на момент выполнения строки.</p>
+<h3 id="_5">Пример целиком<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
 <p>Программа (понедельник 07.09.2026, в <code>LESSON</code> одна строка отключена):</p>
 <div class="highlight"><pre><span></span><code><span class="k">const</span> <span class="n">SUBJ</span> <span class="o">=</span> <span class="p">{</span><span class="s">"name"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">,</span> <span class="s">"teacher"</span><span class="p">:</span> <span class="s">"Иванов"</span><span class="p">};</span>
 <span class="k">time_const</span> <span class="n">DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">2h</span> <span class="p">{</span>
@@ -1772,9 +1781,10 @@ actual(C) = \max_i (o_i + d(X_i))
   <span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Заморозка <code>{"snap": here}</code> внутри <code>LESSON</code> (событие <code>00:30</code>) — стек
-глубиной 3, оба кандидата (включая отключённого с <code>enabled: false</code>),
-геттеры — фильтры того же списка:</p>
+<p>В событии <code>LESSON</code> в 00:30 копия <code>here</code> содержит три кадра стека.
+В <code>events</code> две записи, в том числе пропущенное действие с
+<code>enabled: false</code>. Поля <code>enabled_events</code> и <code>disabled_events</code> содержат
+записи из того же списка, отобранные по признаку выполнения:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"stack"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"root_cycle"</span><span class="p">},</span>
 <span class="w">  </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"MONDAY"</span><span class="p">,</span><span class="w"> </span><span class="nt">"params"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"TC"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="mi">7200000</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"labels"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"first"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"second"</span><span class="p">:</span><span class="w"> </span><span class="mi">3600000</span><span class="p">}},</span>
@@ -1800,9 +1810,9 @@ actual(C) = \max_i (o_i + d(X_i))
 <span class="w">    </span><span class="nt">"at"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"wall"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"abs"</span><span class="p">:</span><span class="w"> </span><span class="mi">1788739200000</span><span class="p">,</span><span class="w"> </span><span class="nt">"zone"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span>
 <span class="w">    </span><span class="nt">"enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}}]}</span>
 </code></pre></div>
-<p>На уровень выше (заморозка в теле <code>MONDAY</code>, событие <code>01:00</code>) кандидаты —
-вызовы: цикл — с <code>duration</code> и <code>params</code>, метка строки — в <code>event.label</code>,
-действия точки — без <code>cycle</code>:</p>
+<p>В событии <code>MONDAY</code> в 01:00 копия <code>here</code> содержит вызов <code>LESSON</code>.
+В поле <code>cycle</code> записаны длительность и аргументы, а в <code>event.label</code> —
+метка слота. Записи о действиях точки не содержат поля <code>cycle</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"cycle"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"LESSON"</span><span class="p">,</span><span class="w"> </span><span class="nt">"duration"</span><span class="p">:</span><span class="w"> </span><span class="mi">3600000</span><span class="p">,</span>
 <span class="w">   </span><span class="nt">"params"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"subj"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"БЖД"</span><span class="p">,</span><span class="w"> </span><span class="nt">"teacher"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Иванов"</span><span class="p">}}},</span>
 <span class="w"> </span><span class="nt">"event"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"first"</span><span class="p">,</span>
@@ -1811,16 +1821,16 @@ actual(C) = \max_i (o_i + d(X_i))
 </code></pre></div>
 <p>Статический расчёт фактической длительности и проверка границ идут
 в предположении истинности всех условий.</p>
-<h2 id="_11">Параметры и данные<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
-<p>Аргументы вызова вычисляются в момент строки — и текут вниз по цепочке
-вызовов вместе с окружением. Область видимости динамическая: вызванный цикл
-видит параметры вызывающего, даже если своих у него нет.</p>
+<h2 id="_6">Параметры и данные<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>Аргументы вычисляются для момента вызова. Область видимости динамическая:
+вызванный цикл видит параметры вызывающего цикла, даже если у него самого
+нет параметров.</p>
 <div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"2026-09-07T00:00:00"</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
   <span class="m">9h</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">({</span><span class="s">"subject"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">});</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Вызов на <code>9h</code>, внутри два смещения <code>0m</code>: <code>LESSON</code> зовёт безаргументный
-<code>INNER</code>, тот звонит — и <code>subj</code> на месте, хотя у <code>INNER</code> параметров нет:</p>
+<p><code>LESSON</code> вызывает <code>INNER</code> без аргументов. Действие в теле <code>INNER</code>
+использует параметр <code>subj</code> из <code>LESSON</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="nf">LESSON</span><span class="p">(</span><span class="n">subj</span><span class="p">)</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h35m</span> <span class="p">{</span>
   <span class="m">0m</span><span class="p">:</span> <span class="nf">INNER</span><span class="p">();</span>
 <span class="p">}</span>
@@ -1829,13 +1839,11 @@ actual(C) = \max_i (o_i + d(X_i))
   <span class="m">0m</span><span class="p">:</span> <span class="n">BELL</span><span class="p">.</span><span class="nf">ring</span><span class="p">()</span> <span class="p">{</span><span class="s">"subject"</span><span class="p">:</span> <span class="n">subj</span><span class="p">.</span><span class="nf">subject</span><span class="p">};</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Событие в 9:00 несёт <code>{"subject": "БЖД"}</code>: время — из строки корня, словарь —
-из вызова, доехал через голову <code>INNER</code>.</p>
-<p>Три запрета напоследок. Параметр перекрывает <code>const</code>/<code>fun</code>/<code>pred</code> с тем же
-именем. Имя константы-данных прямо в условии запрещено (<code>unknown-name</code>) — данные
+<p>В 09:00 создаётся событие с атрибутом <code>{"subject": "БЖД"}</code>.</p>
+<p>Параметр перекрывает одноимённое объявление <code>const</code>, <code>fun</code> или <code>pred</code>. Имя константы-данных прямо в условии запрещено (<code>unknown-name</code>) — данные
 входят в условие только через параметр. Табличный параметр рутины в условиях
 и атрибутах действия невидим (<code>unknown-name</code>).</p>
-<h2 id="_12">Таблицы времени и рутины<a class="headerlink" href="#_12" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Таблицы времени и рутины<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>Вызов <code>ИМЯ(ТАБЛИЦА, …)</code> заменяет метки тела смещениями таблицы, вызовы
 таблицы добавляются после строк тела; длительность вызова равна длительности
 таблицы. Рутина ниже на таблице <code>SHORT_DAY</code> даёт звонки в 9:00 и 10:30:</p>
@@ -1853,19 +1861,17 @@ actual(C) = \max_i (o_i + d(X_i))
 </code></pre></div>
 <p>Имя табличного параметра любое — <code>TC</code> лишь соглашение: движок смотрит
 на позицию (первый параметр), а не на имя.</p>
-<p>Метки, которой нет в таблице, — ошибка. Рутина требует <code>4th</code>, в таблице его
-нет:</p>
+<p>Если в таблице нет метки, указанной в теле рутины, вызов завершается
+ошибкой. Например, эта рутина требует метку <code>4th</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">routine</span> <span class="nf">WED</span><span class="p">(</span><span class="n">TC</span><span class="p">)</span> <span class="p">{</span>
   <span class="nl">4th</span><span class="p">:</span> <span class="n">BELL</span><span class="p">.</span><span class="nf">ring</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>unknown slot '4th'
 </code></pre></div>
-<p>Таблица обязана покрывать все метки тела — сокращённый день без нужной метки
-ломает вызов, а не пропускает строку молча.</p>
-<p>Тело проверяется в длительности каждой таблицы, с которой рутина вызывается;
-вина границ и повторов ложится на рутину. Рутина без вызовов — только статическая
-проверка имён и условий: покрытие проверить не на чем.</p>
+<p>При каждом вызове таблица должна содержать все метки из тела рутины.
+Длительность этой таблицы задаёт границы вызова и повторов. Если рутина
+нигде не вызывается, движок проверяет только имена и условия.</p>
 
 
 

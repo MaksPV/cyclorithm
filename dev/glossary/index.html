@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -982,7 +982,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1144,103 +1144,103 @@
 <tbody>
 <tr>
 <td>расписание <code>schedule</code></td>
-<td>Корневой блок файла</td>
+<td>Блок, объединяющий точки, циклы, рутины и корневой цикл</td>
 </tr>
 <tr>
 <td>точка <code>point</code></td>
-<td>Объект для описания событий; объявляет <code>actions</code> и <code>attrs</code></td>
+<td>Именованный объект с допустимыми действиями <code>actions</code> и необязательными атрибутами <code>attrs</code></td>
 </tr>
 <tr>
 <td>действие <code>action</code></td>
-<td>Именованное событие точки</td>
+<td>Операция точки, которая при выполнении создаёт событие</td>
 </tr>
 <tr>
 <td>цикл <code>cycle</code></td>
-<td>Именованная цепочка строк <code>&lt;смещение&gt;: &lt;вызов&gt;;</code> с длительностью <code>duration</code>; сам ничего не порождает, только вызывается</td>
+<td>Именованная последовательность строк с объявленной длительностью <code>duration</code></td>
 </tr>
 <tr>
 <td>корневой цикл <code>root_cycle</code></td>
-<td>Входная точка. Работает как цикл, но автоматически вызывается начиная со <code>start_time</code>, а когда заканчивается, то вызывается ещё раз</td>
+<td>Цикл, который запускается автоматически с момента <code>start_time</code> и повторяется с периодом <code>duration</code></td>
 </tr>
 <tr>
 <td>вызов <code>invocation</code></td>
-<td>Действие точки, вызов цикла или вызов рутины</td>
+<td>Запуск действия точки, цикла или рутины</td>
 </tr>
 <tr>
 <td>событие <code>event</code></td>
-<td>Одна запись вывода <code>{time, action, point, point_attrs, action_attrs}</code></td>
+<td>Запись вывода с полями <code>time</code>, <code>action</code>, <code>point</code>, <code>point_attrs</code> и <code>action_attrs</code></td>
 </tr>
 <tr>
 <td>таблица времени <code>time_const</code></td>
-<td>Список именованных меток времени для рутин</td>
+<td>Набор именованных смещений и необязательных вызовов, используемый рутинами</td>
 </tr>
 <tr>
-<td>метка <code>label</code></td>
-<td>Имя смещения в таблице времени (<code>1st:</code> в рутине) или имя запуска цикла (<code>as W1</code>)</td>
+<td>метка слота</td>
+<td>Имя смещения в таблице времени, например <code>1st</code></td>
 </tr>
 <tr>
 <td>метка запуска</td>
-<td>Имя конкретного запуска цикла (<code>0h: WARMUP() as W1</code>); старт — <code>start(W1)</code>, конец — <code>end(W1)</code></td>
+<td>Имя запуска цикла, объявленное через <code>as W1</code>. Начало запуска задаёт <code>start(W1)</code>, конец — <code>end(W1)</code></td>
 </tr>
 <tr>
-<td>курсор scope</td>
-<td>Неявная позиция scope: <code>max(end)</code> уже испущенных прямых детей; читается относительными моментами (<code>+10m:</code>)</td>
+<td>курсор</td>
+<td>Самое позднее время окончания уже выполненных строк тела текущего цикла. От курсора отсчитываются относительные моменты, например <code>+10m:</code></td>
 </tr>
 <tr>
-<td>момент</td>
-<td>Единая ось времени строки: timestamp, относительный момент, зависимость (<code>after/at/until</code>) или функция (<code>start/end/max/min</code>) — ровно один источник на строку</td>
+<td>момент строки</td>
+<td>Время вызова. Его задаёт смещение, курсор, зависимость от запуска или функция момента</td>
 </tr>
 <tr>
 <td>рутина <code>routine</code></td>
-<td>Шаблон дня; работает как цикл, но наследует длительность, именованные метки и события от таблиц времени.</td>
+<td>Шаблон, который получает длительность, смещения меток и вызовы слотов из таблицы времени</td>
 </tr>
 <tr>
 <td>условие <code>condition</code></td>
-<td>Выражение <code>[…]</code> перед строкой; вычисляется для момента вызова строки</td>
+<td>Выражение <code>[…]</code> перед моментом строки. Оно проверяется для каждого запуска</td>
 </tr>
 <tr>
 <td>момент строки <code>at</code></td>
-<td>Словарь кадра <code>{wall, abs, zone}</code>: стена и абсолют в мс, зона в мс</td>
+<td>Словарь с абсолютным временем (<code>abs</code>), смещением от UTC (<code>zone</code>) и местным временем (<code>wall</code>), всё в миллисекундах</td>
 </tr>
 <tr>
-<td>контекст инстанции <code>here</code></td>
-<td>Словарь инстанции: <code>stack</code> (путь вызовов), <code>events</code> (все кандидаты), <code>enabled_events</code> / <code>disabled_events</code></td>
+<td>контекст экземпляра <code>here</code></td>
+<td>Словарь с цепочкой вызовов (<code>stack</code>) и записями о строках (<code>events</code>, <code>enabled_events</code> и <code>disabled_events</code>)</td>
 </tr>
 <tr>
 <td>повтор</td>
-<td>Модификатор строки <code>repeat N</code> (ровно <code>N</code> запусков) или <code>fill [until T]</code> (сколько поместится)</td>
+<td>Модификатор строки. <code>repeat N</code> задаёт число запусков, <code>fill [until T]</code> — границу, до которой должны помещаться запуски</td>
 </tr>
 <tr>
 <td>добивка пустот <code>fill gaps</code></td>
-<td>Модификатор строки <code>fill gaps [until T]</code>: заполняет свободные отрезки окна вызовами цикла</td>
+<td>Модификатор строки, который заполняет свободные промежутки окна вызовами цикла</td>
 </tr>
 <tr>
 <td>смещение <code>offset</code></td>
-<td>Смещение строки от старта объемлющего цикла</td>
+<td>Расстояние от начала цикла до момента строки. Отрицательное смещение в исходном тексте отсчитывается от конца цикла</td>
 </tr>
 <tr>
 <td>длительность <code>duration</code></td>
-<td>Длительность цикла. В коде заранее объявляется сколько длится цикл</td>
+<td>Объявленная продолжительность цикла</td>
 </tr>
 <tr>
 <td>фактическая длительность</td>
-<td>Самый поздний конец строк цикла: <code>max(смещение + длина вызова)</code></td>
+<td>Наибольшее время окончания вызова относительно начала цикла</td>
 </tr>
 <tr>
 <td>объявление <code>declaration</code></td>
-<td><code>const</code>, <code>fun</code> или <code>pred</code></td>
+<td>Определение константы <code>const</code>, функции <code>fun</code>, предиката <code>pred</code> или таблицы времени <code>time_const</code></td>
 </tr>
 <tr>
 <td>импорт <code>use</code></td>
-<td>Подключение стороннего файла в текущий файл.</td>
+<td>Подключение объявлений из другого файла</td>
 </tr>
 <tr>
 <td>атрибуты действия</td>
-<td><code>{"k": v, …}</code> после вызова точки; попадает в событие полем <code>action_attrs</code></td>
+<td>Словарь из вызова действия точки. В выводе хранится в поле <code>action_attrs</code></td>
 </tr>
 <tr>
 <td>атрибуты точки</td>
-<td>Поле <code>attrs</code> точки; копия попадает в каждое событие полем <code>point_attrs</code></td>
+<td>Необязательный словарь <code>attrs</code>. Копируется в поле <code>point_attrs</code> каждого события точки</td>
 </tr>
 </tbody>
 </table>

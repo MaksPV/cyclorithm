@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -621,7 +621,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -789,7 +789,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Шапки
+        Заголовки
       
     </span>
   </a>
@@ -1144,7 +1144,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1277,7 +1277,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Шапки
+        Заголовки
       
     </span>
   </a>
@@ -1404,23 +1404,17 @@
 
 
 <h1 id="_1">Ошибки<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Формат: в stderr — строка <code>слаг: сообщение</code>, stdout остаётся пустым. Слаг
-маппится на строку таблицы ниже (сообщения в таблице — без префикса).
-Коды возврата:
-<code>0</code> — успех, <code>1</code> — ошибка ввода, парсинга или валидации,
-<code>2</code> — некорректные аргументы CLI (текст usage).</p>
-<p>Каждая ошибка ниже названа по ситуации, а не по номеру: имя стабильно,
-новые ситуации вставляются без перенумерации. Тексты сообщений дословные.</p>
-<p>Ошибки синтаксиса (файл не разбирается по грамматике) возвращают код <code>1</code>
-без имени ситуации. Поля шапок со свободным порядком проверяет сборка:
-нет обязательного поля — <code>missing-argument</code> (включая отсутствие корневого
-цикла целиком), поле дважды — <code>duplicate-argument</code> (включая второй корень).
-Импорты
-(<code>cannot-read-import</code>, <code>schedule-in-import</code>) разрешаются раньше проверок
-решётки. Фазы валидации идут в фиксированном порядке, первая ошибка
-побеждает: имена → рекурсия → моменты → таблицы → длительности и границы →
-условия → даты. Внутри фазы проверки идут в порядке объявления.</p>
-<h2 id="_2">Шапки<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>При ошибке команда пишет в стандартный поток ошибок (stderr). Для ошибок
+с кодом используется формат <code>код: сообщение</code>. В таблицах ниже сообщения
+приведены без префикса. <a href="../cli/#exit-codes">Коды возврата CLI</a>.</p>
+<p>Если программа не разбирается по грамматике, команда возвращает код
+<code>1</code> и сообщает о синтаксической ошибке без кода ошибки. Для полей заголовков
+предусмотрены отдельные сообщения. Например, отсутствие обязательного
+поля даёт <code>missing-argument</code>, повтор поля — <code>duplicate-argument</code>.</p>
+<p>После разбора движок разрешает импорты, затем проверяет имена, рекурсию,
+моменты, таблицы, длительности и границы, условия и даты. Команда
+сообщает о первой обнаруженной ошибке.</p>
+<h2 id="_2">Заголовки<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1433,12 +1427,12 @@
 <tr>
 <td><code>missing-argument</code></td>
 <td><code>missing argument 'duration'</code>, <code>missing argument 'actions'</code>, <code>missing argument 'root_cycle'</code></td>
-<td>Добавить обязательное поле шапки (<code>start_time</code>/<code>duration</code> у <code>root_cycle</code>, <code>actions</code> у <code>point</code>, сам <code>root_cycle</code>)</td>
+<td>Добавить обязательное поле заголовка (<code>start_time</code>/<code>duration</code> у <code>root_cycle</code>, <code>actions</code> у <code>point</code>, сам <code>root_cycle</code>)</td>
 </tr>
 <tr>
 <td><code>duplicate-argument</code></td>
 <td><code>duplicate argument 'duration'</code>, <code>duplicate argument 'timezone'</code>, <code>duplicate argument 'root_cycle'</code></td>
-<td>Оставить поле шапки один раз</td>
+<td>Оставить поле заголовка один раз</td>
 </tr>
 </tbody>
 </table>
@@ -1475,7 +1469,7 @@
 <tr>
 <td><code>reserved-name</code></td>
 <td><code>reserved name 'at'</code></td>
-<td>Переименовать: <code>at</code> — момент строки, <code>here</code> — контекст инстанции, объявлять так нельзя</td>
+<td>Переименовать: <code>at</code> — момент строки, <code>here</code> — контекст экземпляра, объявлять так нельзя</td>
 </tr>
 <tr>
 <td><code>wrong-kind</code></td>
@@ -1514,7 +1508,7 @@
 <tr>
 <td><code>unknown-label</code></td>
 <td><code>unknown label 'NOPE'</code></td>
-<td>Объявить метку <code>as</code> выше по scope</td>
+<td>Объявить метку <code>as</code> выше в теле того же цикла</td>
 </tr>
 <tr>
 <td><code>forward-label-reference</code></td>
@@ -1529,7 +1523,7 @@
 <tr>
 <td><code>invalid-moment-function</code></td>
 <td><code>invalid moment function: 'start' takes a bare label</code></td>
-<td><code>start</code>/<code>end</code> — ровно 1 голая метка; <code>max</code>/<code>min</code> — ≥1 аргумента</td>
+<td><code>start</code>/<code>end</code> — по одной метке. <code>max</code> и <code>min</code> принимают один или несколько аргументов</td>
 </tr>
 <tr>
 <td><code>invalid-routine-moment</code></td>
@@ -1742,7 +1736,7 @@
 <tr>
 <td><code>broken-prelude</code></td>
 <td><code>broken prelude '...'</code></td>
-<td>Битая сборка: пересобрать из чистого репозитория (пользовательский код ни при чём)</td>
+<td>Пересобрать программу из чистой копии репозитория</td>
 </tr>
 </tbody>
 </table>
@@ -1781,13 +1775,11 @@
 <tr>
 <td><code>invalid-timezone</code></td>
 <td><code>invalid timezone '...'</code></td>
-<td><code>timezone</code> — только <code>Z</code>/±HH:MM<code>; имена (</code>MSK<code>,</code>Europe/...`) не поддерживаются, IANA с DST — в <a href="../../todo/">todo</a></td>
+<td>Использовать <code>Z</code> или смещение <code>±HH:MM</code>. Поддержка имён часовых поясов описана в <a href="../../todo/#iana-and-dst">планах</a></td>
 </tr>
 </tbody>
 </table>
-<p>Негативные примеры: <code>examples/invalid/bad_*.cyclo</code> — не менее одного файла
-на ситуацию. Правило проекта: новая ситуация требует пример, строку
-в таблице и тест.</p>
+<p>Примеры программ с ошибками находятся в <code>examples/invalid/</code>.</p>
 
 
 

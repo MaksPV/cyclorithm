@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -1015,7 +1015,7 @@
   <a href="#examplesreallibs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Настоящие библиотеки (examples/real/libs/)
+        Библиотеки для использования в расписаниях (examples/real/libs/)
       
     </span>
   </a>
@@ -1026,7 +1026,7 @@
   <a href="#examplesvalidlibs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Фикстуры тестов (examples/valid/libs/)
+        Вспомогательные файлы тестов (examples/valid/libs/)
       
     </span>
   </a>
@@ -1056,7 +1056,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1189,7 +1189,7 @@
   <a href="#examplesreallibs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Настоящие библиотеки (examples/real/libs/)
+        Библиотеки для использования в расписаниях (examples/real/libs/)
       
     </span>
   </a>
@@ -1200,7 +1200,7 @@
   <a href="#examplesvalidlibs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Фикстуры тестов (examples/valid/libs/)
+        Вспомогательные файлы тестов (examples/valid/libs/)
       
     </span>
   </a>
@@ -1228,38 +1228,37 @@
 
 
 <h1 id="use">Библиотеки и импорт <code>use</code><a class="headerlink" href="#use" title="Permanent link">&para;</a></h1>
-<p>Общий код выносится в библиотеки и подключается первой строкой файла:</p>
+<p>Общие объявления можно вынести в библиотеку и подключить через <code>use</code> до блока <code>schedule</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">use</span> <span class="s">"libs/route_lib.cyclo"</span><span class="p">;</span>
 </code></pre></div>
 <ul>
-<li>Путь — от директории импортирующего файла, импорты транзитивны.</li>
+<li>Путь отсчитывается от каталога файла с директивой <code>use</code>. Библиотека может импортировать другие библиотеки.</li>
 <li>Библиотека содержит только объявления (<code>const</code>/<code>fun</code>/<code>pred</code>/<code>time_const</code>);
   расписание <code>schedule</code> в ней запрещено (<code>schedule-in-import</code>).</li>
-<li>Порядок наложения: системный файл → импорты вглубь → тело программы.
-  Одно имя в разных файлах перекрывается последним; повторное объявление
+<li>Сначала загружается стандартная библиотека, затем зависимости, затем объявления программы.
+  Если имя встречается в нескольких файлах, действует последнее объявление. Повторное объявление
   внутри одного файла — ошибка <code>duplicate</code>.</li>
 <li>Имена с префиксом <code>__</code> границу файла не пересекают (обращение к чужому —
   ошибка <code>unknown-name</code>).</li>
-<li>Ненайденный файл и циклический импорт — ошибки <code>cannot-read-import</code> и <code>import-cycle</code>.</li>
+<li>Отсутствующий файл и циклический импорт — ошибки <code>cannot-read-import</code> и <code>import-cycle</code>.</li>
 </ul>
 <p>Контрактный пример: <code>examples/valid/route.cyclo</code> + <code>libs/route_lib.cyclo</code>.</p>
-<h2 id="examplesreallibs">Настоящие библиотеки (<code>examples/real/libs/</code>)<a class="headerlink" href="#examplesreallibs" title="Permanent link">&para;</a></h2>
-<p>Переиспользуемый код, не привязанный к тестам: подключаются относительным
-путём от импортирующего файла (<code>../real/libs/julian.cyclo</code> из <code>examples/valid/</code>).
-Правила те же: только объявления, <code>__</code>-имена не пересекают границу файла.
-Здесь — только настоящие библиотеки; фикстуры контрактных тестов живут
-в <code>examples/valid/libs/</code> и библиотеками не являются.</p>
+<h2 id="examplesreallibs">Библиотеки для использования в расписаниях (<code>examples/real/libs/</code>)<a class="headerlink" href="#examplesreallibs" title="Permanent link">&para;</a></h2>
+<p>Эти библиотеки можно подключать к своим расписаниям. Например, из файла
+в <code>examples/valid/</code> путь к юлианскому календарю будет
+<code>../real/libs/julian.cyclo</code>.</p>
 <ul>
-<li><code>julian.cyclo</code> — юлианский календарь: разбор стены (<code>j_year</code>/<code>j_month</code>/<code>j_day</code>,
-  <code>j_datestr</code>), сборка стены (<code>julian_to_wall({"y","mo","d"})</code>), сдвиг <code>j_shift</code>.
-  День недели абсолютен (<code>j_dow = dow</code>). Кривые компоненты роняет страж
-  (<code>division-by-zero</code>); подробности — в шапке файла.
+<li><code>julian.cyclo</code> преобразует местное время в дату по юлианскому календарю
+  (<code>j_year</code>, <code>j_month</code>, <code>j_day</code>, <code>j_datestr</code>). Функция <code>julian_to_wall</code>
+  выполняет обратное преобразование, <code>j_shift</code> сдвигает дату. День недели
+  при переходе между календарями сохраняется (<code>j_dow = dow</code>). Неверные
+  компоненты даты приводят к ошибке <code>division-by-zero</code>.
   Примеры: <code>examples/valid/julian.cyclo</code>, <code>examples/valid/julian_1900.cyclo</code>.</li>
 </ul>
-<h2 id="examplesvalidlibs">Фикстуры тестов (<code>examples/valid/libs/</code>)<a class="headerlink" href="#examplesvalidlibs" title="Permanent link">&para;</a></h2>
-<p>Тест-кейсы, а не библиотеки: часть контракта примеров.</p>
+<h2 id="examplesvalidlibs">Вспомогательные файлы тестов (<code>examples/valid/libs/</code>)<a class="headerlink" href="#examplesvalidlibs" title="Permanent link">&para;</a></h2>
+<p>Эти файлы используются вместе с примерами сквозных тестов.</p>
 <ul>
-<li><code>route_lib.cyclo</code> — вторая половина контракта <code>route.cyclo</code>.</li>
+<li><code>route_lib.cyclo</code> — объявления для примера <code>route.cyclo</code>.</li>
 <li><code>holidays.cyclo</code> — выходные для теста импортов (<code>examples/valid/imports.cyclo</code>).</li>
 </ul>
 

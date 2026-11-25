@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -621,7 +621,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -760,7 +760,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Атрибуты действия
       
     </span>
   </a>
@@ -769,6 +769,17 @@
       
         <li class="md-nav__item">
   <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Условия
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data" class="md-nav__link">
     <span class="md-ellipsis">
       
         Данные
@@ -1111,7 +1122,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1299,7 +1310,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Условия
+        Атрибуты действия
       
     </span>
   </a>
@@ -1308,6 +1319,17 @@
       
         <li class="md-nav__item">
   <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Условия
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data" class="md-nav__link">
     <span class="md-ellipsis">
       
         Данные
@@ -1340,10 +1362,10 @@
 <h1 id="_1">Синтаксис<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <p>EBNF-грамматика — в <code>crates/cyclorithm-core/src/parser/grammar.pest</code>.
 Здесь — правила словами и на примерах: что можно писать и где границы.
-Что означают сущности — в <a href="../concepts/">концептах</a>.</p>
+Значения терминов приведены в разделе <a href="../concepts/">«Основные понятия»</a>.</p>
 <h2 id="_2">Файл<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Файл — это импорты, объявления и одно расписание; <code>use</code> — вперемешку
-с объявлениями, но до расписания (расписание — конец файла):</p>
+<p>Файл содержит импорты, объявления и одно расписание. Директивы <code>use</code>
+могут стоять между объявлениями. Файл заканчивается блоком расписания:</p>
 <div class="highlight"><pre><span></span><code><span class="k">use</span> <span class="s">"libs/route_lib.cyclo"</span><span class="p">;</span>
 
 <span class="k">const</span> <span class="n">MORNING</span> <span class="o">=</span> <span class="m">6</span><span class="p">;</span>
@@ -1353,9 +1375,9 @@
   <span class="p">...</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Члены расписания — в любом порядке: точки, рутины, циклы, корневой цикл
-и опциональная <code>timezone</code> (один раз, без запятой). Корневой цикл ровно
-один, где угодно:</p>
+<p>Точки, рутины, циклы и корневой цикл можно объявлять в любом порядке.
+В расписании должен быть ровно один корневой цикл. Поле <code>timezone</code>
+необязательно. Его можно указать один раз, без запятой:</p>
 <div class="highlight"><pre><span></span><code><span class="k">schedule</span> <span class="s">"Автобусный парк"</span> <span class="p">{</span>
   <span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// хоть первым</span>
   <span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
@@ -1364,8 +1386,8 @@
   <span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Поля шапок — в любом порядке (разделитель тот же: запятая у <code>root_cycle</code>,
-точка с запятой у <code>point</code>, пробел у <code>cycle</code>); висячие разделители запрещены,
+<p>Поля заголовков — в любом порядке (разделитель тот же: запятая у <code>root_cycle</code>,
+точка с запятой у <code>point</code>, пробел у <code>cycle</code>); завершающие разделители запрещены,
 как везде в языке. Нет обязательного поля — ошибка <code>missing-argument</code>,
 поле дважды — <code>duplicate-argument</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span><span class="p">,</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"..."</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// то же самое</span>
@@ -1374,18 +1396,17 @@
 </code></pre></div>
 <p>У <code>time_const</code> и <code>routine</code> поле одно (<code>duration</code> / параметры), переставлять
 нечего; отсутствие табличного параметра рутины — <code>no-table-parameter</code>.</p>
-<p><code>timezone</code> — только <code>Z</code> или числовой <code>±HH:MM</code>. Имена зон (<code>MSK</code>,
-<code>Europe/...</code>) — ошибка <code>invalid-timezone</code>: пишите числовой офсет.
-Имена IANA с переходами DST — в <a href="../../todo/">todo</a>.</p>
-<p>Комментарии <code>//</code> до конца строки лексер выбрасывает как пробелы — разрешены
-между любыми токенами. Внутри строк <code>"..."</code> двойной слеш — обычный текст.</p>
+<p><code>timezone</code> — только <code>Z</code> или смещение <code>±HH:MM</code>. Имена зон (<code>MSK</code>,
+<code>Europe/...</code>) — ошибка <code>invalid-timezone</code>: укажите числовое смещение.
+Поддержка часовых поясов IANA описана в <a href="../../todo/#iana-and-dst">планах</a>.</p>
+<p>Комментарий начинается с <code>//</code> и продолжается до конца строки. Между элементами языка он служит пробелом. В строковом литерале <code>//</code> остаётся частью текста.</p>
 <h2 id="_3">Имена<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>Имена — буквы ASCII, цифры и <code>_</code>, начинаются с буквы или <code>_</code>. Регистр значим
 (<code>DEPOT</code> и <code>Depot</code> — разные имена), кириллица запрещена.</p>
-<p>Одно имя <code>depart</code> в разных точках — можно: действия живут в пространстве
-своей точки. Одно имя у точки и цикла — нельзя, пространства общие.
-Слова <code>repeat</code>, <code>fill</code>, <code>gaps</code>, <code>until</code> в строках распознаются по месту —
-циклам и действиям такие имена не давать:</p>
+<p>У разных точек может быть действие с одним и тем же именем. Имена
+самих точек и циклов должны быть уникальны в расписании. Избегайте слов
+<code>repeat</code>, <code>fill</code>, <code>gaps</code> и <code>until</code> в именах циклов и действий: в строках
+они используются как ключевые слова.</p>
 <div class="highlight"><pre><span></span><code><span class="k">point</span> <span class="n">DEPOT</span> <span class="p">{</span> <span class="k">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">depart</span><span class="p">];</span> <span class="p">}</span>
 <span class="k">point</span> <span class="n">AIRPORT</span> <span class="p">{</span> <span class="k">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">depart</span><span class="p">];</span> <span class="p">}</span>  <span class="c1">// можно: разные точки</span>
 
@@ -1393,14 +1414,12 @@
 <span class="k">cycle</span> <span class="n">X</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h</span> <span class="p">{</span> <span class="p">...</span> <span class="p">}</span>  <span class="c1">// ошибка wrong-kind: имя занято</span>
 </code></pre></div>
 <h2 id="_4">Длительности и смещения<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<p>Что такое длительность и смещение — в <a href="../concepts/">концептах</a>.
+<p>Длительность и смещение описаны в разделе <a href="../concepts/">«Основные понятия»</a>.
 Здесь только формальные ограничения: компоненты строго по убыванию
-<code>w &gt; d &gt; h &gt; m &gt; s &gt; ms</code>, каждый встречается не более раза (<code>1h2h</code> —
-ошибка <code>invalid-duration</code>). <code>ms</code> — единый юнит, а не <code>m</code> + <code>s</code>. Значение обязано влезать
-в <code>i64</code> миллисекунд.</p>
+<code>w &gt; d &gt; h &gt; m &gt; s &gt; ms</code>, каждый встречается не более одного раза (<code>1h2h</code> —
+ошибка <code>invalid-duration</code>). <code>ms</code> обозначает миллисекунды. Длительность в миллисекундах должна помещаться в <code>i64</code>.</p>
 <h2 id="_5">Строки и повторы<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p>Строка — условие, момент, необязательный повтор, вызов и необязательная
-метка запуска:</p>
+<p>У строки обязательно есть момент и вызов. Условие, повтор и метка запуска необязательны:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="k">repeat</span> <span class="m">2</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// условие + момент + повтор + вызов</span>
 <span class="m">14h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// добивка пустот, без until — до конца цикла</span>
@@ -1410,36 +1429,40 @@
 <span class="m">6h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>
 <span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>  <span class="c1">// метка запуска для ссылок after/at/until</span>
 <span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>  <span class="c1">// зависимость от конца W1</span>
-<span class="o">+</span><span class="m">10m</span><span class="p">:</span> <span class="nf">COFFEE</span><span class="p">();</span>  <span class="c1">// через 10 минут после курсора scope</span>
-<span class="o">+</span><span class="p">:</span> <span class="nf">SHOWER</span><span class="p">();</span>  <span class="c1">// сразу после курсора scope</span>
+<span class="o">+</span><span class="m">10m</span><span class="p">:</span> <span class="nf">COFFEE</span><span class="p">();</span>  <span class="c1">// через 10 минут после курсора</span>
+<span class="o">+</span><span class="p">:</span> <span class="nf">SHOWER</span><span class="p">();</span>  <span class="c1">// сразу после курсора</span>
 <span class="nf">max</span><span class="p">(</span><span class="m">8h</span><span class="p">,</span> <span class="nf">end</span><span class="p">(</span><span class="n">W1</span><span class="p">)):</span> <span class="nf">INSPECTION</span><span class="p">();</span>  <span class="c1">// функция момента</span>
 </code></pre></div>
-<p>Момент — ровно один источник на строку: абсолютный timestamp (<code>0h:</code>,
-<code>8h30m:</code>, <code>-0m:</code> от старта родителя), относительный (<code>+:</code> или <code>+10m:</code> от
-курсора scope), зависимость (<code>after W1:</code>, <code>at W1:</code>, <code>until W1:</code>) или функция
-(<code>start(W1)</code>, <code>end(W1)</code>, <code>max(...)</code>, <code>min(...)</code>). Смешение двух источников
-(<code>0h: FOO() after W1;</code>) — синтаксическая ошибка. Ссылки — только на метки,
-объявленные выше по scope; метка <code>as</code> — только на вызовах циклов, не на
-действиях точек. В рутинах — только длительности и метки слотов таблицы
-(<code>1st:</code>); зависимости и функции там — ошибка <code>invalid-routine-moment</code>.
-У <code>fill gaps</code> и <code>reverse</code>-источника — только абсолютные смещения.
-В одном цикле строки с динамическими моментами идут до первой строки
-<code>fill gaps</code>.</p>
-<p>Повторы — только для циклов: повтор действия точки — ошибка <code>repeat-point-action</code>,
-<code>repeat 0</code> запрещён. Горизонт <code>until</code> считается от старта объемлющего цикла,
-а не от строки.</p>
+<p>У каждой строки один источник момента: смещение от начала или конца цикла
+(<code>0h:</code>, <code>8h30m:</code>, <code>-0m:</code>), смещение от курсора (<code>+:</code>, <code>+10m:</code>),
+зависимость (<code>after W1:</code>, <code>at W1:</code>, <code>until W1:</code>) или функция
+(<code>start(W1)</code>, <code>end(W1)</code>, <code>max(...)</code>, <code>min(...)</code>). Запись
+<code>0h: FOO() after W1;</code> содержит два источника и вызывает синтаксическую
+ошибку. Ссылаться можно на метки, объявленные выше в теле того же цикла.
+Метка <code>as</code> ставится у вызова цикла.</p>
+<p>В рутинах допустимы только смещения и метки слотов таблицы (<code>1st:</code>).
+Другие выражения момента вызывают <code>invalid-routine-moment</code>.
+Для строки <code>fill gaps</code> и тела исходного цикла в объявлении <code>reverse</code>
+допустимы только абсолютные смещения. Строки с динамическими моментами
+должны стоять перед первой строкой <code>fill gaps</code> в том же цикле.</p>
+<p>Повторы применяются к циклам. Попытка повторить действие точки приводит к
+<code>repeat-point-action</code>. Число в <code>repeat</code> должно быть больше нуля. Граница
+<code>until</code> отсчитывается от начала текущего цикла.</p>
 <h2 id="_6">Разворот циклов<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <p>Производный цикл — зеркало имеющегося:</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">KULICHKI_TAMBOV</span> <span class="k">reverse</span> <span class="n">TAMBOV_KULICHKI</span><span class="p">;</span>
 </code></pre></div>
-<p>Параметры и длительность наследуются, тела нет. Что зеркалится и как
-проверяется — в <a href="../semantics/">семантике</a>. Живой пример — <code>examples/real/101.cyclo</code>.</p>
+<p>Параметры и длительность берутся из исходного цикла. Тело строится
+по <a href="../semantics/#reverse-cycles">правилам разворота</a>. Пример расписания
+с обратным маршрутом — <code>examples/real/101.cyclo</code>.</p>
+<h2 id="_7">Атрибуты действия<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>Блок атрибутов действия — JSON-словарь после вызова точки:
-<code>{"ключ": значение, …}</code>. Ключи — строки, значения — выражения уровня условий
-(динамика <code>subj.…</code> работает). Вместо литерала можно сослаться на
-константу-мапу: <code>BELL.ring() CORPUS;</code> (константа статична, параметры цикла
-внутри недоступны). Пустой <code>{}</code> разрешён; дубли ключей — <code>duplicate-attribute</code>.</p>
-<h2 id="_7">Условия<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<code>{"ключ": значение, …}</code>. Ключи записываются строками, значения могут быть
+выражениями с параметрами текущего цикла. Можно также указать имя
+константы со словарём, например <code>BELL.ring() CORPUS;</code>. К параметрам цикла
+внутри константы обращаться нельзя. Пустой словарь <code>{}</code> допустим.
+Повторяющиеся ключи приводят к ошибке <code>duplicate-attribute</code>.</p>
+<h2 id="_8">Условия<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>Условие — выражение <code>[…]</code> перед смещением строки. Простейшее — одиночный
 вызов предиката, остальное — сравнения с логикой. Как в C, годится и голое
 число: ноль — ложь, ненулевое — истина:</p>
@@ -1448,13 +1471,13 @@
 <span class="p">[</span><span class="m">5</span><span class="p">]</span> <span class="m">6h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>  <span class="c1">// всегда истина</span>
 <span class="p">[</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">-</span> <span class="m">6</span><span class="p">]</span> <span class="m">6h</span><span class="p">:</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// истина, пока не 6:00</span>
 </code></pre></div>
-<p>Строки, словари и массивы в позиции условия запрещены (<code>type-mismatch</code>):
-голое значение почти всегда означает забытое сравнение. Имена данных
-напрямую — тоже (<code>unknown-name</code>). Голый <code>at</code> — словарь момента строки,
-в условии он тоже запрещён: сравнивайте поля (<code>at.wall</code>, <code>at.abs</code>).
-Контекст инстанции <code>here</code> — такой же словарь (см. <a href="../semantics/">семантику</a>):
-в условиях годятся его геттеры (<code>len(here.enabled_events) &gt; 0</code>).</p>
-<p>Приоритет операций, от крепкого к слабому:</p>
+<p>Строка, словарь или массив в роли условия приводят к <code>type-mismatch</code>.
+Чтобы использовать эти данные, составьте сравнение или обратитесь к нужному
+полю. Имя константы со словарём, строкой или массивом в условии вызывает
+<code>unknown-name</code>. Для сравнения момента строки с числом используйте
+<code>at.wall</code> или <code>at.abs</code>.
+В условиях можно обращаться к полям словаря <a href="../semantics/#here"><code>here</code></a>, например <code>len(here.enabled_events) &gt; 0</code>.</p>
+<p>Приоритет операций, от высшего к низшему:</p>
 <ul>
 <li>скобки <code>(…)</code></li>
 <li>унарный минус</li>
@@ -1470,10 +1493,10 @@
 <li><code>and</code></li>
 <li><code>or</code></li>
 </ul>
-<p>Время суток без даты постоянно во всех экземплярах: будние ветви пишутся
-в паре с календарным предикатом (<code>weekend</code>, <code>workday</code> — из <a href="../stdlib/">стандартной
-библиотеки</a>, подключать не нужно).</p>
-<h2 id="_8">Данные<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<p>Для расписания по дням недели используйте календарные предикаты,
+например <code>weekend</code> или <code>workday</code>. Они доступны из <a href="../stdlib/">стандартной библиотеки</a>
+без импорта.</p>
+<h2 id="data">Данные<a class="headerlink" href="#data" title="Permanent link">&para;</a></h2>
 <p>Данные — целые и дробные числа, строки, <code>true</code>/<code>false</code>, словари и массивы.
 Дробные литералы — с точкой и/или экспонентой (<code>20.02</code>, <code>.02</code>, <code>1e6</code>,
 <code>1.2e-3</code>); <code>20.</code> с хвостовой точкой допустима, но <code>20.foo</code> — это число <code>20</code>
@@ -1486,8 +1509,7 @@
 <span class="k">const</span> <span class="n">LEC</span> <span class="o">=</span> <span class="p">{</span><span class="s">"subject"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">,</span> <span class="s">"room"</span><span class="p">:</span> <span class="n">ROOM</span><span class="p">,</span> <span class="s">"label"</span><span class="p">:</span> <span class="n">ROOM</span> <span class="o">++</span> <span class="s">", корпус Л"</span><span class="p">};</span>
 <span class="k">const</span> <span class="n">GEO</span> <span class="o">=</span> <span class="p">{</span><span class="s">"lat"</span><span class="p">:</span> <span class="m">20.02</span><span class="p">,</span> <span class="s">"lon"</span><span class="p">:</span> <span class="m">23.43</span><span class="p">};</span>
 </code></pre></div>
-<p>Словари — в JSON-стиле, как в примере выше. Литерал годен и прямо
-в аргументе: <code>LESSON({"subject": subject})</code>.</p>
+<p>Словари — в JSON-стиле, как в примере выше. Словарь можно передать напрямую: <code>LESSON({"subject": subject})</code>.</p>
 <p>Строки <code>"..."</code> — однострочные, экранирования нет: кавычку внутрь строки
 никак не вставить.</p>
 <p>Запятые — только между элементами: висячая запятая после последнего

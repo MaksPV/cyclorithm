@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -1056,7 +1056,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1229,24 +1229,31 @@
 
 <h1 id="_1">Интеграции<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="wasm-">WASM-плейграунд<a class="headerlink" href="#wasm-" title="Permanent link">&para;</a></h2>
-<p><a href="https://makspv.github.io/cyclorithm-playground/">Плейграунд</a> (<a href="https://github.com/MaksPV/cyclorithm-playground">репозиторий</a>): парсер и ядро выполняются
-в браузере, фасад — <code>run_schedule(src, start, end, libs)</code>, интерфейс —
-таймлайн и таблица. Ошибки валидации позиций не несут — визуально
-подсвечивается только синтаксис.</p>
+<p>В <a href="https://makspv.github.io/cyclorithm-playground/">редакторе расписаний</a>
+можно рассчитать расписание прямо в браузере и посмотреть события на
+временной шкале или в таблице. Редактор вызывает
+<code>run_schedule(src, start, end, libs)</code> через WebAssembly. Он подсвечивает
+место синтаксической ошибки и показывает сообщения об остальных ошибках
+без привязки к строкам. <a href="https://github.com/MaksPV/cyclorithm-playground">Репозиторий редактора</a>.</p>
 <h2 id="cyclo-agent">cyclo-agent<a class="headerlink" href="#cyclo-agent" title="Permanent link">&para;</a></h2>
-<p><a href="https://github.com/MaksPV/cyclo-agent">Демон и панель управления</a>: исполняет
-команды из <code>.cyclo</code>-файла (проверки, бэкапы, скрипты), ведёт историю запусков
-в SQLite, показывает графики, редактирует расписание через веб-морду. Один
-статический бинарь без докера — для серверов, роутеров и одноплатников
-(есть сборки под <code>x86_64</code>/<code>aarch64</code>/<code>armv7</code> и Android/Termux, см. релизы).</p>
-<p>Связка с языком: исполняется один файл расписания, остальные <code>.cyclo</code> рядом —
-модули для <code>use</code>. Задача — это JSON в строке <code>fire</code>, он становится
-<code>action_attrs</code> события:</p>
+<p><a href="https://github.com/MaksPV/cyclo-agent">cyclo-agent</a> запускает по расписанию
+из файла <code>.cyclo</code> проверки, резервное копирование и скрипты. Он сохраняет
+историю запусков в SQLite. В веб-интерфейсе можно посмотреть графики и
+изменить расписание. Агент распространяется как один исполняемый файл
+для <code>x86_64</code>, <code>aarch64</code>, <code>armv7</code> и Android/Termux.</p>
+<p>Агент запускает одно расписание. Другие файлы <code>.cyclo</code> можно подключить
+через <code>use</code>. Параметры задачи записываются как атрибуты действия <code>fire</code>
+и попадают в поле <code>action_attrs</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="m">0m</span><span class="p">:</span> <span class="n">JOB</span><span class="p">.</span><span class="nf">fire</span><span class="p">()</span> <span class="p">{</span><span class="s">"cmd"</span><span class="p">:</span> <span class="s">"/bin/echo"</span><span class="p">,</span> <span class="s">"args"</span><span class="p">:</span> <span class="p">[</span><span class="s">"backup"</span><span class="p">],</span> <span class="s">"tags"</span><span class="p">:</span> <span class="p">[</span><span class="s">"backup"</span><span class="p">],</span> <span class="s">"timeout_s"</span><span class="p">:</span> <span class="m">1800</span><span class="p">};</span>
 </code></pre></div>
-<p>Виды задач — циклами-обёртками по видам (<code>exec</code>: <code>cmd</code>/<code>args</code>, <code>http</code>:
-<code>check</code>/<code>url</code>/<code>expect</code>, <code>tcp</code>: <code>check</code>/<code>host</code>/<code>port</code>; общие поля — <code>tags</code>,
-<code>timeout_s</code>). Подробности — в README агента.</p>
+<p>У каждого типа задачи свой набор полей:</p>
+<ul>
+<li><code>exec</code> использует <code>cmd</code> и <code>args</code>.</li>
+<li><code>http</code> использует <code>check</code>, <code>url</code> и <code>expect</code>.</li>
+<li><code>tcp</code> использует <code>check</code>, <code>host</code> и <code>port</code>.</li>
+</ul>
+<p>У всех типов есть общие поля <code>tags</code> и <code>timeout_s</code>. Описания полей приведены
+в <a href="https://github.com/MaksPV/cyclo-agent">документации агента</a>.</p>
 
 
 

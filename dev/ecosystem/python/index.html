@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Python-биндинги - Cyclorithm</title>
+        <title>Библиотека Python - Cyclorithm</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#python-" class="md-skip">
+        <a href="#python" class="md-skip">
           Перейти к содержанию
         </a>
       
@@ -118,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Python-биндинги
+              Библиотека Python
             
           </span>
         </div>
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -996,7 +996,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1014,7 +1014,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1271,27 +1271,28 @@
   
 
 
-<h1 id="python-">Python-биндинги<a class="headerlink" href="#python-" title="Permanent link">&para;</a></h1>
-<p>Нативные биндинги ядра (PyO3, крейт <code>crates/cyclorithm-python</code>): <code>check</code>
-и <code>run</code> без subprocess. В PyPI пакета нет — установка из wheel релиза,
-разработка из исходников.</p>
+<h1 id="python">Библиотека Python<a class="headerlink" href="#python" title="Permanent link">&para;</a></h1>
+<p>Пакет <code>cyclorithm</code> вызывает ядро через PyO3 в том же процессе Python.
+Пакет можно установить из файла <code>.whl</code> на странице релизов или собрать
+из исходников в <code>crates/cyclorithm-python</code>.</p>
 <h2 id="_1">Установка<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>Скачать <code>cyclorithm-*-abi3-*.whl</code> под свою платформу из
-<a href="https://github.com/MaksPV/cyclorithm/releases">релизов</a> и поставить
-в свой venv (Rust не нужен, abi3 работает на любом Python ≥3.10):</p>
+<p>Скачайте <code>cyclorithm-*-abi3-*.whl</code> для своей платформы со
+<a href="https://github.com/MaksPV/cyclorithm/releases">страницы релизов</a> и
+установите пакет в виртуальное окружение. Готовая сборка подходит для
+CPython 3.10 и новее. Для установки Rust не требуется.</p>
 <div class="highlight"><pre><span></span><code>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>.venv
 .venv/bin/pip<span class="w"> </span>install<span class="w"> </span>cyclorithm-0.3.2-cp310-abi3-manylinux_2_34_x86_64.whl
 .venv/bin/python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import cyclorithm; print(cyclorithm.__version__)"</span>
 </code></pre></div>
 <h2 id="_2">Сборка для разработки<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Чтобы править сам биндинг. Пререквизиты: стабильный Rust (<code>rustup</code>),
-Python ≥3.10. Команды — из корня репо:</p>
+<p>Для разработки нужны стабильная версия Rust (<code>rustup</code>) и Python 3.10
+или новее. Выполните команды из корня репозитория:</p>
 <div class="highlight"><pre><span></span><code>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>crates/cyclorithm-python/.venv
 crates/cyclorithm-python/.venv/bin/pip<span class="w"> </span>install<span class="w"> </span>maturin<span class="w"> </span>pytest<span class="w"> </span>ruff
 <span class="nb">cd</span><span class="w"> </span>crates/cyclorithm-python
 .venv/bin/maturin<span class="w"> </span>develop<span class="w"> </span>--release
 </code></pre></div>
-<p>Проверка (<code>maturin develop</code> ставит пакет в venv редактируемо):</p>
+<p>Чтобы проверить установленный в виртуальное окружение пакет, выполните:</p>
 <div class="highlight"><pre><span></span><code>.venv/bin/python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import cyclorithm; print(cyclorithm.__version__)"</span>
 .venv/bin/python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>python/tests/<span class="w"> </span>-q
 .venv/bin/ruff<span class="w"> </span>check<span class="w"> </span>python/
@@ -1299,8 +1300,8 @@ crates/cyclorithm-python/.venv/bin/pip<span class="w"> </span>install<span class
 <h2 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">cyclorithm</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">c</span>
 
-<span class="n">c</span><span class="o">.</span><span class="n">check_file</span><span class="p">(</span><span class="s2">"route.cyclo"</span><span class="p">)</span>                    <span class="c1"># молча OK или CycloError</span>
-<span class="n">c</span><span class="o">.</span><span class="n">check_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">base_dir</span><span class="o">=</span><span class="s2">"examples/valid"</span><span class="p">)</span>  <span class="c1"># use — от base_dir (по умолчанию cwd)</span>
+<span class="n">c</span><span class="o">.</span><span class="n">check_file</span><span class="p">(</span><span class="s2">"route.cyclo"</span><span class="p">)</span>                    <span class="c1"># при ошибке возбуждает CycloError</span>
+<span class="n">c</span><span class="o">.</span><span class="n">check_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">base_dir</span><span class="o">=</span><span class="s2">"examples/valid"</span><span class="p">)</span>  <span class="c1"># пути use отсчитываются от base_dir</span>
 
 <span class="n">window</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run_file</span><span class="p">(</span><span class="s2">"route.cyclo"</span><span class="p">,</span> <span class="s2">"2026-09-07"</span><span class="p">,</span> <span class="s2">"+1d"</span><span class="p">)</span>
 <span class="n">window</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">"2026-09-07T00:00:00"</span><span class="p">,</span> <span class="s2">"2026-09-08T00:00:00"</span><span class="p">)</span>
@@ -1309,27 +1310,33 @@ crates/cyclorithm-python/.venv/bin/pip<span class="w"> </span>install<span class
 
 <span class="n">window</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run_file</span><span class="p">(</span><span class="s2">"route.cyclo"</span><span class="p">,</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">9</span><span class="p">,</span> <span class="mi">7</span><span class="p">),</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
 </code></pre></div>
+<p>Границы окна можно передать в виде строки, <code>datetime</code>, <code>date</code> или <code>timedelta</code>:</p>
 <ul>
-<li>Границы окна — <code>str</code> (короткие формы CLI: <code>2026-09-07</code>, <code>+1d</code>),
-  <code>datetime</code> (наивное — как есть, aware — стена + офсет <code>Z</code>/±HH:MM<code>;
-  зона</code>start<code>задаёт кадр наивных дат файла — см. [семантику](../reference/semantics.md)),</code>date<code>(полночь) или</code>timedelta<code>(дельта:
-  для</code>start<code>— от now, для</code>end<code>— от</code>start<code>, как</code>+DURATION<code>в CLI).
-  Якорь now — в системной зоне ОС (как дефолтный</code>--from<code>в CLI).
-  Микросекунды усекаются до миллисекунд (точность движка); чужие типы
-  и отрицательный</code>timedelta<code>—</code>TypeError` до вызова ядра.</li>
-<li>Возврат <code>run_*</code> — dict, побайтово равный JSON-объекту <code>cyclo run</code> (см. главу вывода).</li>
-<li>Ошибки — <code>CycloError</code> с полями <code>code</code> (слаг главы ошибок; ошибка парсера — <code>syntax</code>)
-  и <code>message</code>; <code>str</code> — <code>слаг: сообщение</code>, как stderr CLI. Отсутствие файла — штатный <code>OSError</code>.</li>
+<li>Строка использует те же форматы, что и <a href="../../reference/cli/">CLI</a>, например
+  <code>"2026-09-07"</code> или <code>"+1d"</code>.</li>
+<li><code>datetime</code> сохраняет местное время и, если есть, смещение от UTC.
+  Микросекунды отбрасываются после миллисекунд.</li>
+<li><code>date</code> означает полночь указанного дня.</li>
+<li><code>timedelta</code> задаёт длительность. Для <code>start</code> она отсчитывается от текущего
+  момента с системным смещением от UTC, для <code>end</code> — от <code>start</code>.</li>
 </ul>
+<p>Отрицательный <code>timedelta</code> и неподдерживаемые типы вызывают <code>TypeError</code>.
+Правила расчёта времени описаны в <a href="../../reference/semantics/#time-zones">семантике</a>.</p>
+<p>Функции <code>run_*</code> возвращают словарь с теми же данными, что и
+<a href="../../reference/output/">JSON-вывод <code>cyclo run</code></a>. При ошибке программы
+библиотека возбуждает <code>CycloError</code> с полями <code>code</code> и <code>message</code>.
+Для ошибки разбора <code>code</code> равен <code>syntax</code>. Преобразование исключения в
+строку даёт <code>код: сообщение</code>. Если файл недоступен, возникает <code>OSError</code>.</p>
 <h2 id="schedule">Класс Schedule<a class="headerlink" href="#schedule" title="Permanent link">&para;</a></h2>
-<p>ООП-обёртка поверх функций (тот же выход и те же ошибки); текст программы
-читается один раз, конструктор лёгкий и не валидирует:</p>
+<p><code>Schedule</code> хранит текст программы и позволяет проверять или рассчитывать
+её несколько раз. Конструктор читает текст один раз. Для проверки
+вызовите <code>check()</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">sched</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">Schedule</span><span class="p">(</span><span class="s2">"route.cyclo"</span><span class="p">)</span>
 <span class="n">sched</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">Schedule</span><span class="o">.</span><span class="n">from_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">base_dir</span><span class="o">=</span><span class="s2">"examples/valid"</span><span class="p">)</span>
 <span class="n">sched</span><span class="o">.</span><span class="n">check</span><span class="p">()</span>
 <span class="n">window</span> <span class="o">=</span> <span class="n">sched</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">9</span><span class="p">,</span> <span class="mi">7</span><span class="p">),</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
 </code></pre></div>
-<p>Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.</p>
+<p>Класс возвращает те же данные и исключения, что функции модуля.</p>
 
 
 

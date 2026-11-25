@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -487,7 +487,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Сравнения
+        Сравнение способов записи расписаний
       
     </span>
   </a>
@@ -596,7 +596,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -683,7 +683,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -1049,7 +1049,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1193,7 +1193,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Сравнения
+        Сравнение способов записи расписаний
       
     </span>
   </a>
@@ -1221,16 +1221,16 @@
 
 
 <h1 id="cyclorithm">Cyclorithm<a class="headerlink" href="#cyclorithm" title="Permanent link">&para;</a></h1>
-<p><strong>Cyclorithm — DSL для циклических расписаний: процессы описываются циклами так, чтобы их читал человек, а проверял движок. На выходе — плоский список событий.</strong></p>
+<p><strong>Cyclorithm — язык для описания циклических расписаний. Движок проверяет расписание и возвращает список событий за выбранный период.</strong></p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span>
   <span class="m">0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>
   <span class="m">40m</span><span class="p">:</span> <span class="n">AIRPORT</span><span class="p">.</span><span class="nf">arrive</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><span class="gp">$ </span>cyclo<span class="w"> </span>run<span class="w"> </span>route.cyclo<span class="w"> </span>--start<span class="w"> </span><span class="m">2026</span>-01-09T00:00:00<span class="w"> </span>--end<span class="w"> </span><span class="m">2026</span>-01-10T00:00:00
-<span class="go">{"schedule":"Автобусный парк","events":[...18 событий...]}</span>
 </code></pre></div>
-<p>Первый результат за 2 минуты — в <a href="getting-started/tutorial/">туториале</a>.</p>
+<p>Команда выводит JSON-объект с 18 событиями за 9 января 2026 года.
+Чтобы составить и запустить своё первое расписание, воспользуйтесь <a href="getting-started/tutorial/">пошаговым руководством</a>.</p>
 <h2 id="_1">Карта документации<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1242,15 +1242,15 @@
 <tbody>
 <tr>
 <td><a href="getting-started/install/">Установка</a></td>
-<td>Rust, бинарь <code>cyclo</code>, релизные архивы</td>
+<td>Готовые сборки <code>cyclo</code> и сборка из исходников</td>
 </tr>
 <tr>
-<td><a href="getting-started/tutorial/">Туториал</a></td>
-<td>Первый проект с нуля, без деталей</td>
+<td><a href="getting-started/tutorial/">Первое расписание</a></td>
+<td>Пошаговый пример от объявления точки до вывода событий</td>
 </tr>
 <tr>
-<td><a href="reference/concepts/">Концепты</a></td>
-<td>Сущности: расписание, точка, цикл, рутина, событие</td>
+<td><a href="reference/concepts/">Основные понятия</a></td>
+<td>Расписание, точка, цикл, рутина и событие</td>
 </tr>
 <tr>
 <td><a href="reference/syntax/">Синтаксис</a></td>
@@ -1262,11 +1262,11 @@
 </tr>
 <tr>
 <td><a href="reference/errors/">Ошибки</a></td>
-<td>Ситуации поименно: сообщение и исправление</td>
+<td>Коды, сообщения и способы исправления</td>
 </tr>
 <tr>
 <td><a href="reference/output/">Формат вывода</a></td>
-<td>JSON Schema и календарь ICS</td>
+<td>Поля событий, команды <code>run</code> и <code>next</code>, схема JSON</td>
 </tr>
 <tr>
 <td><a href="reference/cli/">CLI</a></td>
@@ -1278,15 +1278,15 @@
 </tr>
 <tr>
 <td><a href="cookbook/">Рецепты</a></td>
-<td>Готовые фрагменты на типовые задачи</td>
+<td>Примеры решения типовых задач</td>
 </tr>
 <tr>
 <td><a href="ecosystem/integrations/">Интеграции</a></td>
-<td>Демон cyclo-agent, HTTP-сервер, ICS, WASM-плейграунд</td>
+<td>Планировщик cyclo-agent и редактор расписаний в браузере</td>
 </tr>
 <tr>
-<td><a href="ecosystem/python/">Python-биндинги</a></td>
-<td><code>check</code>/<code>run</code> из Python, класс <code>Schedule</code></td>
+<td><a href="ecosystem/python/">Библиотека Python</a></td>
+<td>Функции проверки и расчёта расписаний, класс <code>Schedule</code></td>
 </tr>
 <tr>
 <td><a href="ecosystem/cpp/">C++-библиотека</a></td>
@@ -1294,12 +1294,11 @@
 </tr>
 <tr>
 <td><a href="glossary/">Глоссарий</a></td>
-<td>Один термин — одно значение</td>
+<td>Определения терминов языка</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_2">Сравнения<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Похожие DSL — таблицей:</p>
+<h2 id="_2">Сравнение способов записи расписаний<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1312,25 +1311,25 @@
 </thead>
 <tbody>
 <tr>
-<td>Единица</td>
+<td>Основной элемент</td>
 <td>Строка с вызовом и данными</td>
-<td>Строка-триггер</td>
-<td>Выражение-триггер</td>
-<td>Правило одного ряда</td>
+<td>Строка расписания</td>
+<td>Календарное выражение</td>
+<td>Правило повторения события</td>
 </tr>
 <tr>
-<td>Составное расписание в файле</td>
-<td>Да: 8 рейсов двух направлений</td>
-<td>Строки без связей</td>
-<td>Выражения без связей</td>
-<td>События без связей</td>
+<td>Связи между запусками</td>
+<td>Вложенные циклы и зависимости между запусками</td>
+<td>Независимые строки</td>
+<td>Независимые выражения</td>
+<td>Независимые правила повторения</td>
 </tr>
 <tr>
-<td>Условия внутри</td>
-<td>Предикаты (<code>weekend</code>, праздники)</td>
-<td>Только поле дня недели</td>
-<td>День недели в выражении</td>
-<td>Нет, <code>EXDATE</code> руками</td>
+<td>Календарные условия</td>
+<td>Предикаты, например <code>weekend</code>, и собственные проверки дат</td>
+<td>Поля календаря</td>
+<td>Поля календарного выражения</td>
+<td>Параметры повторения и исключения <code>EXDATE</code></td>
 </tr>
 <tr>
 <td>Данные событий</td>
@@ -1353,21 +1352,11 @@
 <td>Только синтаксис (<code>systemd-analyze calendar</code>)</td>
 <td>Нет</td>
 </tr>
-<tr>
-<td>Читает предметник</td>
-<td>Да</td>
-<td>Частично</td>
-<td>Частично</td>
-<td>Нет</td>
-</tr>
 </tbody>
 </table>
-<p>Cron уже везде стоит, но синтаксис у него неговорящий: <code>30 6 * * 1-5</code>
-против <code>[not weekend(at)] 6h50m</code>. Для триггеров, которые никто не читает,
-сойдёт; для расписаний, которые правит человек, — нет.</p>
-<p>RRULE — формат обмена, а не язык описания: его генерируют, руками не пишут.
-Мы в него экспортируем — написанное здесь уезжает в любые календарные
-клиенты (см. <a href="reference/output/">формат вывода</a>).</p>
+<p>Запуск в 06:30 по будням в cron задаёт выражение <code>30 6 * * 1-5</code>.
+В Cyclorithm при суточном корневом цикле со стартом в полночь то же
+расписание задаёт строка <code>[not weekend(at)] 6h30m: CITY_ROUTE();</code>.</p>
 <div class="admonition note">
 <p class="admonition-title">Подсветка кода</p>
 <p>Блоки языка подсвечиваются собственным лексером Pygments

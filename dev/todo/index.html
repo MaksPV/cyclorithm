@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -527,7 +527,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -614,7 +614,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -980,7 +980,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1145,7 +1145,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#iana-dst" class="md-nav__link">
+  <a href="#iana-and-dst" class="md-nav__link">
     <span class="md-ellipsis">
       
         Часовые пояса IANA и DST
@@ -1212,7 +1212,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#iana-dst" class="md-nav__link">
+  <a href="#iana-and-dst" class="md-nav__link">
     <span class="md-ellipsis">
       
         Часовые пояса IANA и DST
@@ -1243,18 +1243,33 @@
 
 
 <h1 id="_1">Планы<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Что задумано, но не реализовано в движке. Вики описывает целевое состояние;
-здесь — список расхождений и что нужно сделать в коде.</p>
 <h2 id="ics">Экспорт в календарь (ICS)<a class="headerlink" href="#ics" title="Permanent link">&para;</a></h2>
-<p><code>--format ics</code> в <code>run</code>/<code>next</code>, функция <code>events_ics</code> в core, golden <code>examples/valid/route.ics</code>. Доки: <code>docs/reference/output.md</code>.</p>
+<p><strong>Статус</strong> — запланировано.</p>
+<p>Добавить флаг <code>--format ics</code> в <code>run</code> и <code>next</code>. Результат в формате
+iCalendar (RFC 5545) будет содержать по одному <code>VEVENT</code> на событие.
+Для мгновенных событий поле <code>DTEND</code> не требуется. Сочетание с
+<code>--ndjson</code> будет возвращать код <code>2</code>.</p>
+<ul>
+<li><code>UID</code> вычисляется из расписания, времени, действия, точки и порядкового номера.</li>
+<li><code>DTSTAMP</code> содержит время формирования выгрузки.</li>
+<li><code>DTSTART</code> содержит время в UTC с суффиксом <code>Z</code> для окна со смещением
+  или местное время без суффикса для окна без смещения.</li>
+<li><code>SUMMARY</code> содержит <code>action @ point</code>, а <code>DESCRIPTION</code> — JSON-объект <code>action_attrs</code>.</li>
+</ul>
+<p>Проверять выгрузку по эталону <code>examples/valid/route.ics</code>.</p>
 <h2 id="http-">HTTP-сервер<a class="headerlink" href="#http-" title="Permanent link">&para;</a></h2>
-<p>Крейт <code>cyclorithm-serve</code> на <code>tiny_http</code> (<code>POST /run</code>, <code>POST /next</code>, <code>GET /health</code>), Docker multi-stage. Интеграция описана в <code>docs/ecosystem/integrations.md:3-14</code>.</p>
-<h2 id="iana-dst">Часовые пояса IANA и DST<a class="headerlink" href="#iana-dst" title="Permanent link">&para;</a></h2>
-<p><strong>Статус:</strong> задумано.
-<code>timezone = "Europe/Moscow"</code> (имена IANA, база в бинаре через <code>chrono-tz</code>),
-wall-clock решётка, gap → сдвиг вперёд, fold → первое вхождение,
-DST-фикстуры на переходах. Сейчас: только фикс-офсеты <code>Z</code>/±HH:MM<code>,
-переходы DST отклоняются (</code>invalid-timezone`), сутки всегда 24 часа.</p>
+<p><strong>Статус</strong> — запланировано.</p>
+<p>Добавить сервер <code>cyclorithm-serve</code> на <code>tiny_http</code> с маршрутами <code>POST /run</code>,
+<code>POST /next</code> и <code>GET /health</code>. Для запуска подготовить образ Docker
+с многоэтапной сборкой.</p>
+<h2 id="iana-and-dst">Часовые пояса IANA и DST<a class="headerlink" href="#iana-and-dst" title="Permanent link">&para;</a></h2>
+<p><strong>Статус</strong> — запланировано.</p>
+<p>Поддержать имена часовых поясов, например <code>Europe/Moscow</code>, через
+<code>chrono-tz</code>. Корневой цикл будет повторяться по местному времени.
+При переводе часов вперёд запуск сдвинется вперёд. Если одно и то же местное время встречается дважды, запуск
+произойдёт при первом его наступлении. Эти случаи нужно покрыть тестами.</p>
+<p>Сейчас <code>timezone</code> принимает только <code>Z</code> и фиксированные смещения
+<code>±HH:MM</code>. Сутки всегда длятся 24 часа.</p>
 
 
 

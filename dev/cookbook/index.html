@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -925,7 +925,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Завершение в границу цикла
+        Действие в конце цикла
       
     </span>
   </a>
@@ -1095,7 +1095,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1250,7 +1250,7 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Завершение в границу цикла
+        Действие в конце цикла
       
     </span>
   </a>
@@ -1311,7 +1311,7 @@
 
 
 <h1 id="_1">Рецепты<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Коллекция фрагментов «задача → рабочий код». Каждый копируется как есть.</p>
+<p>Примеры для типовых задач. При переносе в своё расписание подставьте имена объявленных циклов, точек и данных.</p>
 <h2 id="_2">Будни и выходные разными рейсами<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">root_cycle</span> <span class="k">start_time</span> <span class="o">=</span> <span class="s">"2026-01-01T00:00:00"</span><span class="p">,</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
   <span class="p">[</span><span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">6h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span>
@@ -1322,15 +1322,16 @@
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="m">7</span> <span class="k">and</span> <span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="k">repeat</span> <span class="m">2</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 <span class="p">[</span><span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">14h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 </code></pre></div>
-<p>Горизонт <code>until</code> отсчитывается от старта родителя. Условие проверяется
-для каждого экземпляра в его старте (разрывы, не сдвиг сетки).</p>
-<h2 id="_3">Завершение в границу цикла<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>Граница <code>until</code> отсчитывается от начала текущего цикла. Условие
+проверяется в момент каждого запуска. Если один запуск пропущен,
+время следующих запусков сохраняется.</p>
+<h2 id="_3">Действие в конце цикла<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span>
   <span class="m">0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>
   <span class="m">-0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">arrive</span><span class="p">();</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Смещение <code>-0m</code> эквивалентно <code>80m</code>. Уход ниже нуля — ошибка <code>offset-out-of-bounds</code>.</p>
+<p>Смещение <code>-0m</code> эквивалентно <code>80m</code>. Смещение, которое указывает на момент до начала цикла, вызывает <code>offset-out-of-bounds</code>.</p>
 <h2 id="_4">Расписание по звонкам<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="k">time_const</span> <span class="n">DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">24h</span> <span class="p">{</span>
   <span class="nl">1st</span><span class="p">:</span> <span class="m">9h</span><span class="p">;</span>
@@ -1350,8 +1351,8 @@
 <div class="highlight"><pre><span></span><code><span class="k">pred</span> <span class="nf">holiday</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">=</span> <span class="nf">datestr</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="s">"2026-11-04"</span> <span class="k">or</span> <span class="s">"2026-12-31"</span><span class="p">);</span>
 </code></pre></div>
 <h2 id="_6">Задачи по расписанию<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<p>Команды задач в <code>action_attrs</code> — <code>examples/real/cron.cyclo</code>,
-опрос ближайших — командой <code>next</code>.</p>
+<p>В <code>examples/real/cron.cyclo</code> команды для задач хранятся в <code>action_attrs</code>.
+Чтобы получить ближайшие события расписания, выполните <code>cyclo next</code>.</p>
 
 
 

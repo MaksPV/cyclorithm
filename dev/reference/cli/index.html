@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -621,7 +621,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -791,6 +791,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -807,6 +825,47 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Содержание">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dates-and-durations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Даты и длительности
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Коды возврата
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -997,7 +1056,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1120,6 +1179,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Содержание
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dates-and-durations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Даты и длительности
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Коды возврата
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1140,36 +1229,48 @@
 
 <h1 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h1>
 <div class="highlight"><pre><span></span><code>usage:
-  cyclo run FILE|- --start DATETIME --end DATETIME [--ndjson] [--format json|ics]
-  cyclo next FILE|- [--from DATETIME] [--within DURATION] [-n K] [--ndjson] [--format json|ics]
+  cyclo run FILE|- --start DATETIME --end DATETIME [--ndjson]
+  cyclo next FILE|- [--from DATETIME] [--within DURATION] [-n K] [--ndjson]
   cyclo check FILE|-
   cyclo --version
   cyclo --help
 </code></pre></div>
 <ul>
-<li>Команда <code>run</code> — окно <code>[start, end)</code>. При <code>end &lt;= start</code> возвращается пустой
-  список <code>events</code>, код возврата <code>0</code>.</li>
-<li>Команда <code>next</code> — первые <code>K</code> событий от момента <code>from</code> (включительно)
-  в пределах <code>[from, from+within)</code>. Значения по умолчанию: <code>from</code> — текущий
-  момент в системной зоне ОС (с суффиксом зоны), <code>within</code> — <code>366d</code>, <code>n</code> — <code>1</code>.</li>
-<li>Команда <code>check</code> — только проверки без окна: при успехе печатает <code>ok</code>,
-  код возврата <code>0</code>.</li>
-<li>Источник <code>-</code> вместо файла — стандартный ввод; импорты <code>use</code> разрешаются
-  от текущего каталога.</li>
-<li>Даты: <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>; коротко — <code>YYYY-MM-DD</code>
-  (=T00:00:00), <code>YYYY-MM-DDTHH:MM</code> (=:00) с опциональным суффиксом <code>Z</code>/±HH:MM;
-  <code>+DURATION</code> — дельта (для <code>--end</code> от <code>--start</code>, иначе от now). Поле
-  <code>start_time</code> в файлах — строгая форма с опциональным офсетом. Имена зон
-  (<code>MSK</code>, <code>Europe/...</code>) не поддерживаются нигде — только числовой офсет.</li>
-<li>Зона окна — офсет <code>start</code>/<code>from</code> (aware → с суффиксом, <code>Z</code> для <code>+00:00</code>);
-  при наивном окне — зона <code>timezone</code> файла, иначе — без. <code>end</code> с другим офсетом
-  — только свой инстант. Дефолтный <code>--from</code> (<code>next</code> без аргумента) — now
-  в системной зоне ОС (берется текущий офсет числом; IANA/DST движок не знает,
-  см. <a href="../semantics/">семантику</a>). Дельта <code>+DURATION</code> в <code>--start</code> — от now
-  вместе с его зоной.</li>
-<li>Коды возврата: <code>0</code> — успех; <code>1</code> — ошибка ввода, парсинга или валидации
-  (текст в stderr, stdout пуст); <code>2</code> — некорректные аргументы (usage в stderr).</li>
-<li>Нечитаемый файл — <code>cannot read 'FILE': …</code>, код возврата <code>1</code>.</li>
+<li><code>run</code> возвращает события окна <code>[start, end)</code>. Если <code>end &lt;= start</code>,
+  список <code>events</code> будет пуст, а код возврата равен <code>0</code>.</li>
+<li><code>next</code> возвращает первые <code>K</code> событий окна <code>[from, from + within)</code>.
+  По умолчанию <code>from</code> — текущий момент с системным смещением от UTC,
+  <code>within</code> — <code>366d</code>, <code>-n</code> — <code>1</code>.</li>
+<li><code>check</code> проверяет программу без расчёта событий. При успехе команда
+  печатает <code>ok</code> и возвращает код <code>0</code>.</li>
+<li>Вместо имени файла можно передать <code>-</code> и подать программу на стандартный
+  ввод. В этом случае пути в директивах <code>use</code> отсчитываются от текущего
+  каталога.</li>
+<li><code>--ndjson</code> выводит по одному событию на строку.</li>
+</ul>
+<h2 id="dates-and-durations">Даты и длительности<a class="headerlink" href="#dates-and-durations" title="Permanent link">&para;</a></h2>
+<p>Полный формат даты — <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>. В аргументах
+команд также можно указать только дату (<code>YYYY-MM-DD</code>, то есть полночь)
+или дату и время до минут (<code>YYYY-MM-DDTHH:MM</code>, то есть с нулём секунд).
+Чтобы добавить смещение, используйте полный формат. В поле <code>start_time</code>
+программы всегда требуется полный формат. Вместо имён часовых поясов
+указывайте фиксированное смещение, например <code>+03:00</code>.</p>
+<p>Запись <code>+DURATION</code>, например <code>+1d</code>, означает смещение от опорного момента.
+Для <code>--start</code> и <code>--from</code> это текущий момент с системным смещением от UTC.
+Для <code>--end</code> опорный момент задаёт <code>--start</code>. Аргумент <code>--within</code> принимает
+длительность, например <code>2h30m</code>. Целое число без единицы измерения задаёт
+миллисекунды.</p>
+<p>Время событий в выводе записывается со смещением <code>--start</code> или <code>--from</code>.
+Если его нет, используется <code>timezone</code> программы. Если смещение нигде
+не задано, время выводится без суффикса. Смещение <code>--end</code> влияет только
+на момент окончания окна. <a href="../semantics/#time-zones">Подробнее о часовых поясах</a>.</p>
+<h2 id="exit-codes">Коды возврата<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>0</code> — успех.</li>
+<li><code>1</code> — ошибка ввода, разбора или проверки программы. Сообщение выводится
+  в стандартный поток ошибок (stderr), стандартный вывод (stdout) пуст.
+  Например, если файл нельзя прочитать, команда сообщает <code>cannot read 'FILE': …</code>.</li>
+<li><code>2</code> — неверные аргументы. Подсказка по запуску выводится в stderr.</li>
 </ul>
 
 

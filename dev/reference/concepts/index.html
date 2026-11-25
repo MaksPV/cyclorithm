@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -29,7 +29,7 @@
     
     
       
-        <title>Концепты - Cyclorithm</title>
+        <title>Основные понятия - Cyclorithm</title>
       
     
     
@@ -118,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Концепты
+              Основные понятия
             
           </span>
         </div>
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -630,7 +630,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -648,7 +648,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -754,7 +754,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Момент строки: ось, метки и курсор
+        Момент строки, метки и курсор
       
     </span>
   </a>
@@ -1210,7 +1210,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1420,7 +1420,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Момент строки: ось, метки и курсор
+        Момент строки, метки и курсор
       
     </span>
   </a>
@@ -1535,10 +1535,8 @@
   
 
 
-<h1 id="_1">Концепты<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Что означает каждая сущность расписания и как она записывается.
-Порядок — от простых ячеек к целому файлу. Термины —
-в <a href="../../glossary/">глоссарии</a></p>
+<h1 id="_1">Основные понятия<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>Элементы расписания и примеры их записи. Краткие определения приведены в <a href="../../glossary/">глоссарии</a>.</p>
 <h2 id="point">Точка <code>point</code><a class="headerlink" href="#point" title="Permanent link">&para;</a></h2>
 <p>Место, где происходят действия: парк, аэропорт, звонок. Самый простой
 вариант — только список допустимых действий <code>actions</code>:</p>
@@ -1547,7 +1545,7 @@
 <span class="p">}</span>
 </code></pre></div>
 <p>Список не бывает пустым: точка без действий запрещена.</p>
-<p>Дополнительно точка может нести атрибуты <code>attrs</code> — словарь, который
+<p>У точки может быть словарь атрибутов <code>attrs</code>, который
 копируется в каждое событие точки:</p>
 <div class="highlight"><pre><span></span><code><span class="k">point</span> <span class="n">BELL</span> <span class="p">{</span>
   <span class="k">actions</span> <span class="o">=</span> <span class="p">[</span><span class="n">ring</span><span class="p">];</span>
@@ -1594,26 +1592,25 @@
 <span class="m">9h</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">(</span><span class="n">LEC</span><span class="p">);</span>  <span class="c1">// цикл с передаваемыми в него данными</span>
 <span class="m">9h30m</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">({</span><span class="s">"subject"</span><span class="p">:</span> <span class="s">"САПР"</span><span class="p">});</span>  <span class="c1">// а можно и так</span>
 <span class="m">0h</span><span class="p">:</span> <span class="nf">MONDAY</span><span class="p">(</span><span class="n">UNIVERSITY_DAY</span><span class="p">);</span>  <span class="c1">// рутина — первый аргумент всегда таблица времени</span>
-<span class="m">0h</span><span class="p">:</span> <span class="nf">EXAM</span><span class="p">(</span><span class="n">DAY</span><span class="p">,</span> <span class="n">LEC</span><span class="p">);</span>  <span class="c1">// рутина с таблицей и передаваемыми в него данными</span>
+<span class="m">0h</span><span class="p">:</span> <span class="nf">EXAM</span><span class="p">(</span><span class="n">DAY</span><span class="p">,</span> <span class="n">LEC</span><span class="p">);</span>  <span class="c1">// рутина с таблицей и данными</span>
 </code></pre></div>
 <h2 id="duration">Длительность и смещение <code>duration</code><a class="headerlink" href="#duration" title="Permanent link">&para;</a></h2>
 <p>Длительность — сколько длится цикл. Пишется компонентами от крупных
 к мелким: недели <code>w</code>, сутки <code>d</code>, часы <code>h</code>, минуты <code>m</code>, секунды <code>s</code>,
-миллисекунды <code>ms</code>. Каждый компонент не более раза:</p>
+миллисекунды <code>ms</code>. Каждый компонент встречается не более одного раза:</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span>
 </code></pre></div>
-<p>Смещение — когда внутри цикла срабатывает строка: старт объемлющего цикла
-плюс смещение. Отрицательное считается от конца, <code>-0m</code> — ровно конец:</p>
+<p>Смещение задаёт время строки относительно начала текущего цикла.
+Отрицательное смещение отсчитывается от конца цикла, а <code>-0m</code> указывает на его конец:</p>
 <div class="highlight"><pre><span></span><code><span class="m">0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>  <span class="c1">// старт цикла</span>
 <span class="m">40m</span><span class="p">:</span> <span class="n">AIRPORT</span><span class="p">.</span><span class="nf">arrive</span><span class="p">();</span>  <span class="c1">// через 40 минут</span>
 <span class="m">-0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">arrive</span><span class="p">();</span>  <span class="c1">// встык к концу</span>
 </code></pre></div>
 <h2 id="cycle">Цикл <code>cycle</code><a class="headerlink" href="#cycle" title="Permanent link">&para;</a></h2>
-<p>Именованная цепочка строк. Сама по себе событий не порождает, выполняется
-только по вызову. В заголовке — необязательные параметры и длительность
-<code>duration</code>, в теле — строки <code>&lt;смещение&gt;: &lt;вызов&gt;;</code>. Содержимое обязано
-влезать в длительность: конец самой поздней строки не дальше <code>duration</code>,
-иначе ошибка <code>cycle-overruns</code>.</p>
+<p>Цикл — именованная последовательность строк, которая выполняется при
+вызове. В заголовке указываются длительность <code>duration</code> и необязательные
+параметры. Тело содержит строки с моментами и вызовами. Если вызов
+завершается за пределами цикла, возникает ошибка <code>cycle-overruns</code>.</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">CITY_ROUTE</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">1h20m</span> <span class="p">{</span>
   <span class="m">0m</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>
   <span class="m">40m</span><span class="p">:</span> <span class="n">AIRPORT</span><span class="p">.</span><span class="nf">arrive</span><span class="p">();</span>
@@ -1625,32 +1622,30 @@
 <span class="p">}</span>
 </code></pre></div>
 <h2 id="at">Условие и момент строки <code>at</code><a class="headerlink" href="#at" title="Permanent link">&para;</a></h2>
-<p>В языке реализованы условия. Если оно выполняется, то вызовы выполняются. 
-Простейшее — один предикат:</p>
+<p>Строка с условием выполняется, если условие истинно. Например,
+<code>weekend(at)</code> проверяет, приходится ли момент строки на выходной:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">12h</span><span class="p">:</span> <span class="nf">CITY_ROUTE</span><span class="p">();</span> <span class="c1">// выполняется только по выходным</span>
 </code></pre></div>
-<p>Условия могут комбинируются.</p>
+<p>Условия можно объединять логическими операторами.</p>
 <div class="highlight"><pre><span></span><code><span class="p">[</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="m">7</span> <span class="k">and</span> <span class="k">not</span> <span class="nf">weekend</span><span class="p">(</span><span class="n">at</span><span class="p">)]</span> <span class="m">10h</span><span class="p">:</span> <span class="nf">SHUTTLE</span><span class="p">();</span>
 </code></pre></div>
-<p>Условие вычисляется для момента строки <code>at</code> — словаря <code>{wall, abs, zone}</code>
-(см. <a href="../semantics/">семантику</a>): времени старта родительского цикла плюс
-смещение вызываемой строки. В арифметике и сравнениях — только явные поля
-(<code>at.wall</code>, <code>at.abs</code>). Рядом — словарь инстанции <code>here</code> (<code>stack</code>, <code>events</code>,
-<code>enabled_events</code>/<code>disabled_events</code>): условие видит, что инстанция уже
-породила, — например <code>[workday(at) and len(here.enabled_events) &gt; 0]</code>.</p>
-<h2 id="_2">Момент строки: ось, метки и курсор<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>Момент строки — это не обязательно timestamp. Timestamp и зависимость —
-два вида одного выражения: абсолютный (<code>6h:</code>), относительный от курсора
-(<code>+10m:</code>), зависимость от чужого запуска (<code>after W1:</code>) или функция
-(<code>max(8h, end(W1)):</code>). На строке — ровно один источник момента.</p>
-<p>Метка запуска (<code>as</code>) именует конкретный запуск:</p>
+<p>Условие вычисляется для момента строки <code>at</code>. В арифметических выражениях
+используйте его поля, например <code>at.wall</code> или <code>at.abs</code>. Через <code>here</code> можно
+обращаться к данным о ранее обработанных строках текущего экземпляра.
+Например, условие <code>[workday(at) and len(here.enabled_events) &gt; 0]</code>
+проверяет, что сегодня будний день и хотя бы одна строка уже выполнилась.
+<a href="../semantics/#conditions-and-time">Описание <code>at</code> и <code>here</code></a>.</p>
+<h2 id="_2">Момент строки, метки и курсор<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>Момент строки задаётся одним способом: смещением от начала цикла (<code>6h:</code>),
+смещением от курсора (<code>+10m:</code>), зависимостью от другого запуска
+(<code>after W1:</code>) или функцией (<code>max(8h, end(W1)):</code>).</p>
+<p>Метка запуска (<code>as</code>) даёт имя запуску цикла:</p>
 <div class="highlight"><pre><span></span><code><span class="m">0h</span><span class="p">:</span> <span class="nf">WARMUP</span><span class="p">()</span> <span class="n">as</span> <span class="n">W1</span><span class="p">;</span>
-<span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>  <span class="c1">// стартует, когда закончится WARMUP</span>
+<span class="n">after</span> <span class="n">W1</span><span class="p">:</span> <span class="nf">PRODUCTION</span><span class="p">();</span>  <span class="c1">// начнётся после окончания WARMUP</span>
 </code></pre></div>
-<p>Курсор scope — неявная позиция «где мы сейчас»: максимум концов уже
-испущенных прямых детей scope. Относительные моменты читают его, выпавшие
-строки (ложное условие, неразрешённая зависимость) его не двигают —
-поэтому цепочки <code>+10m:</code> не расползаются от пропусков.</p>
+<p>Относительные моменты отсчитываются от курсора текущего цикла. Если строка
+пропущена из-за условия или недоступной метки, курсор остаётся на прежнем
+месте. <a href="../semantics/#launch-labels">Правила работы курсора</a>.</p>
 <h2 id="repeat-fill">Повтор (<code>repeat</code> / <code>fill</code>)<a class="headerlink" href="#repeat-fill" title="Permanent link">&para;</a></h2>
 <p>Одна строка запускает цикл несколько раз подряд. Сколько раз — задаёт
 модификатор между <code>:</code> и вызовом:</p>
@@ -1658,10 +1653,10 @@
 <span class="m">14h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// пока помещается до 15h</span>
 <span class="m">19h</span><span class="p">:</span> <span class="k">fill</span> <span class="nf">SHUTTLE</span><span class="p">();</span>  <span class="c1">// пока помещается до конца цикла</span>
 </code></pre></div>
-<p><code>repeat N</code> — ровно <code>N</code> запусков, невместившаяся цепочка — ошибка.
-<code>fill</code> — сколько поместится, лишнее молча отбрасывается. Горизонт <code>until T</code>
-считается от старта объемлющего цикла, а не от строки; отрицательный
-<code>until -X</code> — от конца (<code>duration</code> родителя минус <code>X</code>).</p>
+<p><code>repeat N</code> планирует ровно <code>N</code> запусков. Если они выходят за пределы
+текущего цикла, возникает ошибка. <code>fill</code> планирует столько полных запусков,
+сколько помещается до указанной границы. Граница <code>until T</code> отсчитывается
+от начала текущего цикла, а <code>until -X</code> — от его конца.</p>
 <p>Условие строки проверяется для каждого запуска отдельно. Цикл <code>SHUTTLE</code> имеет длительность
 20 минут, запуски стартуют в 10:30, 10:50 и 11:10 — третий не подходит
 под условие и выпадает, первые два стоят на местах:</p>
@@ -1672,10 +1667,10 @@
 11:10 — рейса нет
 </code></pre></div>
 <h2 id="fill-gaps">Добивка пустот (<code>fill gaps</code>)<a class="headerlink" href="#fill-gaps" title="Permanent link">&para;</a></h2>
-<p><code>fill gaps</code> расставляет вызовы в свободные промежутки окна: обычные строки
-занимают свои интервалы, а filler заполняет дыры подряд, пока влезает.
-Окно — <code>[смещение, until|duration)</code>; без <code>until</code> добивается всё до конца
-цикла. Заполненное видит следующий <code>fill gaps</code> (порядок объявления):</p>
+<p><code>fill gaps</code> размещает вызовы в свободных промежутках между обычными
+запусками. Окно начинается со смещения строки и заканчивается в момент
+<code>until</code> или в конце цикла. Каждая следующая строка <code>fill gaps</code> учитывает
+интервалы, занятые предыдущими строками добивки:</p>
 <div class="highlight"><pre><span></span><code><span class="k">cycle</span> <span class="n">DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">4h</span> <span class="p">{</span>
   <span class="m">0h</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">();</span>              <span class="c1">// 0:00-1:00</span>
   <span class="m">1h30m</span><span class="p">:</span> <span class="nf">LESSON</span><span class="p">();</span>           <span class="c1">// 1:30-2:30, дыра 30m</span>
@@ -1689,18 +1684,17 @@
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">center</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// по центру дыры, остаток пополам вниз</span>
 <span class="m">0h</span><span class="p">:</span> <span class="k">fill</span> <span class="k">gaps</span> <span class="n">pack</span> <span class="n">right</span> <span class="k">until</span> <span class="m">15h</span> <span class="nf">BREAK_20</span><span class="p">();</span>  <span class="c1">// комбинируется с until</span>
 </code></pre></div>
-<p>Остаток, куда очередной вызов не влез, молча пропускается. Условие строки
-проверяется на каждый экземпляр в его старте. Подробности — в
-<a href="../semantics/#повторы">семантике</a>.</p>
+<p>Промежуток короче длительности вызова остаётся свободным. Условие строки
+проверяется отдельно для каждого запуска в момент его начала.
+<a href="../semantics/#repeats">Правила заполнения промежутков</a>.</p>
 <h2 id="const-fun-pred">Объявления <code>const</code> / <code>fun</code> / <code>pred</code><a class="headerlink" href="#const-fun-pred" title="Permanent link">&para;</a></h2>
-<p>Именованные кирпичики файла. <code>const</code> — значение: число, строка или
-словарь/массив. Строки и словари живут здесь:</p>
+<p>Объявление <code>const</code> даёт имя числу, строке, словарю или массиву:</p>
 <div class="highlight"><pre><span></span><code><span class="k">const</span> <span class="n">MORNING</span> <span class="o">=</span> <span class="m">6</span><span class="p">;</span>
 <span class="k">const</span> <span class="n">ROOM</span> <span class="o">=</span> <span class="s">"233/А"</span><span class="p">;</span>
 <span class="k">const</span> <span class="n">LEC</span> <span class="o">=</span> <span class="p">{</span><span class="s">"subject"</span><span class="p">:</span> <span class="s">"БЖД"</span><span class="p">,</span> <span class="s">"room"</span><span class="p">:</span> <span class="n">ROOM</span><span class="p">};</span>
 </code></pre></div>
 <p>Значения словарей — выражения (<code>ROOM</code>, <code>BASE ++ "-1"</code>, <code>at</code>), вычисляются
-в момент использования; подробности — в <a href="../syntax/#данные">синтаксисе</a>.</p>
+в момент использования; подробности — в <a href="../syntax/#data">синтаксисе</a>.</p>
 <p><code>fun</code> — число от аргумента, <code>pred</code> — условие от момента времени. Оба
 вызываются там, где нужно вычисление вместо литерала:</p>
 <div class="highlight"><pre><span></span><code><span class="k">fun</span> <span class="nf">rush_top</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="m">1</span><span class="p">;</span>
@@ -1712,7 +1706,7 @@
 <p>Объявления — верхний уровень файла, до расписания. Системные имена
 (<code>morning</code>, <code>weekend</code> и весь календарь) подключать не нужно.</p>
 <h2 id="use">Импорт <code>use</code><a class="headerlink" href="#use" title="Permanent link">&para;</a></h2>
-<p>Чужие объявления подключаются первой строкой файла:</p>
+<p>Объявления из библиотеки можно подключить через <code>use</code> перед расписанием:</p>
 <div class="highlight"><pre><span></span><code><span class="k">use</span> <span class="s">"libs/route_lib.cyclo"</span><span class="p">;</span>
 </code></pre></div>
 <p>Путь — от директории файла. Внутри библиотеки только объявления (<code>const</code>,
@@ -1731,9 +1725,9 @@
 <li>Импортируется через <code>use</code>.</li>
 <li>Каждая строка обязана иметь метку. Метки — буквы, цифры и <code>_</code>, цифра
   в начале разрешена (<code>1st</code>); имя вида <code>1ms</code> разберётся длительностью,
-  таких имён не давать. Минус — только у длительности.</li>
+  поэтому такие имена для меток использовать нельзя. Минус — только у длительности.</li>
 </ul>
-<p>Строка таблицы может нести вызов со стрелкой <code>-&gt;</code> — фиксированное событие
+<p>В строке таблицы можно записать вызов со стрелкой <code>-&gt;</code> — фиксированное событие
 дня, объявленное один раз на таблицу, а не на каждый день. Такая строка
 выполняется при каждом применении таблицы, может иметь собственное условие:</p>
 <div class="highlight"><pre><span></span><code><span class="k">time_const</span> <span class="n">UNIVERSITY_DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">21h35m</span> <span class="p">{</span>
@@ -1749,9 +1743,8 @@
 <p>Вызов <code>MONDAY(UNIVERSITY_DAY)</code> подставляет смещения таблицы: метка <code>1st</code>
 превращается в <code>9h</code>, строки таблицы со стрелкой добавляются после строк тела.
 Словарь <code>LEC</code> — тот самый <code>const</code> из раздела «Объявления».</p>
-<p>Смена таблицы сдвигает все дни сразу: сокращённый день — та же рутина,
-другая таблица. Одна строка вместо переписанного дня, пары едут по новой
-сетке — 9:00 и 10:30:</p>
+<p>Для сокращённого дня можно вызвать ту же рутину с другой таблицей.
+В этом примере пары начнутся в 09:00 и 10:30:</p>
 <div class="highlight"><pre><span></span><code><span class="k">time_const</span> <span class="n">SHORT_DAY</span> <span class="k">duration</span> <span class="o">=</span> <span class="m">14h35m</span> <span class="p">{</span>
   <span class="nl">1st</span><span class="p">:</span> <span class="m">9h</span><span class="p">;</span>
   <span class="nl">2nd</span><span class="p">:</span> <span class="m">10h30m</span><span class="p">;</span>
@@ -1787,7 +1780,7 @@
 цикл cycle — строки &lt;смещение&gt;: вызов
 условие [...] и повтор repeat/fill — модификаторы строк
 объявления const/fun/pred — значения и вычисления с именами
-импорт use — чужие объявления в шапке файла
+импорт use — объявления из других файлов
 таблица времени time_const + рутина routine(ТАБЛИЦА) — дни на метках
 корневой цикл root_cycle — решётка start_time/duration
 расписание schedule — собирает всё в файл

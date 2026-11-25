@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -621,7 +621,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -788,18 +788,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Битовые
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#truth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Мостик truth
+        Битовые операции
       
     </span>
   </a>
@@ -810,7 +799,18 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Две проверки
+        Логические выражения в арифметике
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверка выражений
       
     </span>
   </a>
@@ -1122,7 +1122,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1310,18 +1310,7 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Битовые
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#truth" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Мостик truth
+        Битовые операции
       
     </span>
   </a>
@@ -1332,7 +1321,18 @@
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Две проверки
+        Логические выражения в арифметике
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Проверка выражений
       
     </span>
   </a>
@@ -1360,8 +1360,8 @@
 
 
 <h1 id="_1">Выражения<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Чем считаются условия, блоки и аргументы: значения, арифметика, строки,
-даты, битовые операции. Приоритет операций — в <a href="../syntax/">синтаксисе</a>.</p>
+<p>Выражения используются в условиях, аргументах и атрибутах. Порядок
+вычисления операторов описан в <a href="../syntax/">справочнике синтаксиса</a>.</p>
 <h2 id="_2">Значения<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>Шесть видов: целые числа (<code>i64</code>), дробные
 числа (<code>f64</code>: <code>20.02</code>, <code>.02</code>, <code>20.</code>, <code>1e6</code>, <code>1.2e-3</code>), строки,
@@ -1369,17 +1369,20 @@
 и массивы. Отдельного типа «булево» нет, но любое число годится в условие
 напрямую (C-стиль: <code>0</code> и <code>0.0</code> — ложь, ненулевое — истина).</p>
 <p>Момент строки <code>at</code> — словарь <code>{wall, abs, zone}</code> (см. <a href="../semantics/">семантику</a>):
-стена и абсолют в мс, зона в мс. Коэрции в число нет — только явный
-<code>at.wall</code> / <code>at.abs</code>. Методы не вводятся: длина и ключи — свободными
-функциями <code>len(x)</code> (строка — символы, массив — длина, словарь — число
-ключей), <code>keys(m)</code> / <code>values(m)</code> (ключи/значения словаря в порядке
-объявления). Не тот тип — <code>type-mismatch</code>.</p>
+местное время, абсолютное время и смещение от UTC в миллисекундах.
+Для числовых операций используйте поля <code>at.wall</code> или <code>at.abs</code>.
+Функция <code>len(x)</code> возвращает число символов строки, элементов массива
+или ключей словаря. <code>keys(m)</code> и <code>values(m)</code> возвращают ключи или
+значения в порядке объявления. Неподходящий тип аргумента вызывает
+<code>type-mismatch</code>.</p>
 <h2 id="_3">Арифметика<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>Операции <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>, <code>floordiv</code>, <code>floormod</code>, унарный минус.
-Деление <code>/</code> усекает к нулю, остаток <code>%</code> наследует знак делимого;
-<code>floordiv</code>/<code>floormod</code> округляют к минус бесконечности.</p>
-<p>Деление и остаток на ноль — ошибка <code>division-by-zero</code>: константный ноль
-ловится сразу, ноль выражением — в момент строки.</p>
+При делении целых чисел <code>/</code> округляет результат к нулю. Остаток <code>%</code>
+имеет знак делимого, если он ненулевой. <code>floordiv</code> округляет частное
+вниз, а <code>floormod</code> даёт соответствующий остаток.</p>
+<p>Деление на ноль и вычисление остатка с нулевым делителем дают
+<code>division-by-zero</code>. Литеральный ноль обнаруживается при проверке,
+ноль в результате выражения — при расчёте строки.</p>
 <div class="highlight"><pre><span></span><code>division by zero
 </code></pre></div>
 <p>Переполнение любой операции — ошибка <code>integer-out-of-range</code> (целые) или
@@ -1393,53 +1396,53 @@
 Словари и массивы не сравниваются (<code>maps-not-comparable</code>).</p>
 <h2 id="_5">Строки<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <p>Конкатенация <code>++</code> — только для строк. Функции <code>str(n)</code> (десятичная запись,
-принимает и дробные: <code>str(20.02) == "20.02"</code>) и <code>pad(n, w)</code> (добивка нулями
+принимает и дробные: <code>str(20.02) == "20.02"</code>) и <code>pad(n, w)</code> (заполнение нулями
 слева до ширины <code>w</code>, только целые; ширина больше 1024 — <code>string-too-long</code>).</p>
-<p>Список дат — строковой альтернацией, только со строкой слева и только
-<code>==</code>/<code>!=</code>. Ветки — числовые выражения, <code>and</code> внутри веток — синтаксическая
-ошибка:</p>
+<p>Чтобы проверить строку по нескольким вариантам, перечислите их через
+<code>or</code> в скобках справа от <code>==</code> или <code>!=</code>. Например, так можно проверить
+дату по списку праздников:</p>
 <div class="highlight"><pre><span></span><code><span class="k">pred</span> <span class="nf">holiday</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">=</span> <span class="nf">datestr</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="s">"2026-11-04"</span> <span class="k">or</span> <span class="s">"2026-12-31"</span><span class="p">);</span>
 </code></pre></div>
 <h2 id="_6">Даты<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<p>Литералы дат — <code>YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM]</code>; aware (<code>Z</code>/±HH:MM<code>) —
-инстант</code>wall − offset<code>всегда. Наивный литерал файла читается в кадре запроса
-(зона файла, иначе зона окна</code>start<code>/</code>from<code>, иначе 1:1 как написано —
-см. [семантику](../semantics.md)). Аббревиатуры
-типа</code>MSK<code>не поддерживаются — пишите числовой офсет</code>+03:00<code>. Сравнение дат
-идёт по абсолютным миллисекундам: в одном кадре наивное</code>06:00<code>≡</code>06:00Z<code>,
-но</code>06:00<code>≠</code>06:00+03:00`.</p>
-<p>Конструктор <code>mkdate(y, mo, d, h, mi, s, ms)</code> собирает словарь момента
-<code>{wall, abs, zone}</code>: компоненты — стена кадра, абсолют сдвигается на зону
-кадра. Месяц <code>1..12</code>, день в пределах месяца, часы <code>0..23</code>, минуты и секунды
-<code>0..59</code>, миллисекунды <code>0..999</code>. Кривые компоненты — ошибка <code>invalid-date</code>:</p>
+<p>При сравнении <code>at</code> со строкой используется местное время расчёта
+(<code>at.wall</code>). Дату для такого сравнения можно записать в виде
+<code>YYYY-MM-DD</code>, <code>YYYY-MM-DDTHH:MM</code> или <code>YYYY-MM-DDTHH:MM:SS[.mmm]</code>.
+Пропущенные компоненты считаются нулевыми. Например,
+<code>at &gt;= "2026-01-10"</code> сравнивает момент строки с полуночью 10 января.
+Форматы дат со смещением для аргументов команд и <code>start_time</code> описаны
+в <a href="../cli/#dates-and-durations">справочнике CLI</a>.</p>
+<p>Функция <code>mkdate(y, mo, d, h, mi, s, ms)</code> строит словарь
+<code>{wall, abs, zone}</code> из компонентов местного времени. Для расчёта
+<code>abs</code> из <code>wall</code> вычитается смещение <code>zone</code>. Месяц должен быть в
+диапазоне <code>1..12</code>, день — в пределах месяца, часы — <code>0..23</code>, минуты
+и секунды — <code>0..59</code>, миллисекунды — <code>0..999</code>. Неверные компоненты
+вызывают ошибку <code>invalid-date</code>:</p>
 <div class="highlight"><pre><span></span><code>invalid date '2026-13-40T0:0:0.0'
 </code></pre></div>
-<p>Голый <code>at</code> рядом со строкой приводится к канонической форме стены
-<code>datetimestr(at)</code> (<code>YYYY-MM-DDTHH:MM:SS.mmm</code>); остальное смешение словаря
-со строкой — <code>type-mismatch</code>.</p>
-<h2 id="_7">Битовые<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h2 id="_7">Битовые операции<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>Операции <code>&lt;&lt;</code>, <code>&gt;&gt;</code>, <code>&amp;</code>, <code>|</code>, <code>^</code> — только над целыми числами (дробные —
-<code>type-mismatch</code>), переполниться не могут: лишние биты роняются (wrap).
-Сдвиг вправо <code>&gt;&gt;</code> — логический (добивка нулями), величина сдвига берётся
+<code>type-mismatch</code>), переполниться не могут: биты за пределами 64-разрядного числа отбрасываются.
+Сдвиг вправо <code>&gt;&gt;</code> — логический (заполнение нулями), величина сдвига берётся
 по модулю 64:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[(</span><span class="m">1</span> <span class="o">&lt;&lt;</span> <span class="m">70</span><span class="p">)</span> <span class="o">==</span> <span class="m">64</span><span class="p">]</span> <span class="m">2h</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>  <span class="c1">// 70 → 6, 2^6 = 64 — событие в 2:00</span>
 </code></pre></div>
-<h2 id="truth">Мостик <code>truth</code><a class="headerlink" href="#truth" title="Permanent link">&para;</a></h2>
-<p>Скобки с условием работают в обе стороны. В позиции условия скобка без
-продолжения — группировка: <code>[(hour(at) &gt;= 0)]</code> то же, что <code>[hour(at) &gt;= 0]</code>.
-А условие в скобках как операнд — значение <code>1</code> или <code>0</code>:</p>
+<h2 id="_8">Логические выражения в арифметике<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
+<p>Скобки могут группировать условие. Например, <code>[(hour(at) &gt;= 0)]</code> равнозначно
+<code>[hour(at) &gt;= 0]</code>. Если условие в скобках используется в арифметическом
+выражении, оно даёт <code>1</code> при истинном результате и <code>0</code> при ложном:</p>
 <div class="highlight"><pre><span></span><code><span class="p">[(</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="m">0</span><span class="p">)</span> <span class="o">==</span> <span class="m">1</span><span class="p">]</span> <span class="m">7h</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>  <span class="c1">// истина → 1 — событие есть</span>
 <span class="p">[</span><span class="m">1</span> <span class="o">*</span> <span class="p">(</span><span class="nf">hour</span><span class="p">(</span><span class="n">at</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="m">7</span><span class="p">)</span> <span class="o">==</span> <span class="m">1</span><span class="p">]</span> <span class="m">7h</span><span class="p">:</span> <span class="n">DEPOT</span><span class="p">.</span><span class="nf">depart</span><span class="p">();</span>  <span class="c1">// в 7:00 истина → 1 — событие есть</span>
 </code></pre></div>
-<p>Скобки с чистой арифметикой — обычный операнд: <code>[(hour(at) + 1) == 8]</code>.</p>
-<h2 id="_8">Две проверки<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
-<p>Статика ловит до разворачивания: смешение типов, неверную арность,
-константный ноль, кривой константный <code>mkdate</code>, невлезающий литерал числа
-(<code>integer-out-of-range</code>, <code>float-out-of-range</code>), рекурсию объявлений.
-Остальное — в момент строки: ноль выражением, кривой <code>mkdate</code> выражением,
-переполнение, ошибки доступа к данным (<code>unknown-field</code>,
-<code>index-out-of-bounds</code>). Индекс массива — только целое (<code>type-mismatch</code>
-на дробном).</p>
+<p>Арифметическое выражение в скобках сохраняет своё числовое значение, например <code>[(hour(at) + 1) == 8]</code>.</p>
+<h2 id="_9">Проверка выражений<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<p>До расчёта событий движок проверяет типы, число аргументов и рекурсию
+объявлений. На этом же этапе обнаруживаются, например, деление на
+литеральный ноль, неверная дата в <code>mkdate</code> с постоянными аргументами
+и числовой литерал за пределами диапазона типа.</p>
+<p>Ошибки, зависящие от значений при запуске, обнаруживаются при вычислении
+строки. К ним относятся деление на результат, равный нулю, переполнение,
+обращение к отсутствующему полю (<code>unknown-field</code>) и выход индекса за
+пределы массива (<code>index-out-of-bounds</code>). Индекс должен быть целым числом.</p>
 
 
 

@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="DSL для циклических расписаний — процессы описываются циклами так, чтобы их читал человек, а проверял движок.">
+        <meta name="description" content="Cyclorithm — язык для описания циклических расписаний.">
       
       
         <meta name="author" content="MaksPV">
@@ -529,7 +529,7 @@
   <span class="md-ellipsis">
     
   
-    Туториал с нуля
+    Первое расписание
   
 
     
@@ -616,7 +616,7 @@
   <span class="md-ellipsis">
     
   
-    Концепты
+    Основные понятия
   
 
     
@@ -987,7 +987,7 @@
   <span class="md-ellipsis">
     
   
-    Python-биндинги
+    Библиотека Python
   
 
     
@@ -1250,24 +1250,23 @@
 
 
 <h1 id="c-">C++-библиотека<a class="headerlink" href="#c-" title="Permanent link">&para;</a></h1>
-<p>Нативный C ABI поверх ядра (крейт <code>crates/cyclorithm-cpp</code>): shared-библиотека
-<code>libcyclorithm</code> + заголовки <code>include/cyclorithm.h</code> (C API) и
-<code>include/cyclorithm.hpp</code> (класс <code>cyclo::Schedule</code>, header-only).
-В релизах — архив <code>cyclo-cpp-&lt;версия&gt;-&lt;триплет&gt;.tar.gz</code> рядом с бинарниками
-и Python-колёсами.</p>
+<p>Ядро доступно из C и C++ через динамическую библиотеку <code>libcyclorithm</code>.
+Интерфейс C описан в <code>include/cyclorithm.h</code>, а класс C++ <code>cyclo::Schedule</code>
+целиком определён в <code>include/cyclorithm.hpp</code>. Библиотека и заголовки
+поставляются в архиве релиза <code>cyclo-cpp-&lt;версия&gt;-&lt;триплет&gt;.tar.gz</code>.</p>
 <h2 id="_1">Сборка из исходников<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>Нужен только стабильный Rust (<code>rustup</code>). Команды — из корня репо:</p>
+<p>Для сборки библиотеки нужна стабильная версия Rust (<code>rustup</code>). Выполните команду из корня репозитория:</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>build<span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>cyclorithm-cpp
 <span class="c1"># lib: target/release/libcyclorithm.so (.dll на Windows),</span>
 <span class="c1"># заголовки: crates/cyclorithm-cpp/include/</span>
 </code></pre></div>
-<p>Проверка:</p>
+<p>Чтобы собрать и запустить проверочный пример, понадобится компилятор C++:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>crates/cyclorithm-cpp
-g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>include<span class="w"> </span>tests/smoke.cpp<span class="w"> </span>../../target/debug/libcyclorithm.a<span class="w"> </span>-ldl<span class="w"> </span>-lpthread<span class="w"> </span>-lm<span class="w"> </span>-o<span class="w"> </span>/tmp/smoke
+g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>include<span class="w"> </span>tests/smoke.cpp<span class="w"> </span>../../target/release/libcyclorithm.a<span class="w"> </span>-ldl<span class="w"> </span>-lpthread<span class="w"> </span>-lm<span class="w"> </span>-o<span class="w"> </span>/tmp/smoke
 /tmp/smoke
 </code></pre></div>
-<p>Линковка своей программы с shared-библиотекой:</p>
-<div class="highlight"><pre><span></span><code>g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>&lt;путь<span class="w"> </span>к<span class="w"> </span>include&gt;<span class="w"> </span>prog.cpp<span class="w"> </span>-L<span class="w"> </span>&lt;путь<span class="w"> </span>к<span class="w"> </span>lib&gt;<span class="w"> </span>-lcyclorithm<span class="w"> </span>-o<span class="w"> </span>prog
+<p>Чтобы связать свою программу с динамической библиотекой, выполните:</p>
+<div class="highlight"><pre><span></span><code>g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>path/to/include<span class="w"> </span>prog.cpp<span class="w"> </span>-L<span class="w"> </span>path/to/lib<span class="w"> </span>-lcyclorithm<span class="w"> </span>-o<span class="w"> </span>prog
 </code></pre></div>
 <h2 id="api">API<a class="headerlink" href="#api" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">"cyclorithm.hpp"</span>
@@ -1278,18 +1277,19 @@ g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </s
 <span class="w">    </span><span class="n">sched</span><span class="p">.</span><span class="n">run</span><span class="p">(</span><span class="s">"2026-09-07"</span><span class="p">,</span><span class="w"> </span><span class="s">"+1d"</span><span class="p">);</span><span class="w">     </span><span class="c1">// JSON-объект как в `cyclo run`</span>
 </code></pre></div>
 <ul>
-<li>C API (<code>cyclorithm.h</code>): <code>cyclo_check</code> / <code>cyclo_run</code> возвращают
-  <code>cyclo_result_t</code> — успех (<code>json != NULL</code>) или слаг ошибки (<code>code</code>)
-  с текстом (<code>message</code>, парсер — <code>syntax</code>); всё не-NULL освобождается
-  одним <code>cyclo_result_free</code>. Даты — короткие формы CLI (см. главу CLI).</li>
-<li>Ошибки C++: <code>cyclo::Error : std::runtime_error</code> с полем <code>code</code>
-  (слаг главы ошибок); <code>what()</code> — <code>слаг: сообщение</code>, как stderr CLI.
-  Отсутствие файла — <code>std::runtime_error</code>.</li>
-<li>Возврат <code>run</code> — строка JSON-объекта <code>cyclo run</code> (см. главу вывода).</li>
+<li>Функции C <code>cyclo_check</code> и <code>cyclo_run</code> возвращают <code>cyclo_result_t</code>.
+  При успехе заполнено поле <code>json</code>, при ошибке — <code>code</code> и <code>message</code>.
+  Один вызов <code>cyclo_result_free</code> освобождает все заполненные поля результата.
+  Для дат используются <a href="../../reference/cli/">форматы CLI</a>.</li>
+<li>В C++ ошибки программы вызывают исключение <code>cyclo::Error</code>, унаследованное
+  от <code>std::runtime_error</code>. Поле <code>code</code> содержит код ошибки, а <code>what()</code>
+  возвращает строку <code>код: сообщение</code>. Для ошибки разбора код равен
+  <code>syntax</code>. Если файл недоступен, возникает <code>std::runtime_error</code>.</li>
+<li>Метод <code>run</code> возвращает строку с <a href="../../reference/output/">JSON-объектом <code>cyclo run</code></a>.</li>
 </ul>
 <h2 id="json">Разбор JSON<a class="headerlink" href="#json" title="Permanent link">&para;</a></h2>
-<p>Свой парсер библиотека не везёт: окно — обычная JSON-строка, разбирайте
-чем удобно (ниже — системный <code>nlohmann/json</code>, проверено сборкой):</p>
+<p>Для разбора строки с результатом используйте любую библиотеку JSON.
+В примере используется <code>nlohmann/json</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;iostream&gt;</span>
 <span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;nlohmann/json.hpp&gt;</span>
 <span class="cp">#include</span><span class="w"> </span><span class="cpf">"cyclorithm.hpp"</span>
@@ -1306,9 +1306,8 @@ g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </s
 <span class="w">  </span><span class="p">}</span>
 <span class="p">}</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>&lt;путь<span class="w"> </span>к<span class="w"> </span>include&gt;<span class="w"> </span>prog.cpp<span class="w"> </span>-L<span class="w"> </span>&lt;путь<span class="w"> </span>к<span class="w"> </span>lib&gt;<span class="w"> </span>-lcyclorithm<span class="w"> </span>-o<span class="w"> </span>prog
+<div class="highlight"><pre><span></span><code>g++<span class="w"> </span>-std<span class="o">=</span>c++17<span class="w"> </span>-I<span class="w"> </span>path/to/include<span class="w"> </span>prog.cpp<span class="w"> </span>-L<span class="w"> </span>path/to/lib<span class="w"> </span>-lcyclorithm<span class="w"> </span>-o<span class="w"> </span>prog
 </code></pre></div>
-<p>Семантика — в справочнике (главы условий, вывода, ошибок); здесь только форма вызова.</p>
 
 
 
